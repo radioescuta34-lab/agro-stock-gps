@@ -1,0 +1,6 @@
+{
+  "name": "Agro Stock GPS",
+  "description": "Sistema de gerenciamento de componentes de pilotos automáticos agrícolas (Trimble e Topcon) para usina sucroenergética, com controle de estoque, movimentações e manutenção.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

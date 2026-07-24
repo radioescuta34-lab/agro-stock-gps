@@ -1,0 +1,181 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account information including their system role (administrador or tecnico).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["administrador", "tecnico"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "name", "role", "createdAt"]
+    },
+    "Component": {
+      "title": "Autopilot Component",
+      "description": "An autopilot component (e.g. antenna, monitor, controller) manufactured by Trimble or Topcon.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "serialNumber": { "type": "string" },
+        "name": { "type": "string" },
+        "brand": { "type": "string", "enum": ["Trimble", "Topcon"] },
+        "type": { "type": "string" },
+        "status": { "type": "string", "enum": ["Disponível", "Em Uso", "Manutenção", "Descartado"] },
+        "currentMachine": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["id", "serialNumber", "name", "brand", "type", "status", "updatedAt", "updatedBy"]
+    },
+    "Machine": {
+      "title": "Agricultural Machine",
+      "description": "A tractor, harvester, or sprayer that can be fitted with autopilot components.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "prefix": { "type": "string" },
+        "type": { "type": "string", "enum": ["Trator", "Colhedora", "Pulverizador", "Outro"] },
+        "model": { "type": "string" },
+        "brand": { "type": "string" },
+        "fleet": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "prefix", "type", "model", "brand", "updatedAt"]
+    },
+    "Movement": {
+      "title": "Component Movement Log",
+      "description": "A record of component installation, removal, or maintenance logged by technicians or admins.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "componentId": { "type": "string" },
+        "componentSerial": { "type": "string" },
+        "componentName": { "type": "string" },
+        "machinePrefix": { "type": "string" },
+        "action": { "type": "string", "enum": ["Instalação", "Remoção", "Manutenção", "Calibração"] },
+        "technicianId": { "type": "string" },
+        "technicianName": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "componentId", "componentSerial", "componentName", "machinePrefix", "action", "technicianId", "technicianName", "date", "createdAt"]
+    },
+    "ThirdParty": {
+      "title": "Third-Party Provider",
+      "description": "Information about third-party providers or contractors who can loan GPS hardware components.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "document": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "company": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["id", "name", "document", "phone", "email", "company", "createdAt", "updatedAt", "updatedBy"]
+    },
+    "ComponentLoan": {
+      "title": "Component Loan",
+      "description": "A record of equipment loans to third-party providers, including comodato terms.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "thirdPartyId": { "type": "string" },
+        "thirdPartyName": { "type": "string" },
+        "thirdPartyDocument": { "type": "string" },
+        "thirdPartyCompany": { "type": "string" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "componentId": { "type": "string" },
+              "componentSerial": { "type": "string" },
+              "componentName": { "type": "string" },
+              "componentBrand": { "type": "string" },
+              "componentType": { "type": "string" }
+            },
+            "required": ["componentId", "componentSerial", "componentName", "componentBrand", "componentType"]
+          }
+        },
+        "loanDate": { "type": "string", "format": "date" },
+        "estimatedReturnDate": { "type": "string", "format": "date" },
+        "actualReturnDate": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["Ativo", "Devolvido"] },
+        "contractNumber": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["id", "thirdPartyId", "thirdPartyName", "thirdPartyDocument", "thirdPartyCompany", "items", "loanDate", "status", "contractNumber", "createdAt", "updatedAt", "updatedBy"]
+    },
+    "CompanyProfileSettings": {
+      "title": "Company Profile Settings",
+      "description": "Registration settings for the licensed business utilizing the platform.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "tradingName": { "type": "string" },
+        "cnpj": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["name", "cnpj", "updatedAt", "updatedBy"]
+    },
+    "LicenseAlertSettings": {
+      "title": "License Alert Settings",
+      "description": "Email alert settings for license expirations.",
+      "type": "object",
+      "properties": {
+        "alertEmail": { "type": "string" },
+        "lastSent60": { "type": "string" },
+        "lastSent30": { "type": "string" },
+        "lastSent15": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["alertEmail", "updatedAt", "updatedBy"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Profiles and role classifications of staff members."
+    },
+    "/components/{componentId}": {
+      "schema": { "$ref": "#/entities/Component" },
+      "description": "Inventory of Trimble and Topcon agricultural GPS autopilot hardware components."
+    },
+    "/machines/{machineId}": {
+      "schema": { "$ref": "#/entities/Machine" },
+      "description": "Agricultural vehicle fleet database."
+    },
+    "/movements/{movementId}": {
+      "schema": { "$ref": "#/entities/Movement" },
+      "description": "Activity history tracking modifications, relocations, installations, and maintenance services."
+    },
+    "/third_parties/{thirdPartyId}": {
+      "schema": { "$ref": "#/entities/ThirdParty" },
+      "description": "Third-party operators and service providers."
+    },
+    "/loans/{loanId}": {
+      "schema": { "$ref": "#/entities/ComponentLoan" },
+      "description": "Records of components loaned out to third parties under Comodato contracts."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/CompanyProfileSettings" },
+      "description": "System configuration parameters and company profiles."
+    }
+  }
+}

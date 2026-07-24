@@ -1,0 +1,202 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Catch-all default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && (
+        getUserData().role == 'administrador' ||
+        getUserData().role == 'ADMINISTRADOR' ||
+        request.auth.token.email == 'endriuse@hotmail.com' ||
+        request.auth.token.email == 'endriusernane@gmail.com'
+      );
+    }
+    
+    function isTechnician() {
+      return isSignedIn() && (
+        getUserData().role == 'tecnico' ||
+        getUserData().role == 'TECNICO_CAMPO'
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Validate User Profile
+    function isValidUser(user) {
+      return user.uid is string && user.uid.size() <= 128
+        && user.email is string && user.email.size() <= 128
+        && user.name is string && user.name.size() <= 128
+        && (user.role == 'administrador' || user.role == 'tecnico' || user.role == 'ADMINISTRADOR' || user.role == 'TECNICO_CAMPO');
+    }
+
+    match /settings/{settingId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin(); // Only admins can list users
+      allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin()) && isValidUser(request.resource.data);
+      allow update: if isSignedIn() && (
+        (request.auth.uid == userId && request.resource.data.role == resource.data.role) || 
+        isAdmin()
+      ) && isValidUser(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Validate Component
+    function isValidComponent(comp) {
+      return comp.id is string && comp.id.size() <= 128
+        && comp.serialNumber is string && comp.serialNumber.size() <= 128
+        && comp.name is string && comp.name.size() <= 128
+        && (comp.brand == 'Trimble' || comp.brand == 'Topcon')
+        && comp.type is string && comp.type.size() <= 128
+        && (comp.status == 'Disponível' || comp.status == 'Em Uso' || comp.status == 'Manutenção' || comp.status == 'Descartado');
+    }
+
+    match /components/{componentId} {
+      allow get, list: if isSignedIn();
+      allow create: if isAdmin() && isValidId(componentId) && isValidComponent(request.resource.data) && request.resource.data.updatedAt == request.time;
+      allow delete: if isAdmin();
+      allow update: if isSignedIn() && isValidId(componentId) && isValidComponent(request.resource.data) && request.resource.data.updatedAt == request.time && (
+        isAdmin() || (
+          // Technician can only update component status, location/machine, updatedAt, and updatedBy
+          request.resource.data.serialNumber == resource.data.serialNumber
+          && request.resource.data.brand == resource.data.brand
+          && request.resource.data.name == resource.data.name
+          && request.resource.data.type == resource.data.type
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'currentMachine', 'updatedAt', 'updatedBy'])
+        )
+      );
+    }
+
+    // Validate Machine
+    function isValidMachine(mac) {
+      return mac.id is string && mac.id.size() <= 128
+        && mac.prefix is string && mac.prefix.size() <= 128
+        && (mac.type == 'Trator' || mac.type == 'Colhedora' || mac.type == 'Pulverizador' || mac.type == 'Outro')
+        && mac.model is string && mac.model.size() <= 128
+        && mac.brand is string && mac.brand.size() <= 128
+        && (!('fleet' in mac) || (mac.fleet is string && mac.fleet.size() <= 128));
+    }
+
+    match /machines/{machineId} {
+      allow get, list: if isSignedIn();
+      allow create: if (isAdmin() || isTechnician()) && isValidId(machineId) && isValidMachine(request.resource.data);
+      allow update: if (isAdmin() || isTechnician()) && isValidId(machineId) && isValidMachine(request.resource.data);
+      allow delete: if (isAdmin() || isTechnician());
+    }
+
+    // Validate License
+    function isValidLicense(lic) {
+      return lic.id is string && lic.id.size() <= 128
+        && lic.name is string && lic.name.size() <= 128
+        && (lic.brand == 'Trimble' || lic.brand == 'Topcon')
+        && (lic.type == 'Assinatura de Sinal' || lic.type == 'Ativação de Tela')
+        && lic.code is string && lic.code.size() <= 256;
+    }
+
+    match /licenses/{licenseId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if (isAdmin() || isTechnician()) && isValidId(licenseId) && isValidLicense(request.resource.data);
+      allow delete: if (isAdmin() || isTechnician());
+    }
+
+    // Validate Movement
+    function isValidMovement(move) {
+      return move.id is string && move.id.size() <= 128
+        && move.componentId is string && move.componentId.size() <= 128
+        && move.componentSerial is string && move.componentSerial.size() <= 128
+        && move.componentName is string && move.componentName.size() <= 128
+        && move.machinePrefix is string && move.machinePrefix.size() <= 128
+        && (move.action == 'Instalação' || move.action == 'Remoção' || move.action == 'Manutenção' || move.action == 'Calibração')
+        && move.technicianId is string && move.technicianId.size() <= 128
+        && move.technicianName is string && move.technicianName.size() <= 128;
+    }
+
+    match /movements/{movementId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(movementId) && isValidMovement(request.resource.data) && request.resource.data.createdAt == request.time;
+      // No updates or deletions allowed to secure audit trail
+      allow update, delete: if false;
+    }
+
+    // Validate ThirdParty
+    function isValidThirdParty(tp) {
+      return tp.id is string && tp.id.size() <= 128
+        && tp.name is string && tp.name.size() <= 128
+        && tp.document is string && tp.document.size() <= 64
+        && tp.phone is string && tp.phone.size() <= 64
+        && tp.email is string && tp.email.size() <= 128
+        && tp.company is string && tp.company.size() <= 128;
+    }
+
+    match /third_parties/{thirdPartyId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if (isAdmin() || isTechnician()) && isValidId(thirdPartyId) && isValidThirdParty(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Validate ComponentLoan
+    function isValidLoan(loan) {
+      return loan.id is string && loan.id.size() <= 128
+        && loan.thirdPartyId is string && loan.thirdPartyId.size() <= 128
+        && loan.thirdPartyName is string && loan.thirdPartyName.size() <= 128
+        && loan.thirdPartyDocument is string && loan.thirdPartyDocument.size() <= 64
+        && loan.thirdPartyCompany is string && loan.thirdPartyCompany.size() <= 128
+        && loan.items is list
+        && (loan.status == 'Ativo' || loan.status == 'Devolvido')
+        && loan.contractNumber is string && loan.contractNumber.size() <= 64;
+    }
+
+    match /loans/{loanId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if (isAdmin() || isTechnician()) && isValidId(loanId) && isValidLoan(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Validate ComponentMaintenance
+    function isValidMaintenance(maint) {
+      return maint.id is string && maint.id.size() <= 128
+        && maint.componentId is string && maint.componentId.size() <= 128
+        && maint.componentSerial is string && maint.componentSerial.size() <= 128
+        && maint.componentName is string && maint.componentName.size() <= 128
+        && maint.providerName is string && maint.providerName.size() <= 256
+        && maint.status is string && (maint.status == 'Em Manutenção' || maint.status == 'Concluído' || maint.status == 'Sem Conserto');
+    }
+
+    match /maintenances/{maintenanceId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if (isAdmin() || isTechnician()) && isValidId(maintenanceId) && isValidMaintenance(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Validate MaintenanceProvider
+    function isValidProvider(prov) {
+      return prov.id is string && prov.id.size() <= 128
+        && prov.name is string && prov.name.size() <= 128;
+    }
+
+    match /providers/{providerId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if (isAdmin() || isTechnician()) && isValidId(providerId) && isValidProvider(request.resource.data);
+      allow delete: if isAdmin();
+    }
+  }
+}

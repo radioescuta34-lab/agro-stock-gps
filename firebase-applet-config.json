@@ -1,0 +1,10 @@
+{
+  "projectId": "agrostock-gps",
+  "appId": "1:813847655615:web:22af54648e5e39e4e6020a",
+  "apiKey": "AIzaSyCawxj4IazFzR-fheRqOioANivGtAM7ZHk",
+  "authDomain": "agrostock-gps.firebaseapp.com",
+  "databaseURL": "https://agrostock-gps-default-rtdb.firebaseio.com",
+  "storageBucket": "agrostock-gps.firebasestorage.app",
+  "messagingSenderId": "813847655615",
+  "measurementId": ""
+}
