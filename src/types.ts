@@ -9,6 +9,7 @@ export interface UserProfile {
   username?: string;
   passwordEncrypted?: string;
   role: UserRole;
+  photoURL?: string;
   createdAt: any; // Timestamp or ISO string
 }
 

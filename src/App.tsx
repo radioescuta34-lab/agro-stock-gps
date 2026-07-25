@@ -41,6 +41,7 @@ import MovementsTab from './components/MovementsTab';
 import LicensesTab from './components/LicensesTab';
 import LoansTab from './components/LoansTab';
 import CompanyTab from './components/CompanyTab';
+import ProfileTab from './components/ProfileTab';
 import { 
   Cpu, 
   Tractor,
@@ -58,7 +59,8 @@ import {
   Handshake,
   Building2,
   Download,
-  Info
+  Info,
+  User
 } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'agro_stock_gps_';
@@ -174,7 +176,11 @@ export default function App() {
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
               name: data.name || firebaseUser.displayName || 'Usuário',
+              firstName: data.firstName || undefined,
+              lastName: data.lastName || undefined,
+              username: data.username || undefined,
               role: data.role as UserRole,
+              photoURL: data.photoURL || undefined,
               createdAt: data.createdAt || new Date().toISOString()
             });
           } else {
@@ -1897,6 +1903,58 @@ export default function App() {
     }
   };
 
+  const handleUpdateOwnProfile = async (
+    updates: { name?: string; firstName?: string; lastName?: string; username?: string; photoURL?: string },
+    rawPassword?: string
+  ) => {
+    if (!user) return { success: false, error: 'Usuário não autenticado' };
+
+    const firstName = updates.firstName || user.firstName || '';
+    const lastName = updates.lastName || user.lastName || '';
+    const fullName = updates.name || `${firstName} ${lastName}`.trim() || user.name;
+    const derivedEmail = updates.username ? `${updates.username}@agrostockgps.com` : user.email;
+
+    const firestoreData: any = {
+      name: fullName,
+      firstName: firstName || undefined,
+      lastName: lastName || undefined,
+      username: updates.username || user.username || undefined,
+      email: derivedEmail,
+      role: user.role,
+    };
+
+    if (updates.photoURL !== undefined) {
+      firestoreData.photoURL = updates.photoURL || null;
+    }
+
+    if (rawPassword) {
+      firestoreData.passwordEncrypted = await hashPassword(rawPassword);
+    }
+
+    if (isDemoMode) {
+      const users = JSON.parse(localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}users`) || '[]');
+      const idx = users.findIndex((u: any) => u.uid === user.uid);
+      if (idx !== -1) {
+        users[idx] = { ...users[idx], ...firestoreData };
+        localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}users`, JSON.stringify(users));
+      }
+      setUser({ ...user, ...firestoreData });
+      return { success: true };
+    }
+
+    try {
+      const userDocRef = doc(db, 'users', user.uid);
+      await updateDoc(userDocRef, firestoreData);
+      const updatedUser = { ...user, ...firestoreData, name: fullName, email: derivedEmail };
+      if (firestoreData.photoURL === null) delete updatedUser.photoURL;
+      setUser(updatedUser);
+      return { success: true };
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}`);
+      return { success: false, error: 'Erro ao atualizar perfil' };
+    }
+  };
+
   // Delete User Profile (Firestore or Demo)
   const handleDeleteUser = async (uid: string) => {
     const isAuthorized = user?.role === 'administrador' || user?.role === 'ADMINISTRADOR';
@@ -1993,7 +2051,7 @@ export default function App() {
             <div className="hidden md:flex items-center gap-2">
               <button
                 onClick={() => navigateToTab('dashboard')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'dashboard' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:text-white'}`}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'dashboard' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
                 id="nav-dashboard"
               >
                 <LayoutDashboard className="h-4 w-4" />
@@ -2002,7 +2060,7 @@ export default function App() {
 
               <button
                 onClick={() => navigateToTab('components')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'components' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:text-white'}`}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'components' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
                 id="nav-components"
               >
                 <Cpu className="h-4 w-4" />
@@ -2011,7 +2069,7 @@ export default function App() {
 
               <button
                 onClick={() => navigateToTab('licenses')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'licenses' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:text-white'}`}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'licenses' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
                 id="nav-licenses"
               >
                 <Key className="h-4 w-4" />
@@ -2020,7 +2078,7 @@ export default function App() {
 
               <button
                 onClick={() => navigateToTab('movements')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'movements' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:text-white'}`}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'movements' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
                 id="nav-movements"
               >
                 <Wrench className="h-4 w-4" />
@@ -2029,7 +2087,7 @@ export default function App() {
 
               <button
                 onClick={() => navigateToTab('loans')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'loans' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:text-white'}`}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'loans' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
                 id="nav-loans"
               >
                 <Handshake className="h-4 w-4" />
@@ -2038,7 +2096,7 @@ export default function App() {
 
               <button
                 onClick={() => navigateToTab('machines')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'machines' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:text-white'}`}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'machines' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
                 id="nav-machines"
               >
                 <Menu className="h-4 w-4" />
@@ -2048,7 +2106,7 @@ export default function App() {
               {(user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
                 <button
                   onClick={() => navigateToTab('company')}
-                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'company' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:text-white'}`}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'company' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
                   id="nav-company"
                 >
                   <Building2 className="h-4 w-4" />
@@ -2086,30 +2144,49 @@ export default function App() {
               <div className="relative">
                 <button
                   onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                  className="text-right cursor-pointer hover:opacity-80 transition-opacity focus:outline-none"
+                  className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity focus:outline-none"
                   id="user-menu-button"
                 >
-                  <span className="block text-xs font-bold text-white">{user.name}</span>
-                  <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] font-extrabold tracking-wider uppercase bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/25">
-                    {user.role === 'administrador' || user.role === 'ADMINISTRADOR' ? (
-                      <>
-                        <Shield className="h-2.5 w-2.5" />
-                        Admin
-                      </>
+                  <div className="w-8 h-8 rounded-full overflow-hidden bg-emerald-500/20 flex items-center justify-center shrink-0 ring-1 ring-emerald-500/30">
+                    {user.photoURL ? (
+                      <img src={user.photoURL} alt="" className="w-full h-full object-cover" />
                     ) : (
-                      <>
-                        <Wrench className="h-2.5 w-2.5" />
-                        Técnico
-                      </>
+                      <span className="text-[11px] font-extrabold text-emerald-400 select-none">
+                        {user.name.split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase()}
+                      </span>
                     )}
-                  </span>
+                  </div>
+                  <div className="text-left">
+                    <span className="block text-xs font-bold text-white">{user.name.split(' ')[0]}</span>
+                    <span className="inline-flex items-center gap-1 text-[8px] font-semibold tracking-normal uppercase bg-emerald-500/15 text-emerald-400/80 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                      {user.role === 'administrador' || user.role === 'ADMINISTRADOR' ? (
+                        <>
+                          <Shield className="h-2.5 w-2.5" />
+                          Admin
+                        </>
+                      ) : (
+                        <>
+                          <Wrench className="h-2.5 w-2.5" />
+                          Técnico
+                        </>
+                      )}
+                    </span>
+                  </div>
                 </button>
 
                 {isUserMenuOpen && (
                   <div
                     id="user-menu-dropdown"
-                    className="absolute right-0 mt-2 w-40 bg-slate-800 border border-slate-600 rounded-xl shadow-lg z-50 py-1"
+                    className="absolute right-0 mt-2 w-44 bg-slate-800 border border-slate-600 rounded-xl shadow-lg z-50 py-1"
                   >
+                    <button
+                      onClick={() => { setIsUserMenuOpen(false); setCurrentTab('profile'); }}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-700/50 rounded-lg transition-colors"
+                    >
+                      <User className="h-4 w-4" />
+                      Meu Perfil
+                    </button>
+                    <div className="border-t border-slate-700 my-1" />
                     <button
                       onClick={handleLogout}
                       className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors"
@@ -2153,7 +2230,7 @@ export default function App() {
 
             <button
               onClick={() => navigateToTab('dashboard')}
-              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 ${currentTab === 'dashboard' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300'}`}
+              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'dashboard' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
             >
               <LayoutDashboard className="h-4 w-4" />
               Dashboard
@@ -2161,7 +2238,7 @@ export default function App() {
 
             <button
               onClick={() => navigateToTab('components')}
-              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 ${currentTab === 'components' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300'}`}
+              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'components' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
             >
               <Cpu className="h-4 w-4" />
               Estoque GPS
@@ -2169,7 +2246,7 @@ export default function App() {
 
             <button
               onClick={() => navigateToTab('licenses')}
-              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 ${currentTab === 'licenses' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300'}`}
+              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'licenses' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
             >
               <Key className="h-4 w-4" />
               Licenças
@@ -2177,7 +2254,7 @@ export default function App() {
 
             <button
               onClick={() => navigateToTab('movements')}
-              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 ${currentTab === 'movements' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300'}`}
+              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'movements' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
             >
               <Wrench className="h-4 w-4" />
               Serviços de Campo
@@ -2185,7 +2262,7 @@ export default function App() {
 
             <button
               onClick={() => navigateToTab('loans')}
-              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 ${currentTab === 'loans' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300'}`}
+              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'loans' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
             >
               <Handshake className="h-4 w-4" />
               Empréstimos
@@ -2193,7 +2270,7 @@ export default function App() {
 
             <button
               onClick={() => navigateToTab('machines')}
-              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 ${currentTab === 'machines' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300'}`}
+              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'machines' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
             >
               <Menu className="h-4 w-4" />
               Frota
@@ -2202,7 +2279,7 @@ export default function App() {
             {(user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
               <button
                 onClick={() => navigateToTab('company')}
-                className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 ${currentTab === 'company' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300'}`}
+                className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'company' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
               >
                 <Building2 className="h-4 w-4" />
                 Minha Empresa
@@ -2339,6 +2416,14 @@ export default function App() {
             onAddUser={handleAddUser}
             onEditUser={handleEditUser}
             onDeleteUser={handleDeleteUser}
+          />
+        )}
+
+        {currentTab === 'profile' && (
+          <ProfileTab
+            user={user}
+            onUpdateProfile={handleUpdateOwnProfile}
+            onBack={() => setCurrentTab('dashboard')}
           />
         )}
 

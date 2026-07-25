@@ -16,7 +16,6 @@ import {
   Trash2,
   Edit2,
   Search,
-  Lock,
   User,
   Shield,
   Wrench,
@@ -25,6 +24,8 @@ import {
   Upload,
   Image as ImageIcon
 } from 'lucide-react';
+import UserForm from './UserForm';
+import type { UserFormData } from './UserForm';
 
 interface CompanyTabProps {
   companyProfile: CompanyProfile;
@@ -68,12 +69,6 @@ export default function CompanyTab({
   const [userFormMode, setUserFormMode] = useState<'add' | 'edit'>('add');
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   
-  const [uFirstName, setUFirstName] = useState('');
-  const [uLastName, setULastName] = useState('');
-  const [uUsername, setUUsername] = useState('');
-  const [uPassword, setUPassword] = useState('');
-  const [uRole, setURole] = useState<UserRole>('TECNICO_CAMPO');
-
   const [userLoading, setUserLoading] = useState(false);
   const [userError, setUserError] = useState<string | null>(null);
   const [userSuccess, setUserSuccess] = useState<string | null>(null);
@@ -181,66 +176,30 @@ export default function CompanyTab({
   );
 
   const resetUserForm = () => {
-    setUFirstName('');
-    setULastName('');
-    setUUsername('');
-    setUPassword('');
-    setURole('TECNICO_CAMPO');
     setUserFormMode('add');
     setSelectedUser(null);
     setUserError(null);
+    setUserSuccess(null);
   };
 
   const startEditUser = (u: UserProfile) => {
     setUserFormMode('edit');
     setSelectedUser(u);
-    const nameStr = u.name || '';
-    const emailStr = u.email || '';
-    setUFirstName(u.firstName || nameStr.split(' ')[0] || '');
-    setULastName(u.lastName || nameStr.split(' ').slice(1).join(' ') || '');
-    setUUsername(u.username || emailStr.split('@')[0] || '');
-    setUPassword('');
-    
-    // Normalize role safely
-    let mappedRole: UserRole = 'TECNICO_CAMPO';
-    if (u.role) {
-      const roleLower = String(u.role).toLowerCase();
-      if (roleLower === 'administrador' || roleLower === 'admin') {
-        mappedRole = 'ADMINISTRADOR';
-      } else if (roleLower === 'tecnico_campo' || roleLower === 'tecnico' || roleLower === 'tecnico campo') {
-        mappedRole = 'TECNICO_CAMPO';
-      } else {
-        mappedRole = u.role;
-      }
-    }
-    setURole(mappedRole);
-    
     setUserError(null);
     setUserSuccess(null);
   };
 
-  const handleUserSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleUserFormSave = async (data: UserFormData, password?: string) => {
     if (!isAdmin) return;
-
-    if (!uFirstName.trim() || !uLastName.trim()) {
-      setUserError('Nome e Sobrenome são obrigatórios.');
-      return;
-    }
-    if (!uUsername.trim()) {
-      setUserError('O usuário (username) é obrigatório.');
-      return;
-    }
-
-    setUserLoading(true);
     setUserError(null);
     setUserSuccess(null);
+    setUserLoading(true);
 
-    const virtualEmail = `${uUsername.trim().toLowerCase()}@agrostockgps.com`;
+    const virtualEmail = `${data.username}@agrostockgps.com`;
 
     try {
       if (userFormMode === 'add') {
-        if (!uPassword || uPassword.length < 6) {
+        if (!password || password.length < 6) {
           setUserError('A senha de acesso é obrigatória e deve ter no mínimo 6 caracteres.');
           setUserLoading(false);
           return;
@@ -249,36 +208,27 @@ export default function CompanyTab({
         const tempUid = 'user_' + Math.random().toString(36).substr(2, 9);
         await onAddUser?.({
           uid: tempUid,
-          name: `${uFirstName.trim()} ${uLastName.trim()}`,
-          firstName: uFirstName.trim(),
-          lastName: uLastName.trim(),
-          username: uUsername.trim().toLowerCase(),
+          name: data.name,
+          firstName: data.firstName,
+          lastName: data.lastName,
+          username: data.username,
           email: virtualEmail,
-          role: uRole
-        }, uPassword);
+          role: data.role!
+        }, password);
 
         setUserSuccess('Usuário e login de acesso criados com sucesso!');
         resetUserForm();
       } else {
         if (!selectedUser) return;
 
-        if (uPassword && uPassword.length < 6) {
-          setUserError('A nova senha deve ter no mínimo 6 caracteres.');
-          setUserLoading(false);
-          return;
-        }
-
-        const usernameVal = uUsername.trim().toLowerCase();
-        const updatedEmail = `${usernameVal}@agrostockgps.com`;
-
         const result = await onEditUser?.(selectedUser.uid, {
-          name: `${uFirstName.trim()} ${uLastName.trim()}`,
-          firstName: uFirstName.trim(),
-          lastName: uLastName.trim(),
-          username: usernameVal,
-          email: updatedEmail,
-          role: uRole
-        }, uPassword || undefined);
+          name: data.name,
+          firstName: data.firstName,
+          lastName: data.lastName,
+          username: data.username,
+          email: virtualEmail,
+          role: data.role!
+        }, password || undefined);
 
         if (result && result.warning) {
           setUserSuccess(`Cadastro de usuário atualizado com sucesso!\n\nNota: ${result.warning}`);
@@ -836,168 +786,22 @@ export default function CompanyTab({
                   </span>
                 </div>
               ) : (
-                <form onSubmit={handleUserSubmit} className="space-y-4" id="user-form">
-                  {userError && (
-                    <div className="bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold p-3 rounded-lg" id="user-form-error">
-                      {userError}
-                    </div>
-                  )}
-
-                  {userSuccess && (
-                    <div className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold p-3 rounded-lg flex items-center gap-2" id="user-form-success">
-                      <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
-                      {userSuccess}
-                    </div>
-                  )}
-
-                  {/* Nome & Sobrenome */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-black text-slate-400">Nome <span className="text-rose-500">*</span></label>
-                      <div className="relative rounded-xl shadow-sm">
-                        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                          <User className="h-4 w-4 text-slate-400" />
-                        </div>
-                        <input
-                          type="text"
-                          placeholder="Ex: João"
-                          value={uFirstName}
-                          onChange={(e) => setUFirstName(e.target.value)}
-                          disabled={userLoading}
-                          className="w-full pl-10 pr-3.5 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
-                          id="user-firstname-input"
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] uppercase font-black text-slate-400">Sobrenome <span className="text-rose-500">*</span></label>
-                      <div className="relative rounded-xl shadow-sm">
-                        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                          <User className="h-4 w-4 text-slate-400" />
-                        </div>
-                        <input
-                          type="text"
-                          placeholder="Ex: Silva"
-                          value={uLastName}
-                          onChange={(e) => setULastName(e.target.value)}
-                          disabled={userLoading}
-                          className="w-full pl-10 pr-3.5 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
-                          id="user-lastname-input"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Usuário (username) */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-black text-slate-400">Nome de Usuário (username) <span className="text-rose-500">*</span></label>
-                    <div className="relative rounded-xl shadow-sm">
-                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                        <User className="h-4 w-4 text-slate-400" />
-                      </div>
-                      <input
-                        type="text"
-                        placeholder="Ex: joaosilva"
-                        value={uUsername}
-                        onChange={(e) => setUUsername(e.target.value)}
-                        disabled={userLoading}
-                        className="w-full pl-10 pr-3.5 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 disabled:bg-slate-50 disabled:text-slate-500"
-                        id="user-username-input"
-                      />
-                    </div>
-                    <p className="text-[9px] text-slate-400 font-mono">O nome de usuário define o login de acesso do colaborador.</p>
-                  </div>
-
-                  {/* Senha */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-black text-slate-400">
-                      {userFormMode === 'add' 
-                        ? 'Senha de Acesso (Mín. 6 caracteres) *' 
-                        : 'Nova Senha de Acesso (Deixe em branco para manter a atual)'}
-                    </label>
-                    <div className="relative rounded-xl shadow-sm">
-                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                        <Lock className="h-4 w-4 text-slate-400" />
-                      </div>
-                      <input
-                        type="password"
-                        placeholder={userFormMode === 'add' ? '••••••••' : 'Mín. 6 caracteres se for alterar'}
-                        value={uPassword}
-                        onChange={(e) => setUPassword(e.target.value)}
-                        disabled={userLoading}
-                        className="w-full pl-10 pr-3.5 py-2 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
-                        id="user-password-input"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Função / Perfil */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-black text-slate-400">Função / Perfil no Sistema</label>
-                    <div className="grid grid-cols-2 gap-3 mt-1">
-                      <button
-                        type="button"
-                        onClick={() => setURole('TECNICO_CAMPO')}
-                        disabled={userLoading}
-                        className={`flex items-center justify-center gap-2 py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
-                          uRole === 'TECNICO_CAMPO' || uRole === 'tecnico'
-                            ? 'bg-slate-800 border-emerald-500 text-emerald-400' 
-                            : 'bg-white border-slate-200 text-slate-500 hover:text-slate-800'
-                        }`}
-                        id="user-role-tecnico-btn"
-                      >
-                        <Wrench className="h-3.5 w-3.5" />
-                        Técnico Campo
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setURole('ADMINISTRADOR')}
-                        disabled={userLoading}
-                        className={`flex items-center justify-center gap-2 py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
-                          uRole === 'ADMINISTRADOR' || uRole === 'administrador'
-                            ? 'bg-slate-800 border-emerald-500 text-emerald-400' 
-                            : 'bg-white border-slate-200 text-slate-500 hover:text-slate-800'
-                        }`}
-                        id="user-role-admin-btn"
-                      >
-                        <Shield className="h-3.5 w-3.5" />
-                        Admin
-                      </button>
-                    </div>
-                    <p className="text-[9px] text-slate-400 leading-normal mt-1.5">
-                      {uRole === 'administrador' 
-                        ? 'Permissão total: Gerenciar estoque, cadastrar e excluir equipamentos, frotas, licenças e gerir acessos de colaboradores.' 
-                        : 'Permissão limitada: Registrar novas movimentações físicas de campo (instalação, remoção, calibração e envio para manutenção).'}
-                    </p>
-                  </div>
-
-                  {/* Submit buttons */}
-                  <div className="pt-2 flex gap-3">
-                    {userFormMode === 'edit' && (
-                      <button
-                        type="button"
-                        onClick={resetUserForm}
-                        disabled={userLoading}
-                        className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all"
-                      >
-                        Cancelar
-                      </button>
-                    )}
-                    <button
-                      type="submit"
-                      disabled={userLoading}
-                      className="flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-600/10 flex items-center justify-center gap-1.5 disabled:opacity-50"
-                      id="user-submit-btn"
-                    >
-                      <Save className="h-4 w-4" />
-                      {userLoading 
-                        ? (userFormMode === 'add' ? 'Gravando...' : 'Atualizando...') 
-                        : (userFormMode === 'add' ? 'Cadastrar Usuário' : 'Salvar Alterações')
-                      }
-                    </button>
-                  </div>
-
-                </form>
+                <UserForm
+                  mode="admin"
+                  initialData={selectedUser ? {
+                    firstName: selectedUser.firstName || selectedUser.name.split(' ')[0],
+                    lastName: selectedUser.lastName || selectedUser.name.split(' ').slice(1).join(' '),
+                    username: selectedUser.username || selectedUser.email.split('@')[0],
+                    name: selectedUser.name,
+                    role: selectedUser.role,
+                  } : undefined}
+                  loading={userLoading}
+                  error={userError}
+                  success={userSuccess}
+                  onSave={handleUserFormSave}
+                  onCancel={userFormMode === 'edit' ? resetUserForm : undefined}
+                  submitLabel={userFormMode === 'add' ? 'Cadastrar Usuário' : 'Salvar Alterações'}
+                />
               )}
 
             </div>
