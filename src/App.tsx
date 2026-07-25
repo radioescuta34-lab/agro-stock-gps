@@ -78,6 +78,7 @@ export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallBtn, setShowInstallBtn] = useState(true);
@@ -123,6 +124,18 @@ export default function App() {
       window.removeEventListener('__installPromptReady', handleInstallReady);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isUserMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('#user-menu-button') && !target.closest('#user-menu-dropdown')) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isUserMenuOpen]);
 
   const handleInstallApp = async () => {
     if (!deferredPrompt) {
@@ -2070,31 +2083,43 @@ export default function App() {
                 </div>
               )}
 
-              <div className="text-right">
-                <span className="block text-xs font-bold text-white">{user.name}</span>
-                <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] font-extrabold tracking-wider uppercase bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/25">
-                  {user.role === 'administrador' || user.role === 'ADMINISTRADOR' ? (
-                    <>
-                      <Shield className="h-2.5 w-2.5" />
-                      Admin
-                    </>
-                  ) : (
-                    <>
-                      <Wrench className="h-2.5 w-2.5" />
-                      Técnico
-                    </>
-                  )}
-                </span>
-              </div>
+              <div className="relative">
+                <button
+                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                  className="text-right cursor-pointer hover:opacity-80 transition-opacity focus:outline-none"
+                  id="user-menu-button"
+                >
+                  <span className="block text-xs font-bold text-white">{user.name}</span>
+                  <span className="inline-flex items-center gap-1 mt-0.5 text-[9px] font-extrabold tracking-wider uppercase bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/25">
+                    {user.role === 'administrador' || user.role === 'ADMINISTRADOR' ? (
+                      <>
+                        <Shield className="h-2.5 w-2.5" />
+                        Admin
+                      </>
+                    ) : (
+                      <>
+                        <Wrench className="h-2.5 w-2.5" />
+                        Técnico
+                      </>
+                    )}
+                  </span>
+                </button>
 
-              <button
-                onClick={handleLogout}
-                className="p-2.5 bg-slate-800/80 hover:bg-rose-500/10 hover:text-rose-400 border border-slate-700 hover:border-rose-500/20 rounded-xl transition-all text-slate-300"
-                title="Desconectar"
-                id="logout-btn"
-              >
-                <LogOut className="h-4 w-4" />
-              </button>
+                {isUserMenuOpen && (
+                  <div
+                    id="user-menu-dropdown"
+                    className="absolute right-0 mt-2 w-40 bg-slate-800 border border-slate-600 rounded-xl shadow-lg z-50 py-1"
+                  >
+                    <button
+                      onClick={handleLogout}
+                      className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Sair
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Mobile menu button */}
