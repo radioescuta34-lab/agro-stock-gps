@@ -563,7 +563,6 @@ export default function App() {
           firstName: 'Carlos',
           lastName: 'Santos (Demo)',
           username: 'carlossantos',
-          passwordEncrypted: 'sha256_fallback_demo_hash',
           role: 'ADMINISTRADOR', 
           createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() 
         },
@@ -574,7 +573,6 @@ export default function App() {
           firstName: 'Felipe',
           lastName: 'Neves (Demo)',
           username: 'felipeneves',
-          passwordEncrypted: 'sha256_fallback_demo_hash',
           role: 'TECNICO_CAMPO', 
           createdAt: new Date(Date.now() - 25 * 24 * 60 * 60 * 1000).toISOString() 
         },
@@ -585,7 +583,6 @@ export default function App() {
           firstName: 'Rodrigo',
           lastName: 'Antunes (Demo)',
           username: 'rodrigoantunes',
-          passwordEncrypted: 'sha256_fallback_demo_hash',
           role: 'TECNICO_CAMPO', 
           createdAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString() 
         }
@@ -627,6 +624,8 @@ export default function App() {
   // Sign out
   const handleLogout = async () => {
     if (isDemoMode) {
+      const keys = Object.keys(localStorage).filter(k => k.startsWith(LOCAL_STORAGE_KEY_PREFIX));
+      keys.forEach(k => localStorage.removeItem(k));
       setIsDemoMode(false);
       setUser(null);
       setComponents([]);

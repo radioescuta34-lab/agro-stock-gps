@@ -2,11 +2,15 @@
   "name": "Agro Stock GPS",
   "short_name": "AgroStockGPS",
   "description": "Gerenciamento integrado de licenças e hardware agrícola de alta precisão para usinas sucroenergéticas.",
+  "lang": "pt-BR",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "portrait",
   "background_color": "#0f172a",
   "theme_color": "#10b981",
+  "categories": ["business", "productivity"],
   "icons": [
     {
       "src": "/icon-128.png",

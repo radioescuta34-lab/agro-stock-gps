@@ -9,18 +9,25 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-// Desativar e remover Service Workers anteriores para evitar cache agressivo de arquivos desatualizados
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then((registrations) => {
-    for (const registration of registrations) {
-      registration.unregister().then((success) => {
-        if (success) {
-          console.log('ServiceWorker desregistrado com sucesso para evitar cache.');
-        }
+  window.addEventListener('load', () => {
+    navigator.serviceWorker
+      .register('/sw.js', { updateViaCache: 'none' })
+      .then((reg) => {
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'activated') {
+                newWorker.postMessage({ type: 'SKIP_WAITING' });
+              }
+            });
+          }
+        });
+      })
+      .catch((err) => {
+        console.error('Erro ao registrar Service Worker:', err);
       });
-    }
-  }).catch((error) => {
-    console.error('Erro ao remover ServiceWorker:', error);
   });
 }
 

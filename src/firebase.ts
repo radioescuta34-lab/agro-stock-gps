@@ -1,12 +1,22 @@
 import { initializeApp, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { getFirestore, doc, getDocFromServer, enableIndexedDbPersistence } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const db = (firebaseConfig as any).firestoreDatabaseId 
   ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId) 
   : getFirestore(app); /* CRITICAL: Handles both sandbox and personal custom Firebase databases */
+
+// Enable offline persistence for secure IndexedDB caching (replaces localStorage)
+enableIndexedDbPersistence(db).catch((err) => {
+  if (err.code === 'failed-precondition') {
+    console.warn('Offline persistence failed: multiple tabs open');
+  } else if (err.code === 'unimplemented') {
+    console.warn('Offline persistence not supported by this browser');
+  }
+});
+
 export const auth = getAuth(app);
 
 export function getSecondaryAuth() {

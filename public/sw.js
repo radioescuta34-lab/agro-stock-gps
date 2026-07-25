@@ -1,74 +1,107 @@
-const CACHE_NAME = 'agro-stock-gps-v3';
-const PRE_CACHE_ASSETS = [
-  '/',
-  '/index.html',
+const CACHE_NAME = 'agro-stock-gps-v4';
+const STATIC_ASSETS = [
   '/manifest.json',
   '/icon-128.png',
   '/icon-192.png',
   '/icon-512.png',
-  '/apple-touch-icon.png'
+  '/apple-touch-icon.png',
+  '/favicon.svg'
 ];
 
-// Install Event
+// Install — pre-cache apenas assets estáticos reais
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      console.log('[Service Worker] Pre-caching offline assets');
-      return cache.addAll(PRE_CACHE_ASSETS).catch((err) => {
-        console.warn('[Service Worker] Pre-cache failed (some assets might be dynamic):', err);
-      });
+      return cache.addAll(STATIC_ASSETS);
     })
   );
   self.skipWaiting();
 });
 
-// Activate Event
+// Activate — limpar caches antigos e assumir controle
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
-        cacheNames.map((cache) => {
-          if (cache !== CACHE_NAME) {
-            console.log('[Service Worker] Clearing old cache:', cache);
-            return caches.delete(cache);
-          }
-        })
+        cacheNames
+          .filter((name) => name !== CACHE_NAME)
+          .map((name) => caches.delete(name))
       );
     })
   );
   self.clients.claim();
 });
 
-// Fetch Event (Network-First falling back to Cache)
+// Mensagens do app (skip_waiting forçado)
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
+// Fetch — estratégia dual
+const SENSITIVE_PATHS = ['/api/licenses/', '/api/admin/', '/api/loans/'];
+
 self.addEventListener('fetch', (event) => {
-  // Only handle GET requests and local/http requests
-  if (event.request.method !== 'GET' || !event.request.url.startsWith(self.location.origin)) {
+  const { request } = event;
+  if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
+
+  // Só intercepta requisições do mesmo origin
+  if (url.origin !== location.origin) return;
+
+  // Nunca cachear rotas sensíveis (dados de licença, admin, empréstimos)
+  if (SENSITIVE_PATHS.some(p => url.pathname.startsWith(p))) {
     return;
   }
 
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        // If the response is valid, clone and cache it
-        if (response && response.status === 200 && response.type === 'basic') {
-          const responseToCache = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
-        }
-        return response;
-      })
-      .catch(() => {
-        // Network failed, try to serve from cache
-        return caches.match(event.request).then((cachedResponse) => {
-          if (cachedResponse) {
-            return cachedResponse;
-          }
-          // If both fail, return a basic fallback for HTML navigation
-          if (event.request.headers.get('accept').includes('text/html')) {
-            return caches.match('/');
-          }
-        });
-      })
-  );
+  // Cache-first para assets do Vite (arquivos com hash)
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(cacheFirst(request));
+    return;
+  }
+
+  // Network-first para tudo mais (páginas, API, etc)
+  event.respondWith(networkFirst(request));
 });
+
+// Cache-first — rápido, ideal para assets imutáveis
+async function cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached) return cached;
+
+  try {
+    const response = await fetch(request);
+    if (response && response.status === 200) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    return new Response('Asset indisponível', { status: 503 });
+  }
+}
+
+// Network-first — sempre tenta rede, fallback pro cache
+async function networkFirst(request) {
+  try {
+    const response = await fetch(request);
+    if (response && response.status === 200) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+
+    // Fallback offline para navegação HTML
+    if (request.headers.get('accept')?.includes('text/html')) {
+      const fallback = await caches.match('/index.html');
+      if (fallback) return fallback;
+    }
+
+    return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+  }
+}

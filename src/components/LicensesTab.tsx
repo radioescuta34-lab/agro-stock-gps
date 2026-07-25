@@ -41,6 +41,11 @@ import {
 
 const LOCAL_STORAGE_KEY_PREFIX = 'agro_stock_gps_';
 
+function maskCode(code: string) {
+  if (!code || code.length <= 8) return code;
+  return code.slice(0, 5) + '...' + code.slice(-4);
+}
+
 interface LicensesTabProps {
   licenses: License[];
   components: AutopilotComponent[];
@@ -1415,10 +1420,10 @@ export default function LicensesTab({
                   {/* Activation Key Code Box */}
                   <div className="mt-3.5 p-2 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between">
                     <div className="flex flex-col min-w-0 flex-1">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Código de Ativação</span>
-                      <span className="text-xs font-mono text-slate-600 font-bold tracking-tight select-all truncate max-w-[95%]" title={lic.code}>
-                        {lic.code}
-                      </span>
+                        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Código de Ativação</span>
+                        <span className="text-xs font-mono text-slate-600 font-bold tracking-tight truncate max-w-[95%]" title={lic.code}>
+                          {maskCode(lic.code)}
+                        </span>
                     </div>
                     <Key className="h-3.5 w-3.5 text-slate-400 shrink-0 ml-2" />
                   </div>
@@ -1428,8 +1433,8 @@ export default function LicensesTab({
                     <div className="mt-2.5 p-2 bg-indigo-50/50 border border-indigo-100 rounded-xl flex items-center justify-between">
                       <div className="flex flex-col min-w-0 flex-1">
                         <span className="text-[9px] font-bold text-indigo-700 uppercase tracking-wider">Master Unlock Key</span>
-                        <span className="text-xs font-mono text-indigo-900 font-bold tracking-tight select-all truncate max-w-[95%]" title={lic.masterUnlockKey}>
-                          {lic.masterUnlockKey}
+                        <span className="text-xs font-mono text-indigo-900 font-bold tracking-tight truncate max-w-[95%]" title={lic.masterUnlockKey}>
+                          {maskCode(lic.masterUnlockKey)}
                         </span>
                       </div>
                       <Sparkles className="h-3.5 w-3.5 text-indigo-400 shrink-0 ml-2" />
@@ -1638,15 +1643,15 @@ export default function LicensesTab({
                         <div className="flex flex-col gap-1 max-w-[180px]">
                           <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-100 px-2 py-1 rounded-lg">
                             <Key className="h-3 w-3 text-slate-400 shrink-0" />
-                            <span className="text-[11px] font-mono text-slate-600 font-bold select-all truncate" title={lic.code}>
-                              {lic.code}
+                            <span className="text-[11px] font-mono text-slate-600 font-bold truncate" title={lic.code}>
+                              {maskCode(lic.code)}
                             </span>
                           </div>
                           {lic.masterUnlockKey && (
                             <div className="flex items-center gap-1.5 bg-indigo-50/50 border border-indigo-100 px-2 py-1 rounded-lg">
                               <Sparkles className="h-3 w-3 text-indigo-400 shrink-0" />
-                              <span className="text-[11px] font-mono text-indigo-900 font-bold select-all truncate" title={lic.masterUnlockKey}>
-                                {lic.masterUnlockKey}
+                              <span className="text-[11px] font-mono text-indigo-900 font-bold truncate" title={lic.masterUnlockKey}>
+                                {maskCode(lic.masterUnlockKey)}
                               </span>
                             </div>
                           )}
