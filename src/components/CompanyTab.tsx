@@ -687,12 +687,16 @@ export default function CompanyTab({
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           {/* Avatar Circle */}
-                          <div className={`h-9 w-9 rounded-full font-bold text-xs flex items-center justify-center shrink-0 ${
+                          <div className={`h-9 w-9 rounded-full overflow-hidden font-bold text-xs flex items-center justify-center shrink-0 ${
                             isUserAdmin 
                               ? 'bg-amber-100 text-amber-800 border border-amber-200' 
                               : 'bg-blue-100 text-blue-800 border border-blue-200'
                           }`}>
-                            {getInitials(u.name)}
+                            {u.photoURL ? (
+                              <img src={u.photoURL} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                              getInitials(u.name)
+                            )}
                           </div>
                           
                           {/* Info */}

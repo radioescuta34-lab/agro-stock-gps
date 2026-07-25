@@ -498,6 +498,7 @@ export default function App() {
               username: data.username || '',
               passwordEncrypted: data.passwordEncrypted || '',
               role: (data.role === 'administrador' ? 'ADMINISTRADOR' : (data.role === 'tecnico' ? 'TECNICO_CAMPO' : data.role)) as UserRole,
+              photoURL: data.photoURL || '',
               createdAt: data.createdAt || new Date().toISOString()
             });
           });
@@ -1938,6 +1939,7 @@ export default function App() {
         users[idx] = { ...users[idx], ...firestoreData };
         localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}users`, JSON.stringify(users));
       }
+      setUsersList(users);
       setUser({ ...user, ...firestoreData });
       return { success: true };
     }
