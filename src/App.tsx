@@ -57,7 +57,8 @@ import {
   Key,
   Handshake,
   Building2,
-  Download
+  Download,
+  Info
 } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'agro_stock_gps_';
@@ -79,7 +80,8 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [showInstallBtn, setShowInstallBtn] = useState(false);
+  const [showInstallBtn, setShowInstallBtn] = useState(true);
+  const [showInstallTip, setShowInstallTip] = useState(false);
 
   // Core Data Lists
   const [components, setComponents] = useState<AutopilotComponent[]>([]);
@@ -97,21 +99,20 @@ export default function App() {
 
   // Listener para capturar o prompt de instalação do PWA
   useEffect(() => {
+    // Detectar se já está em modo standalone (PWA instalado)
+    const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+      || (window.navigator as any).standalone === true;
+    if (isStandalone) {
+      setShowInstallBtn(false);
+      return;
+    }
+
     const handleBeforeInstallPrompt = (e: any) => {
-      // Impede que o banner padrão do navegador apareça automaticamente
       e.preventDefault();
-      // Guarda o evento para ser disparado posteriormente
       setDeferredPrompt(e);
-      // Mostra o botão de instalação na interface
-      setShowInstallBtn(true);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-
-    // Ocultar botão se o aplicativo já estiver sendo executado como PWA (standalone)
-    if (window.matchMedia('(display-mode: standalone)').matches) {
-      setShowInstallBtn(false);
-    }
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -119,15 +120,16 @@ export default function App() {
   }, []);
 
   const handleInstallApp = async () => {
-    if (!deferredPrompt) return;
-    // Dispara o prompt de instalação nativo
+    if (!deferredPrompt) {
+      setShowInstallTip(true);
+      return;
+    }
     deferredPrompt.prompt();
-    // Aguarda a resposta do usuário
     const { outcome } = await deferredPrompt.userChoice;
     console.log(`Resposta do usuário para a instalação: ${outcome}`);
-    // O evento só pode ser usado uma vez, limpamos os estados
     setDeferredPrompt(null);
     setShowInstallBtn(false);
+    setShowInstallTip(false);
   };
 
   // Authenticated state listener
@@ -2040,15 +2042,27 @@ export default function App() {
             {/* User Profile / Logout Area */}
             <div className="hidden md:flex items-center gap-4">
               {showInstallBtn && (
-                <button
-                  onClick={handleInstallApp}
-                  className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md hover:scale-105 active:scale-95"
-                  title="Instalar Aplicativo no Dispositivo"
-                  id="install-pwa-btn-desktop"
-                >
-                  <Download className="h-3.5 w-3.5 animate-bounce" />
-                  Instalar App
-                </button>
+                <div className="relative">
+                  <button
+                    onClick={handleInstallApp}
+                    className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md hover:scale-105 active:scale-95"
+                    title="Instalar Aplicativo no Dispositivo"
+                    id="install-pwa-btn-desktop"
+                  >
+                    <Download className="h-3.5 w-3.5 animate-bounce" />
+                    Instalar App
+                  </button>
+                  {showInstallTip && (
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-64 bg-slate-800 border border-slate-600 text-white text-[11px] p-3 rounded-xl shadow-lg z-50 leading-relaxed">
+                      <div className="flex items-start gap-2">
+                        <Info className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                        <span>
+                          <strong>Como instalar:</strong> Clique no ícone <Download className="inline h-3 w-3" /> na barra de endereços do Chrome, ou acesse o menu <strong>⋮</strong> → <strong>Instalar aplicativo</strong>.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
 
               <div className="text-right">
@@ -2166,7 +2180,7 @@ export default function App() {
             )}
 
             {showInstallBtn && (
-              <div className="pt-2">
+              <div className="pt-2 relative">
                 <button
                   onClick={handleInstallApp}
                   className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs rounded-xl transition-all shadow-md active:scale-95"
@@ -2174,6 +2188,14 @@ export default function App() {
                   <Download className="h-4 w-4 animate-bounce" />
                   Instalar Aplicativo (PWA)
                 </button>
+                {showInstallTip && (
+                  <div className="mt-2 bg-slate-800 border border-slate-600 text-white text-[11px] p-3 rounded-xl shadow-lg leading-relaxed flex items-start gap-2">
+                    <Info className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Como instalar:</strong> No Chrome, acesse o menu <strong>⋮</strong> → <strong>Instalar aplicativo</strong>, ou toque no ícone de instalação na barra de endereços.
+                    </span>
+                  </div>
+                )}
               </div>
             )}
 
