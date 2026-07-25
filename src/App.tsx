@@ -107,15 +107,20 @@ export default function App() {
       return;
     }
 
-    const handleBeforeInstallPrompt = (e: any) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
+    // Verificar se o script inline já capturou o evento antes do React montar
+    if ((window as any).__deferredInstallPrompt) {
+      setDeferredPrompt((window as any).__deferredInstallPrompt);
+    }
+
+    // Escutar o custom event disparado pelo script inline em index.html
+    const handleInstallReady = () => {
+      setDeferredPrompt((window as any).__deferredInstallPrompt);
     };
 
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('__installPromptReady', handleInstallReady);
 
     return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('__installPromptReady', handleInstallReady);
     };
   }, []);
 
