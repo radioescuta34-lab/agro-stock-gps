@@ -40,8 +40,8 @@ import MachinesTab from './components/MachinesTab';
 import MovementsTab from './components/MovementsTab';
 import LicensesTab from './components/LicensesTab';
 import LoansTab from './components/LoansTab';
-import CompanyTab from './components/CompanyTab';
 import ProfileTab from './components/ProfileTab';
+import SettingsTab from './components/SettingsTab';
 import { 
   Cpu, 
   Tractor,
@@ -57,10 +57,8 @@ import {
   CheckCircle2,
   Key,
   Handshake,
-  Building2,
-  Download,
-  Info,
-  User
+  User,
+  Settings
 } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'agro_stock_gps_';
@@ -82,9 +80,6 @@ export default function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [showInstallBtn, setShowInstallBtn] = useState(true);
-  const [showInstallTip, setShowInstallTip] = useState(false);
 
   // Core Data Lists
   const [components, setComponents] = useState<AutopilotComponent[]>([]);
@@ -100,33 +95,6 @@ export default function App() {
 
   const [loadingApp, setLoadingApp] = useState(true);
 
-  // Listener para capturar o prompt de instalação do PWA
-  useEffect(() => {
-    // Detectar se já está em modo standalone (PWA instalado)
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches
-      || (window.navigator as any).standalone === true;
-    if (isStandalone) {
-      setShowInstallBtn(false);
-      return;
-    }
-
-    // Verificar se o script inline já capturou o evento antes do React montar
-    if ((window as any).__deferredInstallPrompt) {
-      setDeferredPrompt((window as any).__deferredInstallPrompt);
-    }
-
-    // Escutar o custom event disparado pelo script inline em index.html
-    const handleInstallReady = () => {
-      setDeferredPrompt((window as any).__deferredInstallPrompt);
-    };
-
-    window.addEventListener('__installPromptReady', handleInstallReady);
-
-    return () => {
-      window.removeEventListener('__installPromptReady', handleInstallReady);
-    };
-  }, []);
-
   useEffect(() => {
     if (!isUserMenuOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
@@ -138,19 +106,6 @@ export default function App() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isUserMenuOpen]);
-
-  const handleInstallApp = async () => {
-    if (!deferredPrompt) {
-      setShowInstallTip(true);
-      return;
-    }
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-    console.log(`Resposta do usuário para a instalação: ${outcome}`);
-    setDeferredPrompt(null);
-    setShowInstallBtn(false);
-    setShowInstallTip(false);
-  };
 
   // Authenticated state listener
   useEffect(() => {
@@ -2107,42 +2062,19 @@ export default function App() {
 
               {(user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
                 <button
-                  onClick={() => navigateToTab('company')}
-                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'company' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
-                  id="nav-company"
+                  onClick={() => navigateToTab('settings')}
+                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'settings' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
+                  id="nav-settings"
                 >
-                  <Building2 className="h-4 w-4" />
-                  Minha Empresa
+                  <Settings className="h-4 w-4" />
+                  Configurações
                 </button>
               )}
+
             </div>
 
             {/* User Profile / Logout Area */}
             <div className="hidden md:flex items-center gap-4">
-              {showInstallBtn && (
-                <div className="relative">
-                  <button
-                    onClick={handleInstallApp}
-                    className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-md hover:scale-105 active:scale-95"
-                    title="Instalar Aplicativo no Dispositivo"
-                    id="install-pwa-btn-desktop"
-                  >
-                    <Download className="h-3.5 w-3.5 animate-bounce" />
-                    Instalar App
-                  </button>
-                  {showInstallTip && (
-                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-64 bg-slate-800 border border-slate-600 text-white text-[11px] p-3 rounded-xl shadow-lg z-50 leading-relaxed">
-                      <div className="flex items-start gap-2">
-                        <Info className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
-                        <span>
-                          <strong>Como instalar:</strong> Clique no ícone <Download className="inline h-3 w-3" /> na barra de endereços do Chrome, ou acesse o menu <strong>⋮</strong> → <strong>Instalar aplicativo</strong>.
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
               <div className="relative">
                 <button
                   onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
@@ -2160,15 +2092,15 @@ export default function App() {
                   </div>
                   <div className="text-left">
                     <span className="block text-xs font-bold text-white">{user.name.split(' ')[0]}</span>
-                    <span className="inline-flex items-center gap-1 text-[8px] font-semibold tracking-normal uppercase bg-emerald-500/15 text-emerald-400/80 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase bg-emerald-500/15 text-emerald-400/80 px-2 py-0.5 rounded-full border border-emerald-500/20">
                       {user.role === 'administrador' || user.role === 'ADMINISTRADOR' ? (
                         <>
-                          <Shield className="h-2.5 w-2.5" />
+                          <Shield className="h-3 w-3" />
                           Admin
                         </>
                       ) : (
                         <>
-                          <Wrench className="h-2.5 w-2.5" />
+                          <Wrench className="h-3 w-3" />
                           Técnico
                         </>
                       )}
@@ -2179,21 +2111,21 @@ export default function App() {
                 {isUserMenuOpen && (
                   <div
                     id="user-menu-dropdown"
-                    className="absolute right-0 mt-2 w-44 bg-slate-800 border border-slate-600 rounded-xl shadow-lg z-50 py-1"
+                    className="absolute right-0 mt-2 w-40 bg-slate-800 border border-slate-600 rounded-xl shadow-lg z-50 py-1"
                   >
                     <button
                       onClick={() => { setIsUserMenuOpen(false); setCurrentTab('profile'); }}
-                      className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-700/50 rounded-lg transition-colors"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700/50 rounded-lg transition-colors"
                     >
-                      <User className="h-4 w-4" />
+                      <User className="h-3.5 w-3.5" />
                       Meu Perfil
                     </button>
-                    <div className="border-t border-slate-700 my-1" />
+                    <div className="border-t border-slate-700 my-0.5" />
                     <button
                       onClick={handleLogout}
-                      className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors"
                     >
-                      <LogOut className="h-4 w-4" />
+                      <LogOut className="h-3.5 w-3.5" />
                       Sair
                     </button>
                   </div>
@@ -2280,32 +2212,12 @@ export default function App() {
 
             {(user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
               <button
-                onClick={() => navigateToTab('company')}
-                className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'company' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
+                onClick={() => navigateToTab('settings')}
+                className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'settings' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
               >
-                <Building2 className="h-4 w-4" />
-                Minha Empresa
+                <Settings className="h-4 w-4" />
+                Configurações
               </button>
-            )}
-
-            {showInstallBtn && (
-              <div className="pt-2 relative">
-                <button
-                  onClick={handleInstallApp}
-                  className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs rounded-xl transition-all shadow-md active:scale-95"
-                >
-                  <Download className="h-4 w-4 animate-bounce" />
-                  Instalar Aplicativo (PWA)
-                </button>
-                {showInstallTip && (
-                  <div className="mt-2 bg-slate-800 border border-slate-600 text-white text-[11px] p-3 rounded-xl shadow-lg leading-relaxed flex items-start gap-2">
-                    <Info className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
-                    <span>
-                      <strong>Como instalar:</strong> No Chrome, acesse o menu <strong>⋮</strong> → <strong>Instalar aplicativo</strong>, ou toque no ícone de instalação na barra de endereços.
-                    </span>
-                  </div>
-                )}
-              </div>
             )}
 
             <div className="pt-3 border-t border-slate-700/60 mt-3">
@@ -2408,24 +2320,24 @@ export default function App() {
           />
         )}
 
-        {currentTab === 'company' && (user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
-          <CompanyTab
-            companyProfile={companyProfile}
-            role={user.role}
-            currentUserName={user.name}
-            onUpdateCompany={handleUpdateCompany}
-            usersList={usersList}
-            onAddUser={handleAddUser}
-            onEditUser={handleEditUser}
-            onDeleteUser={handleDeleteUser}
-          />
-        )}
-
         {currentTab === 'profile' && (
           <ProfileTab
             user={user}
             onUpdateProfile={handleUpdateOwnProfile}
             onBack={() => setCurrentTab('dashboard')}
+          />
+        )}
+
+        {currentTab === 'settings' && (user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
+          <SettingsTab
+            companyProfile={companyProfile}
+            role={user.role}
+            currentUserName={user.name}
+            usersList={usersList}
+            onUpdateCompany={handleUpdateCompany}
+            onAddUser={handleAddUser}
+            onEditUser={handleEditUser}
+            onDeleteUser={handleDeleteUser}
           />
         )}
 

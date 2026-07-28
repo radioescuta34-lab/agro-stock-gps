@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { UserRole } from '../types';
 import {
   User,
+  AtSign,
   Save,
   Shield,
   Wrench,
   Lock,
+  Check,
   CheckCircle,
-  ArrowLeft
+  X
 } from 'lucide-react';
 
 export interface UserFormData {
@@ -85,14 +87,14 @@ export default function UserForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
       {error && (
-        <div className="bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold p-3 rounded-lg">
+        <div className="bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold p-3 rounded-xl">
           {error}
         </div>
       )}
 
       {success && (
-        <div className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold p-3 rounded-lg flex items-center gap-2">
-          <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
+        <div className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold p-3 rounded-xl flex items-center gap-2">
+          <CheckCircle className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
           {success}
         </div>
       )}
@@ -105,7 +107,7 @@ export default function UserForm({
           </label>
           <div className="relative rounded-xl shadow-sm">
             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-              <User className="h-4 w-4 text-slate-400" />
+              <User className="h-3.5 w-3.5 text-slate-400" />
             </div>
             <input
               type="text"
@@ -121,19 +123,14 @@ export default function UserForm({
           <label className="text-[10px] uppercase font-black text-slate-400">
             Sobrenome
           </label>
-          <div className="relative rounded-xl shadow-sm">
-            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-              <User className="h-4 w-4 text-slate-400" />
-            </div>
-            <input
-              type="text"
-              placeholder="Ex: Silva"
-              value={lastName}
-              onChange={(e) => setLastName(e.target.value)}
-              disabled={loading}
-              className="w-full pl-10 pr-3.5 py-1.5 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
-            />
-          </div>
+          <input
+            type="text"
+            placeholder="Ex: Silva"
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            disabled={loading}
+            className="w-full px-3.5 py-1.5 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 disabled:bg-slate-50"
+          />
         </div>
       </div>
 
@@ -144,7 +141,7 @@ export default function UserForm({
         </label>
         <div className="relative rounded-xl shadow-sm">
           <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-            <User className="h-4 w-4 text-slate-400" />
+            <AtSign className="h-3.5 w-3.5 text-slate-400" />
           </div>
           <input
             type="text"
@@ -166,7 +163,7 @@ export default function UserForm({
         </label>
         <div className="relative rounded-xl shadow-sm">
           <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-            <Lock className="h-4 w-4 text-slate-400" />
+            <Lock className="h-3.5 w-3.5 text-slate-400" />
           </div>
           <input
             type="password"
@@ -188,27 +185,33 @@ export default function UserForm({
               type="button"
               onClick={() => setRole('TECNICO_CAMPO')}
               disabled={loading}
-              className={`flex items-center justify-center gap-2 py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+              className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
                 role === 'TECNICO_CAMPO' || role === 'tecnico'
-                  ? 'bg-slate-800 border-emerald-500 text-emerald-400'
-                  : 'bg-white border-slate-200 text-slate-500 hover:text-slate-800'
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                  : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
               }`}
             >
               <Wrench className="h-3.5 w-3.5" />
               Técnico Campo
+              {(role === 'TECNICO_CAMPO' || role === 'tecnico') && (
+                <Check className="h-3.5 w-3.5" />
+              )}
             </button>
             <button
               type="button"
               onClick={() => setRole('ADMINISTRADOR')}
               disabled={loading}
-              className={`flex items-center justify-center gap-2 py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+              className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
                 role === 'ADMINISTRADOR' || role === 'administrador'
-                  ? 'bg-slate-800 border-emerald-500 text-emerald-400'
-                  : 'bg-white border-slate-200 text-slate-500 hover:text-slate-800'
+                  ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                  : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
               }`}
             >
               <Shield className="h-3.5 w-3.5" />
               Admin
+              {(role === 'ADMINISTRADOR' || role === 'administrador') && (
+                <Check className="h-3.5 w-3.5" />
+              )}
             </button>
           </div>
         </div>
@@ -221,18 +224,18 @@ export default function UserForm({
             type="button"
             onClick={onCancel}
             disabled={loading}
-            className="flex-1 py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+            className="flex-1 py-2 px-3 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
+            <X className="h-3.5 w-3.5" />
             Cancelar
           </button>
         )}
         <button
           type="submit"
           disabled={loading || !firstName.trim() || !username.trim()}
-          className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm shadow-emerald-600/10 flex items-center justify-center gap-1.5 disabled:opacity-50"
+          className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-emerald-600/10 flex items-center justify-center gap-1.5 disabled:opacity-50"
         >
-          <Save className="h-4 w-4" />
+          <Save className="h-3.5 w-3.5" />
           {loading ? 'Salvando...' : (submitLabel || 'Salvar Alterações')}
         </button>
       </div>

@@ -1,10 +1,11 @@
 import express from "express";
 import path from "path";
-import { GoogleGenAI, Type } from "@google/genai";
+import { createWorker } from "tesseract.js";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { getFirestore } from "firebase-admin/firestore";
 
 dotenv.config();
 
@@ -35,16 +36,123 @@ export async function createApp() {
   app.use(express.json({ limit: "15mb" }));
   app.use(express.urlencoded({ limit: "15mb", extended: true }));
 
-  // Initialize Gemini client
-  const apiKey = process.env.GEMINI_API_KEY;
-  const ai = apiKey ? new GoogleGenAI({
-    apiKey: apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      }
+  function getDefaultModel(provider: string): string {
+    switch (provider) {
+      case 'openai': return 'gpt-4o-mini';
+      case 'deepseek': return 'deepseek-chat';
+      case 'gemini': return 'gemini-2.0-flash';
+      case 'claude': return 'claude-sonnet-4-20250514';
+      default: return 'deepseek-chat';
     }
-  }) : null;
+  }
+
+  async function callAIProvider(
+    systemPrompt: string,
+    userPrompt: string,
+    config: { provider: string; apiKey: string; model: string }
+  ): Promise<string> {
+    const { provider, apiKey, model } = config;
+
+    if (provider === 'openai') {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+          max_tokens: 2000, temperature: 0.1
+        })
+      });
+      if (!response.ok) throw new Error(`OpenAI API (${response.status}): ${await response.text().catch(() => '')}`);
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) throw new Error(`Resposta em branco do modelo ${model}.`);
+      return content;
+    }
+
+    if (provider === 'deepseek') {
+      const response = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+          max_tokens: 2000, temperature: 0.1
+        })
+      });
+      if (!response.ok) throw new Error(`DeepSeek API (${response.status}): ${await response.text().catch(() => '')}`);
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content;
+      if (!content) throw new Error(`Resposta em branco do modelo ${model}.`);
+      return content;
+    }
+
+    if (provider === 'gemini') {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 2000 }
+        })
+      });
+      if (!response.ok) throw new Error(`Gemini API (${response.status}): ${await response.text().catch(() => '')}`);
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error('Resposta em branco do modelo Gemini.');
+      return text;
+    }
+
+    if (provider === 'claude') {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({
+          model, max_tokens: 2000, system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }]
+        })
+      });
+      if (!response.ok) throw new Error(`Claude API (${response.status}): ${await response.text().catch(() => '')}`);
+      const data = await response.json();
+      const text = data.content?.[0]?.text;
+      if (!text) throw new Error('Resposta em branco do modelo Claude.');
+      return text;
+    }
+
+    throw new Error(`Provedor não suportado: ${provider}`);
+  }
+
+  // Try new format (AI_API_KEY, AI_PROVIDER, AI_MODEL), fallback to old DEEPSEEK_API_KEY
+  let aiConfig: { provider: string; apiKey: string; model: string } | null = null;
+  const envApiKey = process.env.AI_API_KEY || process.env.DEEPSEEK_API_KEY || '';
+  const envProvider = process.env.AI_PROVIDER || 'deepseek';
+  const envModel = process.env.AI_MODEL || getDefaultModel(envProvider);
+  if (envApiKey) {
+    aiConfig = { provider: envProvider, apiKey: envApiKey, model: envModel };
+  }
+
+  // Only try Firestore if a service account is configured
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    try {
+      const db = getFirestore();
+      const configDoc = await db.collection('settings').doc('app_config').get();
+      if (configDoc.exists) {
+        const data = configDoc.data()!;
+        if (data.aiApiKey) {
+          aiConfig = {
+            provider: data.aiProvider || 'deepseek',
+            apiKey: data.aiApiKey,
+            model: data.aiModel || getDefaultModel(data.aiProvider || 'deepseek')
+          };
+          console.log("[Settings] AI config loaded from Firestore");
+        } else if (data.deepseekApiKey) {
+          // Migrate old format
+          aiConfig = { provider: 'deepseek', apiKey: data.deepseekApiKey, model: 'deepseek-chat' };
+          console.log("[Settings] Legacy DeepSeek config loaded from Firestore");
+        }
+      }
+    } catch (e: any) {
+      console.log("[Settings] Could not load from Firestore: " + e.message);
+    }
+  }
 
   // API Route for parsing license images
   app.post("/api/licenses/parse-image", async (req, res) => {
@@ -54,92 +162,217 @@ export async function createApp() {
         return res.status(400).json({ error: "Dados de imagem inválidos ou ausentes na requisição." });
       }
 
-      if (!ai) {
+      if (!aiConfig || !aiConfig.apiKey) {
         return res.status(500).json({ 
-          error: "Chave de API do Gemini não está configurada no servidor. Por favor, configure GEMINI_API_KEY em Configurações > Secrets." 
+          error: "Chave de API não configurada no servidor. Acesse Configurações > Integrações > A.I. para configurar." 
         });
       }
 
-      // Format image part for Google GenAI SDK
-      const imagePart = {
-        inlineData: {
-          mimeType: mimeType,
-          data: imageBase64,
-        },
-      };
+      // Step 1: OCR local com Tesseract.js
+      console.log("[OCR] Iniciando reconhecimento de texto na imagem...");
+      const imageBuffer = Buffer.from(imageBase64, 'base64');
+      const worker = await createWorker('por+eng');
+      const { data } = await worker.recognize(imageBuffer);
+      await worker.terminate();
 
-      const promptPart = {
-        text: `Analise a imagem deste documento de ativação de licença agrícola (geralmente Trimble ou Topcon).
-Extraia os campos com precisão cirúrgica e retorne-os exatamente no formato JSON especificado.
+      const extractedText = data.text?.trim();
+      if (!extractedText || extractedText.length < 10) {
+        throw new Error("Não foi possível extrair texto da imagem. Verifique se a imagem está legível e tente novamente.");
+      }
+      console.log(`[OCR] Texto extraído (${extractedText.length} caracteres):`, extractedText.substring(0, 300));
+
+      // Step 2: AI estrutura o texto em JSON
+      const systemPrompt = "Você é um assistente especializado em extrair dados estruturados de licenças agrícolas Trimble/Topcon. Sempre responda com um objeto JSON válido.";
+      const userPrompt = `Analise o texto extraído de um documento de ativação de licença agrícola (Trimble ou Topcon) abaixo e extraia os campos solicitados.
 
 Instruções Especiais de Extração:
-1. Fabricante (brand): Identifique se é 'Trimble' ou 'Topcon'. Se a imagem mencionar 'sua assinatura Trimble' ou modelos como 'XCN-2050', 'GFX-750', etc., defina como 'Trimble'.
-2. Serviço (subscriptionService): Extraia o nome exato do serviço sob 'Serviço de assinatura' ou 'Subscription service' (ex: 'Ag Regional CenterPoint RTX Plus 1 Year (Brazil Only)').
-3. Datas (startDate, expirationDate): Converta datas como '18-JUL-2026' ou '18-JUL-2027' para o formato ISO 'YYYY-MM-DD' (ex: '2026-07-18', '2027-07-18'). Lembre-se que JUL = 07, AGO = 08, SET = 09, OUT = 10, NOV = 11, DEZ = 12, JAN = 01, FEV = 02, MAR = 03, ABR = 04, MAI = 05, JUN = 06.
+1. Fabricante (brand): Identifique se é 'Trimble' ou 'Topcon'.
+2. Serviço (subscriptionService): Extraia o nome exato do serviço (ex: 'Ag Regional CenterPoint RTX Plus 1 Year (Brazil Only)').
+3. Datas (startDate, expirationDate): Converta datas como '18-JUL-2026' para ISO 'YYYY-MM-DD' (ex: '2026-07-18'). Mapeamento: JAN=01, FEV=02, MAR=03, ABR=04, MAI=05, JUN=06, JUL=07, AGO=08, SET=09, OUT=10, NOV=11, DEZ=12.
 4. Número de Série (serialNumber): Extraia sob 'Número De Série' ou 'Serial Number'.
-5. Modelo (model): Extraia o modelo sob 'Modelo' ou 'Model' (ex: 'XCN-2050' ou 'GFX-750').
-6. Código de permissão de ativação (permissionCode): Pode ser uma chave convencional de letras e números separados por traços OU um código hash em Base64 longo terminando em '=' (ex: 'EI5W2vwrhW3/mQxFRFTBWUwwWFyKhLQhMvVHPQXm9WpM='), geralmente localizado ao lado de 'Código de permissão de ativação de assinatura:' ou 'Activation Passcode'. Extraia este valor por completo.
-7. Chave Master Unlock (masterUnlockKey): Se houver um campo para 'Master Unlock Key', extraia o valor por completo. Ele também pode ser um hash Base64 longo terminando em '=' (ex: 'EI5W2vwrhW3/mQxFRFTBWUwwWFyKhLQhMvVHPQXm9WpM=').
+5. Modelo (model): Extraia o modelo (ex: 'XCN-2050' ou 'GFX-750').
+6. Código de permissão de ativação (permissionCode): Código hash em Base64 ou chave alfanumérica, extraia o valor completo incluindo '=' no final.
+7. Chave Master Unlock (masterUnlockKey): Se houver, extraia o valor completo.
 
-Certifique-se de extrair as informações exatamente como estão escritas, sem omitir caracteres especiais ou o sinal de igual '=' no final dos hashes.`,
-      };
+Retorne APENAS um objeto JSON SEM formatação adicional (sem markdown, sem code blocks) com estes campos: subscriptionService, brand, startDate, expirationDate, serialNumber, model, permissionCode, masterUnlockKey
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: { parts: [imagePart, promptPart] },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              subscriptionService: { 
-                type: Type.STRING, 
-                description: "Nome exato do Serviço de assinatura (ex: 'Ag Regional CenterPoint RTX Plus 1 Year (Brazil Only)')" 
-              },
-              brand: {
-                type: Type.STRING,
-                description: "Fabricante da tecnologia, obrigatoriamente 'Trimble' ou 'Topcon'."
-              },
-              startDate: { 
-                type: Type.STRING, 
-                description: "Data de início convertida para o formato YYYY-MM-DD (ex: '2026-07-18')" 
-              },
-              expirationDate: { 
-                type: Type.STRING, 
-                description: "Data de validade/vencimento convertida para o formato YYYY-MM-DD (ex: '2027-07-18')" 
-              },
-              serialNumber: { 
-                type: Type.STRING, 
-                description: "Número de série do aparelho (ex: '5816550640')" 
-              },
-              model: { 
-                type: Type.STRING, 
-                description: "Modelo do monitor/aparelho (ex: 'XCN-2050')" 
-              },
-              permissionCode: { 
-                type: Type.STRING, 
-                description: "Código de permissão de ativação ou código hash longo em Base64 terminando em '=' (ex: 'EI5W2vwrhW3/mQxFRFTBWUwwWFyKhLQhMvVHPQXm9WpM=')" 
-              },
-              masterUnlockKey: { 
-                type: Type.STRING, 
-                description: "Chave Master Unlock Key ou código hash longo em Base64 terminando em '=' (ex: 'EI5W2vwrhW3/mQxFRFTBWUwwWFyKhLQhMvVHPQXm9WpM=')" 
-              }
-            },
-            required: ["subscriptionService", "brand", "startDate", "expirationDate", "serialNumber", "model", "permissionCode"]
-          }
-        }
-      });
+Texto extraído:
+${extractedText}`;
 
-      const text = response.text;
-      if (!text) {
-        throw new Error("Resposta em branco gerada pelo modelo do Gemini.");
+      const content = await callAIProvider(systemPrompt, userPrompt, aiConfig);
+
+      let jsonStr = content.trim();
+      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        jsonStr = jsonMatch[1].trim();
       }
 
-      const parsedData = JSON.parse(text);
+      const parsedData = JSON.parse(jsonStr);
       return res.json(parsedData);
     } catch (error: any) {
       console.error("Erro na análise OCR/AI de licença:", error);
-      return res.status(500).json({ error: error.message || "Falha na análise da imagem da licença pelo Gemini." });
+      return res.status(500).json({ error: error.message || "Falha na análise da imagem da licença." });
+    }
+  });
+
+  // Generic helper to persist AI config
+  async function persistAiConfig(config: { provider: string; apiKey: string; model: string }) {
+    aiConfig = config;
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+      try {
+        const dbs = getFirestore();
+        await dbs.collection('settings').doc('app_config').set({
+          aiProvider: config.provider,
+          aiApiKey: config.apiKey,
+          aiModel: config.model,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (e: any) {
+        console.log("[Settings] Could not persist to Firestore, saved in memory only (" + e.message + ")");
+      }
+    } else {
+      console.log("[Settings] No FIREBASE_SERVICE_ACCOUNT_KEY, config saved in memory only");
+    }
+    console.log(`[Settings] AI config saved (provider: ${config.provider}, model: ${config.model})`);
+  }
+
+  // POST /api/settings/ai — new multi-provider endpoint
+  app.post("/api/settings/ai", async (req, res) => {
+    try {
+      const { provider, apiKey, model } = req.body;
+      if (!apiKey) {
+        return res.status(400).json({ error: "Chave da API não informada." });
+      }
+      const actualProvider = provider || 'deepseek';
+      await persistAiConfig({
+        provider: actualProvider,
+        apiKey: apiKey.trim(),
+        model: model || getDefaultModel(actualProvider)
+      });
+      return res.json({ success: true, provider: actualProvider, model: model || getDefaultModel(actualProvider) });
+    } catch (error: any) {
+      console.error("Erro ao salvar configuração AI:", error);
+      return res.status(500).json({ error: error.message || "Erro ao salvar configuração AI." });
+    }
+  });
+
+  // POST /api/settings/ai-key — backward-compatible (accepts just apiKey, defaults to deepseek)
+  app.post("/api/settings/ai-key", async (req, res) => {
+    try {
+      const { apiKey, provider, model } = req.body;
+      if (!apiKey) {
+        return res.status(400).json({ error: "Chave da API não informada." });
+      }
+      const actualProvider = provider || 'deepseek';
+      await persistAiConfig({
+        provider: actualProvider,
+        apiKey: apiKey.trim(),
+        model: model || getDefaultModel(actualProvider)
+      });
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error("Erro ao salvar chave de API:", error);
+      return res.status(500).json({ error: error.message || "Erro ao salvar chave de API." });
+    }
+  });
+
+  // GET /api/settings/ai/status — new multi-provider status
+  app.get("/api/settings/ai/status", async (req, res) => {
+    try {
+      let config = aiConfig;
+      if (!config && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+        try {
+          const dbs = getFirestore();
+          const configDoc = await dbs.collection('settings').doc('app_config').get();
+          if (configDoc.exists) {
+            const data = configDoc.data()!;
+            if (data.aiApiKey) {
+              config = { provider: data.aiProvider || 'deepseek', apiKey: data.aiApiKey, model: data.aiModel || getDefaultModel(data.aiProvider || 'deepseek') };
+            } else if (data.deepseekApiKey) {
+              config = { provider: 'deepseek', apiKey: data.deepseekApiKey, model: 'deepseek-chat' };
+            }
+          }
+        } catch (e) {}
+      }
+      return res.json({
+        configured: !!(config?.apiKey),
+        provider: config?.provider || null,
+        model: config?.model || null
+      });
+    } catch (error: any) {
+      return res.json({ configured: false, provider: null, model: null });
+    }
+  });
+
+  // GET /api/settings/ai-key/status — backward-compatible
+  app.get("/api/settings/ai-key/status", async (req, res) => {
+    try {
+      let configured = !!(aiConfig?.apiKey);
+      let providerName = aiConfig?.provider || 'deepseek';
+      if (!aiConfig && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+        try {
+          const dbs = getFirestore();
+          const configDoc = await dbs.collection('settings').doc('app_config').get();
+          if (configDoc.exists) {
+            const data = configDoc.data()!;
+            configured = !!(data.aiApiKey || data.deepseekApiKey);
+            providerName = data.aiProvider || 'deepseek';
+          }
+        } catch (e) {}
+      }
+      return res.json({ configured, key: aiConfig?.apiKey || null, provider: providerName });
+    } catch (error: any) {
+      return res.json({ configured: !!(aiConfig?.apiKey), key: aiConfig?.apiKey || null, provider: aiConfig?.provider || 'deepseek' });
+    }
+  });
+
+  // POST /api/settings/ai/test — test any provider
+  app.post("/api/settings/ai/test", async (req, res) => {
+    try {
+      const { apiKey, provider, model } = req.body;
+      const testProvider = provider || aiConfig?.provider || 'deepseek';
+      const testKey = apiKey || aiConfig?.apiKey || '';
+      const testModel = model || aiConfig?.model || getDefaultModel(testProvider);
+
+      if (!testKey) {
+        return res.status(400).json({ error: "Nenhuma chave para testar." });
+      }
+
+      await callAIProvider(
+        "Você é um assistente útil.",
+        "Responda apenas: OK",
+        { provider: testProvider, apiKey: testKey, model: testModel }
+      );
+
+      return res.json({ success: true, provider: testProvider, model: testModel });
+    } catch (error: any) {
+      console.error("Erro ao testar conexão AI:", error);
+      return res.status(500).json({ error: error.message || "Falha ao testar conexão." });
+    }
+  });
+
+  // POST /api/settings/ai-key/test — backward-compatible
+  app.post("/api/settings/ai-key/test", async (req, res) => {
+    try {
+      const { apiKey } = req.body;
+      const testKey = apiKey || aiConfig?.apiKey || '';
+      const testProvider = aiConfig?.provider || 'deepseek';
+      const testModel = aiConfig?.model || getDefaultModel(testProvider);
+
+      if (!testKey) {
+        return res.status(400).json({ error: "Nenhuma chave para testar." });
+      }
+
+      await callAIProvider(
+        "Você é um assistente útil.",
+        "Responda apenas: OK",
+        { provider: testProvider, apiKey: testKey, model: testModel }
+      );
+
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error("Erro ao testar conexão AI:", error);
+      return res.status(500).json({ error: error.message || "Falha ao testar conexão." });
     }
   });
 

@@ -476,7 +476,7 @@ export default function LicensesTab({
       const steps = [
         'Lendo arquivo de imagem...',
         'Conectando com o servidor de IA...',
-        'Executando OCR inteligente via Gemini 3.5...',
+        'Executando OCR inteligente...',
         'Extraindo serviço de assinatura Trimble/Topcon...',
         'Mapeando datas de vigência e números de série...',
         'Preenchendo formulário...',
