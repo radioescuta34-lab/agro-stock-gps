@@ -40,7 +40,7 @@ export async function createApp() {
     switch (provider) {
       case 'openai': return 'gpt-4o-mini';
       case 'deepseek': return 'deepseek-chat';
-      case 'gemini': return 'gemini-2.0-flash';
+      case 'gemini': return 'gemini-3.5-flash';
       case 'claude': return 'claude-sonnet-4-20250514';
       default: return 'deepseek-chat';
     }
@@ -86,9 +86,9 @@ export async function createApp() {
     }
 
     if (provider === 'gemini') {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${apiKey}`, {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
           generationConfig: { temperature: 0.1, maxOutputTokens: 2000 }
@@ -304,7 +304,7 @@ ${extractedText}`;
     }
   });
 
-  // GET /api/settings/ai-key/status — backward-compatible
+  // GET /api/settings/ai-key/status — backward-compatible (no longer returns the key)
   app.get("/api/settings/ai-key/status", async (req, res) => {
     try {
       let configured = !!(aiConfig?.apiKey);
@@ -320,9 +320,9 @@ ${extractedText}`;
           }
         } catch (e) {}
       }
-      return res.json({ configured, key: aiConfig?.apiKey || null, provider: providerName });
+      return res.json({ configured, provider: providerName });
     } catch (error: any) {
-      return res.json({ configured: !!(aiConfig?.apiKey), key: aiConfig?.apiKey || null, provider: aiConfig?.provider || 'deepseek' });
+      return res.json({ configured: !!(aiConfig?.apiKey), provider: aiConfig?.provider || 'deepseek' });
     }
   });
 
@@ -347,7 +347,20 @@ ${extractedText}`;
       return res.json({ success: true, provider: testProvider, model: testModel });
     } catch (error: any) {
       console.error("Erro ao testar conexão AI:", error);
-      return res.status(500).json({ error: error.message || "Falha ao testar conexão." });
+      const message = error.message || "Falha ao testar conexão.";
+      let errorType = 'api_error';
+
+      if (message.includes('429') || message.includes('RESOURCE_EXHAUSTED') || message.includes('quota') || message.includes('Quota')) {
+        errorType = 'quota_exceeded';
+      } else if (message.includes('503') || message.includes('UNAVAILABLE') || message.includes('high demand') || message.includes('temporarily')) {
+        errorType = 'model_unavailable';
+      } else if (message.includes('401') || message.includes('403') || message.includes('UNAUTHENTICATED') || message.includes('ACCESS_TOKEN_TYPE_UNSUPPORTED') || message.includes('PERMISSION_DENIED')) {
+        errorType = 'auth_error';
+      } else if (message.includes('404') || message.includes('not found') || message.includes('NOT_FOUND')) {
+        errorType = 'model_not_found';
+      }
+
+      return res.status(500).json({ error: message, errorType });
     }
   });
 

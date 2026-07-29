@@ -13,7 +13,9 @@ import {
   Clock,
   ChevronDown,
   Building2,
-  Users
+  Users,
+  AlertTriangle,
+  ExternalLink
 } from 'lucide-react';
 import CompanyProfileSection from './CompanyProfileSection';
 import UserManagementSection from './UserManagementSection';
@@ -21,7 +23,7 @@ import UserManagementSection from './UserManagementSection';
 const PROVIDERS = {
   openai: { label: 'OpenAI', placeholder: 'sk-...', docsUrl: 'https://platform.openai.com/api-keys', docsLabel: 'platform.openai.com', defaultModel: 'gpt-4o-mini' },
   deepseek: { label: 'DeepSeek', placeholder: 'sk-...', docsUrl: 'https://platform.deepseek.com/api_keys', docsLabel: 'platform.deepseek.com', defaultModel: 'deepseek-chat' },
-  gemini: { label: 'Google Gemini', placeholder: 'AIza...', docsUrl: 'https://aistudio.google.com/apikey', docsLabel: 'aistudio.google.com', defaultModel: 'gemini-2.0-flash' },
+  gemini: { label: 'Google Gemini', placeholder: 'AIza...', docsUrl: 'https://aistudio.google.com/apikey', docsLabel: 'aistudio.google.com', defaultModel: 'gemini-3.5-flash' },
   claude: { label: 'Claude (Anthropic)', placeholder: 'sk-ant-...', docsUrl: 'https://console.anthropic.com/settings/keys', docsLabel: 'console.anthropic.com', defaultModel: 'claude-sonnet-4-20250514' },
 } as const;
 
@@ -70,10 +72,10 @@ export default function SettingsTab({
   const [provider, setProvider] = useState<Provider>('deepseek');
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
-  const [savedKey, setSavedKey] = useState(false);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorType, setErrorType] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'unknown' | 'checking' | 'connected' | 'failed'>('unknown');
   const [openSection, setOpenSection] = useState<string | null>(null);
@@ -90,8 +92,12 @@ export default function SettingsTab({
       const data = await res.json();
       if (data.configured) {
         setConnectionStatus('connected');
-        if (data.provider) setProvider(data.provider as Provider);
-        if (data.model) setModel(data.model);
+        if (data.provider) {
+          setProvider(data.provider as Provider);
+          setModel(data.model || PROVIDERS[data.provider as Provider]?.defaultModel || '');
+        } else if (data.model) {
+          setModel(data.model);
+        }
       } else {
         setConnectionStatus('unknown');
       }
@@ -102,6 +108,9 @@ export default function SettingsTab({
 
   const handleProviderChange = (newProvider: Provider) => {
     setProvider(newProvider);
+    setApiKey('');
+    setError(null);
+    setErrorType(null);
     setModel(PROVIDERS[newProvider].defaultModel);
   };
 
@@ -113,6 +122,7 @@ export default function SettingsTab({
 
     setSaving(true);
     setError(null);
+    setErrorType(null);
     setSuccess(null);
 
     try {
@@ -127,7 +137,6 @@ export default function SettingsTab({
         throw new Error(err.error || 'Erro ao salvar.');
       }
 
-      setSavedKey(true);
       setSuccess('Configuração salva com sucesso!');
       setConnectionStatus('connected');
     } catch (err: any) {
@@ -138,26 +147,27 @@ export default function SettingsTab({
   };
 
   const handleTest = async () => {
-    const keyToTest = apiKey.trim() || (await getSavedKeyFromServer());
-    if (!keyToTest) {
-      setError('Nenhuma chave configurada para testar.');
-      return;
-    }
-
     setTesting(true);
     setConnectionStatus('checking');
     setError(null);
+    setErrorType(null);
     setSuccess(null);
 
     try {
+      const body: Record<string, string> = { provider, model: model.trim() || cfg.defaultModel };
+      if (apiKey.trim()) {
+        body.apiKey = apiKey.trim();
+      }
+
       const res = await fetch('/api/settings/ai/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: keyToTest, provider, model: model.trim() || cfg.defaultModel })
+        body: JSON.stringify(body)
       });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        setErrorType(err.errorType || null);
         throw new Error(err.error || 'Falha na conexão.');
       }
 
@@ -168,16 +178,6 @@ export default function SettingsTab({
       setError(err.message);
     } finally {
       setTesting(false);
-    }
-  };
-
-  const getSavedKeyFromServer = async (): Promise<string | null> => {
-    try {
-      const res = await fetch('/api/settings/ai-key/status');
-      const data = await res.json();
-      return data.key || null;
-    } catch {
-      return null;
     }
   };
 
@@ -314,7 +314,7 @@ export default function SettingsTab({
                     type="password"
                     placeholder={cfg.placeholder}
                     value={apiKey}
-                    onChange={e => { setApiKey(e.target.value); setSavedKey(false); }}
+                    onChange={e => setApiKey(e.target.value)}
                     className="w-full pl-9 pr-3.5 py-1.5 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 disabled:bg-slate-50 disabled:text-slate-500 placeholder:text-slate-400 font-mono"
                   />
                 </div>
@@ -327,7 +327,69 @@ export default function SettingsTab({
             </div>
 
             {/* Error / Success Messages */}
-            {error && (
+            {error && errorType === 'quota_exceeded' && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-amber-800">Cota da API excedida</p>
+                    <p className="text-xs text-amber-700 mt-1">
+                      Sua chave {cfg.label} atingiu o limite de requisições. {provider === 'gemini' ? 'Ative o faturamento no Google Cloud para aumentar a cota — você não paga nada se ficar dentro dos limites gratuitos expandidos.' : 'Verifique seu plano e limites de uso no painel do provedor.'}
+                    </p>
+                    {provider === 'gemini' && (
+                      <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-bold text-amber-800 underline mt-2 hover:text-amber-900">
+                        Ativar faturamento <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            {error && errorType === 'model_unavailable' && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-amber-800">Modelo temporariamente indisponível</p>
+                    <p className="text-xs text-amber-700 mt-1">
+                      O modelo <strong>{model || cfg.defaultModel}</strong> está sob alta demanda no momento. Tente novamente em alguns minutos ou use outro modelo.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {error && errorType === 'auth_error' && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl">
+                <div className="flex items-start gap-2">
+                  <XCircle className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-rose-700">Chave inválida ou sem permissão</p>
+                    <p className="text-xs text-rose-600 mt-1">
+                      Sua chave não tem permissão para acessar este modelo. Gere uma nova chave no <strong>{cfg.label}</strong>.
+                    </p>
+                    <a href={cfg.docsUrl} target="_blank" rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-xs font-bold text-rose-700 underline mt-2 hover:text-rose-800">
+                      {cfg.docsLabel} <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </div>
+                </div>
+              </div>
+            )}
+            {error && errorType === 'model_not_found' && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl">
+                <div className="flex items-start gap-2">
+                  <XCircle className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-bold text-rose-700">Modelo não encontrado</p>
+                    <p className="text-xs text-rose-600 mt-1">
+                      O modelo <strong>"{model || cfg.defaultModel}"</strong> não existe ou não está disponível. Verifique o nome do modelo.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {error && !errorType && (
               <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2">
                 <XCircle className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
                 <p className="text-xs font-semibold text-rose-600">{error}</p>
