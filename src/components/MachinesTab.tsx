@@ -8,12 +8,14 @@ import {
   Edit, 
   X, 
   Truck, 
-  Info 
+  Info,
+  Filter 
 } from 'lucide-react';
 
 interface MachinesTabProps {
   machines: Machine[];
   role: UserRole;
+  initialTypeFilter?: MachineType;
   onAddMachine: (mac: Omit<Machine, 'id' | 'updatedAt'>) => Promise<void>;
   onEditMachine: (id: string, updates: Partial<Machine>) => Promise<void>;
   onDeleteMachine: (id: string) => Promise<void>;
@@ -22,6 +24,7 @@ interface MachinesTabProps {
 export default function MachinesTab({
   machines,
   role,
+  initialTypeFilter,
   onAddMachine,
   onEditMachine,
   onDeleteMachine
@@ -30,7 +33,7 @@ export default function MachinesTab({
   const { showToast, confirmDialog } = useNotifications();
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [typeFilter, setTypeFilter] = useState<string>(initialTypeFilter || 'all');
 
   const [isAdding, setIsAdding] = useState(false);
   const [editingMachine, setEditingMachine] = useState<Machine | null>(null);
@@ -152,7 +155,26 @@ export default function MachinesTab({
 
   return (
     <div className="space-y-6" id="machines-tab">
-      
+
+      {/* Active preset filter chip (arrived from dashboard card) */}
+      {initialTypeFilter && (
+        <div className="flex items-center justify-between gap-3 bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-3 animate-fade-in">
+          <div className="flex items-center gap-2 text-xs text-emerald-800 font-semibold">
+            <Filter className="h-4 w-4 text-emerald-600 shrink-0" />
+            Filtro ativo: {initialTypeFilter}
+            <span className="text-emerald-600 font-bold">({filteredMachines.length} máquina{filteredMachines.length === 1 ? '' : 's'})</span>
+          </div>
+          <button
+            onClick={() => setTypeFilter('all')}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-white border border-emerald-200 text-emerald-700 rounded-xl text-[10px] font-bold hover:bg-emerald-100 transition-all cursor-pointer"
+            title="Limpar filtro e mostrar todas as máquinas"
+          >
+            <X className="h-3.5 w-3.5" />
+            Limpar filtro
+          </button>
+        </div>
+      )}
+
       {/* Header and Add Button */}
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>

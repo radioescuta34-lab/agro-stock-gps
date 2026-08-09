@@ -30,7 +30,9 @@ import {
   CompanyProfile,
   ComponentMaintenance,
   ComponentStatus,
-  MaintenanceProvider
+  MaintenanceProvider,
+  FieldDataCollection,
+  DashboardNavPreset
 } from './types';
 import AuthScreen from './components/AuthScreen';
 import { useNotifications } from './components/NotificationProvider';
@@ -94,6 +96,12 @@ export default function App() {
   const [providers, setProviders] = useState<MaintenanceProvider[]>([]);
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(DEFAULT_COMPANY_PROFILE);
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
+  const [fieldDataCollections, setFieldDataCollections] = useState<FieldDataCollection[]>([]);
+  const [movementsSubTab, setMovementsSubTab] = useState<'os' | 'kanban' | undefined>(undefined);
+  const [licensePresetFilter, setLicensePresetFilter] = useState<'active' | 'expired' | null>(null);
+  const [componentPresetFilter, setComponentPresetFilter] = useState<DashboardNavPreset | null>(null);
+  const [machinePresetFilter, setMachinePresetFilter] = useState<DashboardNavPreset | null>(null);
+  const [kanbanPresetFilter, setKanbanPresetFilter] = useState<DashboardNavPreset | null>(null);
 
   const [loadingApp, setLoadingApp] = useState(true);
 
@@ -256,6 +264,34 @@ export default function App() {
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'movements');
+      }
+    );
+
+    // Field Data Collections Listener
+    const unsubFieldData = onSnapshot(
+      collection(db, 'field_data_collections'),
+      (snapshot) => {
+        const list: FieldDataCollection[] = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          list.push({
+            id: d.id,
+            machineId: data.machineId || '',
+            machinePrefix: data.machinePrefix || '',
+            fleet: data.fleet || data.frente || '',
+            frente: data.frente || data.fleet || '',
+            weekId: data.weekId || '',
+            status: data.status || 'Pendente',
+            collectedAt: data.collectedAt || undefined,
+            collectedBy: data.collectedBy || undefined,
+            notes: data.notes || '',
+            updatedAt: data.updatedAt || new Date().toISOString()
+          });
+        });
+        setFieldDataCollections(list);
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'field_data_collections');
       }
     );
 
@@ -471,6 +507,7 @@ export default function App() {
       unsubComponents();
       unsubMachines();
       unsubMovements();
+      unsubFieldData();
       unsubLicenses();
       unsubThirdParties();
       unsubLoans();
@@ -521,6 +558,7 @@ export default function App() {
     const localProviders = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}providers`);
     const localCompany = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}company_profile`);
     const localUsers = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}users`);
+    const localFieldData = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}field_data_collections`);
  
     if (localComponents) setComponents(JSON.parse(localComponents));
     if (localMachines) setMachines(JSON.parse(localMachines));
@@ -530,6 +568,7 @@ export default function App() {
     if (localLoans) setLoans(JSON.parse(localLoans));
     if (localMaintenances) setMaintenances(JSON.parse(localMaintenances));
     if (localProviders) setProviders(JSON.parse(localProviders));
+    if (localFieldData) setFieldDataCollections(JSON.parse(localFieldData));
     if (localCompany) {
       setCompanyProfile(JSON.parse(localCompany));
     } else {
@@ -577,7 +616,7 @@ export default function App() {
   }, [isDemoMode]);
 
   // Sync demo mode states to localStorage
-  const saveDemoData = (type: 'components' | 'machines' | 'movements' | 'licenses' | 'third_parties' | 'loans' | 'maintenances' | 'providers' | 'company_profile' | 'users', data: any) => {
+  const saveDemoData = (type: 'components' | 'machines' | 'movements' | 'licenses' | 'third_parties' | 'loans' | 'maintenances' | 'providers' | 'company_profile' | 'users' | 'field_data_collections', data: any) => {
     if (!isDemoMode) return;
     localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}${type}`, JSON.stringify(data));
   };
@@ -1074,6 +1113,63 @@ export default function App() {
       } catch (err) {
         handleFirestoreError(err, OperationType.WRITE, 'movements_and_components');
       }
+    }
+  };
+
+  // Toggle or Set Machine Collection Status (Field Data Kanban)
+  const handleToggleCollectionStatus = async (
+    targetMachine: Machine,
+    targetWeekId: string,
+    currentStatus: 'Pendente' | 'Concluído'
+  ) => {
+    const newStatus = currentStatus === 'Pendente' ? 'Concluído' : 'Pendente';
+    const docId = `${targetMachine.prefix}_${targetWeekId}`;
+
+    const payload: Partial<FieldDataCollection> = {
+      machineId: targetMachine.id,
+      machinePrefix: targetMachine.prefix,
+      frente: targetMachine.fleet || 'Sem Frente',
+      weekId: targetWeekId,
+      status: newStatus,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (newStatus === 'Concluído') {
+      payload.collectedAt = new Date().toISOString();
+      payload.collectedBy = user?.name || 'Técnico';
+    }
+
+    if (isDemoMode) {
+      setFieldDataCollections(prev => {
+        const idx = prev.findIndex(item => item.id === docId);
+        let updatedList: FieldDataCollection[];
+        if (idx >= 0) {
+          updatedList = [...prev];
+          updatedList[idx] = { ...updatedList[idx], ...payload, id: docId } as FieldDataCollection;
+        } else {
+          updatedList = [...prev, { id: docId, ...payload } as FieldDataCollection];
+        }
+        saveDemoData('field_data_collections', updatedList);
+        return updatedList;
+      });
+      return;
+    }
+
+    try {
+      const ref = doc(db, 'field_data_collections', docId);
+      await setDoc(ref, {
+        ...payload,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error as any, OperationType.WRITE, 'field_data_collections');
+    }
+  };
+
+  // Bulk Complete Frente (Field Data Kanban)
+  const handleBulkCompleteFrente = async (frenteMachines: Machine[], targetWeekId: string) => {
+    for (const m of frenteMachines) {
+      await handleToggleCollectionStatus(m, targetWeekId, 'Pendente');
     }
   };
 
@@ -1947,8 +2043,13 @@ export default function App() {
   };
 
   // Nav helper
-  const navigateToTab = (tab: string) => {
+  const navigateToTab = (tab: string, subtab?: string, preset?: DashboardNavPreset) => {
     setCurrentTab(tab);
+    setMovementsSubTab(subtab as 'os' | 'kanban' | undefined);
+    setLicensePresetFilter(preset?.licenseFilter ?? null);
+    setComponentPresetFilter(preset?.componentStatus || preset?.componentBrand ? preset : null);
+    setMachinePresetFilter(preset?.machineType ? preset : null);
+    setKanbanPresetFilter(preset?.kanbanStatus ? preset : null);
     setIsMobileMenuOpen(false);
   };
 
@@ -2241,15 +2342,18 @@ export default function App() {
         {/* Render Active Tab */}
         {currentTab === 'dashboard' && (
           <Dashboard 
-            key={`dashboard-${components.length}-${machines.length}-${movements.length}-${licenses.length}`}
+            key={`dashboard-${components.length}-${machines.length}-${movements.length}-${licenses.length}-${fieldDataCollections.length}`}
             components={components} 
             machines={machines} 
             movements={movements} 
             licenses={licenses}
+            fieldDataCollections={fieldDataCollections}
             role={user.role} 
             companyProfile={companyProfile}
             onNavigate={navigateToTab}
             onSeedData={isDemoMode ? seedDemoInitialData : handleSeedRealDatabase}
+            onToggleCollectionStatus={handleToggleCollectionStatus}
+            onBulkCompleteFrente={handleBulkCompleteFrente}
           />
         )}
 
@@ -2258,6 +2362,8 @@ export default function App() {
             components={components}
             machines={machines}
             role={user.role}
+            initialStatusFilter={componentPresetFilter?.componentStatus}
+            initialBrandFilter={componentPresetFilter?.componentBrand}
             onAddComponent={handleAddComponent}
             onEditComponent={handleEditComponent}
             onDeleteComponent={handleDeleteComponent}
@@ -2276,6 +2382,7 @@ export default function App() {
             role={user.role}
             currentUser={user}
             isDemoMode={isDemoMode}
+            initialFilter={licensePresetFilter}
             onAddLicense={handleAddLicense}
             onEditLicense={handleEditLicense}
             onDeleteLicense={handleDeleteLicense}
@@ -2286,6 +2393,7 @@ export default function App() {
           <MachinesTab
             machines={machines}
             role={user.role}
+            initialTypeFilter={machinePresetFilter?.machineType}
             onAddMachine={handleAddMachine}
             onEditMachine={handleEditMachine}
             onDeleteMachine={handleDeleteMachine}
@@ -2297,10 +2405,15 @@ export default function App() {
             movements={movements}
             components={components}
             machines={machines}
+            fieldDataCollections={fieldDataCollections}
             role={user.role}
             currentUserId={user.uid}
             currentUserName={user.name}
             onAddMovement={handleAddMovement}
+            onToggleCollectionStatus={handleToggleCollectionStatus}
+            onBulkCompleteFrente={handleBulkCompleteFrente}
+            initialSubTab={movementsSubTab}
+            initialKanbanStatus={kanbanPresetFilter?.kanbanStatus}
           />
         )}
 

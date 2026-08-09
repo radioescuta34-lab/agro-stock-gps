@@ -31,6 +31,8 @@ interface ComponentsTabProps {
   components: AutopilotComponent[];
   machines: Machine[];
   role: UserRole;
+  initialStatusFilter?: ComponentStatus;
+  initialBrandFilter?: string;
   onAddComponent: (comp: Omit<AutopilotComponent, 'id' | 'updatedAt' | 'updatedBy'>) => Promise<void>;
   onEditComponent: (id: string, updates: Partial<AutopilotComponent>) => Promise<void>;
   onDeleteComponent: (id: string) => Promise<void>;
@@ -51,6 +53,8 @@ export default function ComponentsTab({
   components,
   machines = [],
   role,
+  initialStatusFilter,
+  initialBrandFilter,
   onAddComponent,
   onEditComponent,
   onDeleteComponent,
@@ -64,8 +68,8 @@ export default function ComponentsTab({
   const { showToast, confirmDialog } = useNotifications();
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [brandFilter, setBrandFilter] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [brandFilter, setBrandFilter] = useState<string>(initialBrandFilter || 'all');
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter || 'all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
 
   const [isAdding, setIsAdding] = useState(false);
@@ -942,7 +946,36 @@ export default function ComponentsTab({
 
   return (
     <div className="space-y-6" id="components-tab">
-      
+
+      {/* Active preset filter chip (arrived from dashboard card) */}
+      {(initialStatusFilter || initialBrandFilter) && (
+        <div className="flex items-center justify-between gap-3 bg-indigo-50 border border-indigo-200 rounded-2xl px-4 py-3 animate-fade-in">
+          <div className="flex items-center gap-2 text-xs text-indigo-800 font-semibold">
+            <Filter className="h-4 w-4 text-indigo-600 shrink-0" />
+            Filtro ativo:
+            {initialStatusFilter && (
+              <span className="bg-white px-2 py-0.5 rounded-lg border border-indigo-100">
+                Status: {initialStatusFilter}
+              </span>
+            )}
+            {initialBrandFilter && (
+              <span className="bg-white px-2 py-0.5 rounded-lg border border-indigo-100">
+                Marca: {initialBrandFilter}
+              </span>
+            )}
+            <span className="text-indigo-600 font-bold">({filteredComponents.length} equipamento{filteredComponents.length === 1 ? '' : 's'})</span>
+          </div>
+          <button
+            onClick={() => { setStatusFilter('all'); setBrandFilter('all'); }}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-white border border-indigo-200 text-indigo-700 rounded-xl text-[10px] font-bold hover:bg-indigo-100 transition-all cursor-pointer"
+            title="Limpar filtro e mostrar todos os componentes"
+          >
+            <X className="h-3.5 w-3.5" />
+            Limpar filtro
+          </button>
+        </div>
+      )}
+
       {/* Header and Add Button */}
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>

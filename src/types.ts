@@ -68,6 +68,20 @@ export interface Machine {
 
 export type MovementAction = 'Instalação' | 'Remoção' | 'Manutenção' | 'Calibração';
 
+export interface FieldDataCollection {
+  id: string; // e.g., "coll_T01_2026-W32"
+  machineId: string;
+  machinePrefix: string;
+  fleet?: string;
+  frente?: string;
+  weekId: string; // e.g., "2026-W32"
+  status: 'Pendente' | 'Concluído';
+  collectedAt?: any; // ISO string or timestamp
+  collectedBy?: string;
+  notes?: string;
+  updatedAt: any;
+}
+
 export interface MovementLog {
   id: string;
   componentId: string;
@@ -80,6 +94,16 @@ export interface MovementLog {
   date: any; // Timestamp
   notes: string;
   createdAt: any; // Timestamp
+}
+
+// Preset applied when navigating from a dashboard indicator card
+export interface DashboardNavPreset {
+  subtab?: 'os' | 'kanban';
+  licenseFilter?: 'active' | 'expired';
+  componentStatus?: ComponentStatus;
+  componentBrand?: string;
+  machineType?: MachineType;
+  kanbanStatus?: 'Pendente' | 'Concluído';
 }
 
 export interface ThirdParty {

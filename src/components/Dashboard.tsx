@@ -5,7 +5,9 @@ import {
   MovementLog, 
   UserRole,
   License,
-  CompanyProfile
+  CompanyProfile,
+  FieldDataCollection,
+  DashboardNavPreset
 } from '../types';
 import { 
   Cpu, 
@@ -19,9 +21,11 @@ import {
   Key,
   Clock,
   Calendar,
-  Tag,
-  Shield
+  Shield,
+  Kanban
 } from 'lucide-react';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import { getISOWeekId, getWeekFormattedLabel } from '../utils/dateUtils';
 
 interface DashboardProps {
   key?: string;
@@ -29,10 +33,13 @@ interface DashboardProps {
   machines: Machine[];
   movements: MovementLog[];
   licenses?: License[];
+  fieldDataCollections?: FieldDataCollection[];
   role: UserRole;
   companyProfile: CompanyProfile;
-  onNavigate: (tab: string) => void;
+  onNavigate: (tab: string, subtab?: string, preset?: DashboardNavPreset) => void;
   onSeedData?: () => void;
+  onToggleCollectionStatus?: (machine: Machine, targetWeekId: string, currentStatus: 'Pendente' | 'Concluído') => Promise<void>;
+  onBulkCompleteFrente?: (frenteMachines: Machine[], targetWeekId: string) => Promise<void>;
 }
 
 export default function Dashboard({ 
@@ -40,6 +47,7 @@ export default function Dashboard({
   machines, 
   movements, 
   licenses = [],
+  fieldDataCollections = [],
   role,
   companyProfile,
   onNavigate,
@@ -54,13 +62,33 @@ export default function Dashboard({
   const maintenanceCount = components.filter(c => c.status === 'Manutenção').length;
   const discardedCount = components.filter(c => c.status === 'Descartado').length;
 
-  const trimbleCount = components.filter(c => c.brand === 'Trimble').length;
-  const topconCount = components.filter(c => c.brand === 'Topcon').length;
   const totalMachines = machines.length;
 
-  // Component brand percentages
-  const trimblePercent = totalComponents > 0 ? Math.round((trimbleCount / totalComponents) * 100) : 0;
-  const topconPercent = totalComponents > 0 ? Math.round((topconCount / totalComponents) * 100) : 0;
+  const getBrandColor = (brand: string) => {
+    switch (brand.toLowerCase()) {
+      case 'trimble': return 'bg-indigo-600';
+      case 'topcon': return 'bg-sky-500';
+      case 'john deere': return 'bg-emerald-600';
+      case 'case ih': return 'bg-amber-500';
+      case 'valtra': return 'bg-purple-600';
+      case 'hexagon': return 'bg-teal-500';
+      case 'raven': return 'bg-rose-500';
+      default: return 'bg-slate-500';
+    }
+  };
+
+  // Component brand distribution (dynamic — reflects every brand in the registry)
+  const componentBrandStats = Array.from(
+    new Set(components.map(c => c.brand).filter(Boolean))
+  ).map((name) => {
+    const count = components.filter(c => c.brand === name).length;
+    const percent = totalComponents > 0 ? Math.round((count / totalComponents) * 100) : 0;
+    return { name, count, percent, colorClass: getBrandColor(name) };
+  }).sort((a, b) => b.count - a.count);
+
+  const componentBrandSummary = componentBrandStats.length > 0
+    ? componentBrandStats.map(b => `${b.count} ${b.name}`).join(' • ')
+    : 'Nenhum hardware cadastrado';
 
   // Recent 4 movements
   const recentMovements = [...movements]
@@ -74,7 +102,6 @@ export default function Dashboard({
   // 2. Calculations: License Inventory
   const totalLicenses = licenses.length;
   const activeLicensesCount = licenses.filter(l => l.status === 'Ativa' && l.unlockStatus === 'desbloqueado').length;
-  const availableLicensesCount = licenses.filter(l => l.status === 'Disponível').length;
   const expiredLicensesCount = licenses.filter(l => l.status === 'Expirada').length;
   const pendingLicensesCount = licenses.filter(l => l.status === 'Pendente').length;
 
@@ -99,36 +126,39 @@ export default function Dashboard({
     }
   });
 
-  const trimbleLicCount = licenses.filter(l => l.brand === 'Trimble').length;
-  const topconLicCount = licenses.filter(l => l.brand === 'Topcon').length;
-  const signalLicCount = licenses.filter(l => l.type === 'Assinatura de Sinal').length;
-  const activationLicCount = licenses.filter(l => l.type === 'Ativação de Tela').length;
+  const licenseBrandStats = Array.from(
+    new Set(licenses.map(l => l.brand).filter(Boolean))
+  ).map((name) => {
+    const count = licenses.filter(l => l.brand === name).length;
+    return { name, count };
+  }).sort((a, b) => b.count - a.count);
+
+  const licenseBrandSummary = licenseBrandStats.length > 0
+    ? licenseBrandStats.map(b => `${b.count} ${b.name}`).join(' • ')
+    : 'Nenhuma licença cadastrada';
+
+  // 3. Calculations: Field Data Collection Overview
+  const currentWeekId = getISOWeekId(new Date());
+  const activeWeekLabel = getWeekFormattedLabel(currentWeekId);
+
+  const fleetNamesSet = new Set(machines.map(m => m.fleet?.trim() ? m.fleet.trim() : 'Sem Frente Atribuída'));
+  const totalFrentes = fleetNamesSet.size;
+
+  const fieldDataCompletedCount = machines.filter(m => {
+    const rec = fieldDataCollections.find(c => c.machineId === m.id && c.weekId === currentWeekId);
+    return rec?.status === 'Concluído';
+  }).length;
+
+  const fieldDataPendingCount = totalMachines - fieldDataCompletedCount;
+  const fieldDataCoveragePercent = totalMachines > 0 ? Math.round((fieldDataCompletedCount / totalMachines) * 100) : 0;
+
+  const fieldDataPieChart = [
+    { name: 'Máquinas Concluídas', value: fieldDataCompletedCount, color: '#10b981' },
+    { name: 'Máquinas Pendentes', value: fieldDataPendingCount, color: '#f59e0b' }
+  ];
 
   return (
     <div className="space-y-8" id="dashboard-tab">
-      
-      {/* Welcome / Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 rounded-2xl border border-slate-200 shadow-sm gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">
-            <span translate="no" className="notranslate">Agro Stock GPS - {companyProfile.name}</span>
-          </h1>
-          <p className="text-slate-500 text-sm mt-1">
-            Gerenciamento integrado de licenças e hardware agrícola de alta precisão para usinas sucroenergéticas.
-          </p>
-        </div>
-        
-        {totalComponents === 0 && onSeedData && isAdminOrTech && (
-          <button
-            onClick={onSeedData}
-            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-colors flex items-center gap-2 shadow-sm shrink-0"
-            id="seed-database-btn"
-          >
-            <Cpu className="h-4 w-4" />
-            Popular Banco de Dados de Teste
-          </button>
-        )}
-      </div>
 
       {/* ================= PANEL 1: COMPONENT INVENTORY OVERVIEW ================= */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden" id="component-inventory-panel">
@@ -139,28 +169,47 @@ export default function Dashboard({
             <Cpu className="h-5 w-5 text-emerald-400" />
             <h2 className="text-md font-bold tracking-tight">1. Visão Geral do Inventário de Componentes</h2>
           </div>
-          <span className="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/20 px-2.5 py-0.5 rounded-full font-bold">
-            {totalComponents} Hardwares Cadastrados
-          </span>
+          {totalComponents === 0 && onSeedData && isAdminOrTech ? (
+            <button
+              onClick={onSeedData}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm"
+              id="seed-database-btn"
+            >
+              <Cpu className="h-3.5 w-3.5" />
+              Popular Banco de Dados de Teste
+            </button>
+          ) : (
+            <span className="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/20 px-2.5 py-0.5 rounded-full font-bold">
+              {totalComponents} Hardwares Cadastrados
+            </span>
+          )}
         </div>
 
         <div className="p-6 space-y-6">
           {/* Component KPI Stats Grid */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Total */}
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between">
+            <button
+              onClick={() => onNavigate('components')}
+              title="Ver todos os componentes"
+              className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between text-left cursor-pointer hover:bg-white hover:border-slate-300 hover:shadow-md active:scale-[0.98] transition-all"
+            >
               <div>
                 <span className="block text-slate-400 text-[10px] font-bold uppercase tracking-wider">Total de GPS</span>
                 <span className="text-xl font-extrabold text-slate-800 block mt-1">{totalComponents}</span>
-                <span className="text-[10px] text-slate-400 font-medium block mt-0.5">{trimbleCount} Trimble • {topconCount} Topcon</span>
+                <span className="text-[10px] text-slate-400 font-medium block mt-0.5">{componentBrandSummary}</span>
               </div>
               <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
                 <Cpu className="h-5 w-5" />
               </div>
-            </div>
+            </button>
 
             {/* In Use */}
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between">
+            <button
+              onClick={() => onNavigate('components', undefined, { componentStatus: 'Em Uso' })}
+              title="Ver componentes em operação"
+              className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between text-left cursor-pointer hover:bg-white hover:border-slate-300 hover:shadow-md active:scale-[0.98] transition-all"
+            >
               <div>
                 <span className="block text-slate-400 text-[10px] font-bold uppercase tracking-wider">Em Operação</span>
                 <span className="text-xl font-extrabold text-emerald-600 block mt-1">{inUseCount}</span>
@@ -171,10 +220,14 @@ export default function Dashboard({
               <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
                 <CheckCircle2 className="h-5 w-5" />
               </div>
-            </div>
+            </button>
 
             {/* In Maintenance */}
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between">
+            <button
+              onClick={() => onNavigate('components', undefined, { componentStatus: 'Manutenção' })}
+              title="Ver componentes em manutenção"
+              className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between text-left cursor-pointer hover:bg-white hover:border-slate-300 hover:shadow-md active:scale-[0.98] transition-all"
+            >
               <div>
                 <span className="block text-slate-400 text-[10px] font-bold uppercase tracking-wider">Em Manutenção</span>
                 <span className="text-xl font-extrabold text-amber-600 block mt-1">{maintenanceCount}</span>
@@ -183,10 +236,14 @@ export default function Dashboard({
               <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl">
                 <Wrench className="h-5 w-5" />
               </div>
-            </div>
+            </button>
 
             {/* Stock */}
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between">
+            <button
+              onClick={() => onNavigate('components', undefined, { componentStatus: 'Disponível' })}
+              title="Ver componentes no almoxarifado"
+              className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between text-left cursor-pointer hover:bg-white hover:border-slate-300 hover:shadow-md active:scale-[0.98] transition-all"
+            >
               <div>
                 <span className="block text-slate-400 text-[10px] font-bold uppercase tracking-wider">No Almoxarifado</span>
                 <span className="text-xl font-extrabold text-slate-800 block mt-1">{availableCount}</span>
@@ -195,7 +252,7 @@ export default function Dashboard({
               <div className="p-2.5 bg-slate-100 text-slate-600 rounded-xl">
                 <TrendingUp className="h-5 w-5" />
               </div>
-            </div>
+            </button>
           </div>
 
           {/* Distribution chart and stats */}
@@ -209,25 +266,28 @@ export default function Dashboard({
               </h3>
               
               <div className="space-y-3 pt-2">
-                <div>
-                  <div className="flex justify-between items-center text-xs font-semibold mb-1">
-                    <span className="text-slate-600">Equipamentos Trimble</span>
-                    <span className="text-slate-950 font-bold">{trimbleCount} un. ({trimblePercent}%)</span>
-                  </div>
-                  <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                    <div className="bg-indigo-600 h-full rounded-full transition-all duration-500" style={{ width: `${trimblePercent}%` }}></div>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex justify-between items-center text-xs font-semibold mb-1">
-                    <span className="text-slate-600">Equipamentos Topcon</span>
-                    <span className="text-slate-950 font-bold">{topconCount} un. ({topconPercent}%)</span>
-                  </div>
-                  <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                    <div className="bg-sky-500 h-full rounded-full transition-all duration-500" style={{ width: `${topconPercent}%` }}></div>
-                  </div>
-                </div>
+                {componentBrandStats.length === 0 ? (
+                  <p className="text-xs text-slate-400 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                    Nenhum hardware cadastrado.
+                  </p>
+                ) : (
+                  componentBrandStats.map(brand => (
+                    <button
+                      key={brand.name}
+                      onClick={() => onNavigate('components', undefined, { componentBrand: brand.name })}
+                      title={`Ver equipamentos ${brand.name}`}
+                      className="w-full text-left block rounded-xl hover:bg-white hover:shadow-sm transition-all px-1.5 py-1 -mx-1.5 cursor-pointer active:scale-[0.99]"
+                    >
+                      <div className="flex justify-between items-center text-xs font-semibold mb-1">
+                        <span className="text-slate-600">Equipamentos {brand.name}</span>
+                        <span className="text-slate-950 font-bold">{brand.count} un. ({brand.percent}%)</span>
+                      </div>
+                      <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                        <div className={`${brand.colorClass} h-full rounded-full transition-all duration-500`} style={{ width: `${brand.percent}%` }}></div>
+                      </div>
+                    </button>
+                  ))
+                )}
               </div>
             </div>
 
@@ -236,18 +296,30 @@ export default function Dashboard({
               <div>
                 <h3 translate="no" className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3 notranslate">Máquinas da Frota</h3>
                 <div className="space-y-2">
-                  <div className="flex justify-between text-xs font-medium">
+                  <button
+                    onClick={() => onNavigate('machines', undefined, { machineType: 'Trator' })}
+                    title="Ver tratores cadastrados"
+                    className="w-full flex justify-between items-center text-xs font-medium px-2 py-1.5 rounded-lg hover:bg-white hover:shadow-sm transition-all cursor-pointer active:scale-[0.99]"
+                  >
                     <span className="text-slate-500">Tratores Operacionais:</span>
                     <span className="font-bold text-slate-800">{machines.filter(m => m.type === 'Trator').length}</span>
-                  </div>
-                  <div className="flex justify-between text-xs font-medium">
+                  </button>
+                  <button
+                    onClick={() => onNavigate('machines', undefined, { machineType: 'Colhedora' })}
+                    title="Ver colhedoras cadastradas"
+                    className="w-full flex justify-between items-center text-xs font-medium px-2 py-1.5 rounded-lg hover:bg-white hover:shadow-sm transition-all cursor-pointer active:scale-[0.99]"
+                  >
                     <span className="text-slate-500">Colhedoras de Cana:</span>
                     <span className="font-bold text-slate-800">{machines.filter(m => m.type === 'Colhedora').length}</span>
-                  </div>
-                  <div className="flex justify-between text-xs font-medium">
+                  </button>
+                  <button
+                    onClick={() => onNavigate('machines', undefined, { machineType: 'Pulverizador' })}
+                    title="Ver pulverizadores cadastrados"
+                    className="w-full flex justify-between items-center text-xs font-medium px-2 py-1.5 rounded-lg hover:bg-white hover:shadow-sm transition-all cursor-pointer active:scale-[0.99]"
+                  >
                     <span className="text-slate-500">Pulverizadores:</span>
                     <span className="font-bold text-slate-800">{machines.filter(m => m.type === 'Pulverizador').length}</span>
-                  </div>
+                  </button>
                 </div>
               </div>
 
@@ -272,7 +344,7 @@ export default function Dashboard({
         <div className="bg-indigo-950 px-6 py-4 flex justify-between items-center text-white">
           <div className="flex items-center gap-2.5">
             <Key className="h-5 w-5 text-indigo-400" />
-            <h2 className="text-md font-bold tracking-tight">2. Visão Geral do Inventário de Licenças</h2>
+            <h2 className="text-md font-bold tracking-tight">2. Visão Geral de Licenças</h2>
           </div>
           <span className="text-xs bg-indigo-500/20 text-indigo-300 border border-indigo-500/20 px-2.5 py-0.5 rounded-full font-bold">
             {totalLicenses} Contratos / Chaves de Ativação
@@ -303,21 +375,29 @@ export default function Dashboard({
           )}
 
           {/* Licenses KPI Stats Grid */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
             {/* Total Licenses */}
-            <div className="bg-indigo-50/30 p-4 rounded-2xl border border-indigo-100 flex items-center justify-between">
+            <button
+              onClick={() => onNavigate('licenses')}
+              title="Ver todas as licenças"
+              className="bg-indigo-50/30 p-4 rounded-2xl border border-indigo-100 flex items-center justify-between text-left cursor-pointer hover:bg-indigo-50 hover:border-indigo-200 hover:shadow-md active:scale-[0.98] transition-all"
+            >
               <div>
                 <span className="block text-slate-500 text-[10px] font-bold uppercase tracking-wider">Total Ativações</span>
                 <span className="text-xl font-extrabold text-indigo-955 block mt-1">{totalLicenses}</span>
-                <span className="text-[10px] text-slate-400 font-medium block mt-0.5">{trimbleLicCount} Trimble • {topconLicCount} Topcon</span>
+                <span className="text-[10px] text-slate-400 font-medium block mt-0.5">{licenseBrandSummary}</span>
               </div>
               <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
                 <Key className="h-5 w-5" />
               </div>
-            </div>
+            </button>
 
             {/* Active Licenses */}
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between">
+            <button
+              onClick={() => onNavigate('licenses', undefined, { licenseFilter: 'active' })}
+              title="Ver licenças ativas (desbloqueadas em campo)"
+              className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between text-left cursor-pointer hover:bg-white hover:border-slate-300 hover:shadow-md active:scale-[0.98] transition-all"
+            >
               <div>
                 <span className="block text-slate-400 text-[10px] font-bold uppercase tracking-wider">Sinais Ativos</span>
                 <span className="text-xl font-extrabold text-emerald-600 block mt-1">{activeLicensesCount}</span>
@@ -326,10 +406,14 @@ export default function Dashboard({
               <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
                 <CheckCircle2 className="h-5 w-5" />
               </div>
-            </div>
+            </button>
 
             {/* Expired Contracts */}
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between">
+            <button
+              onClick={() => onNavigate('licenses', undefined, { licenseFilter: 'expired' })}
+              title="Ver licenças expiradas ou com data vencida"
+              className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between text-left cursor-pointer hover:bg-white hover:border-slate-300 hover:shadow-md active:scale-[0.98] transition-all"
+            >
               <div>
                 <span className="block text-slate-400 text-[10px] font-bold uppercase tracking-wider">Expiradas</span>
                 <span className={`text-xl font-extrabold block mt-1 ${actuallyExpiredCount > 0 ? 'text-rose-600 animate-pulse' : 'text-slate-800'}`}>
@@ -340,84 +424,147 @@ export default function Dashboard({
               <div className={`p-2.5 rounded-xl ${actuallyExpiredCount > 0 ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-600'}`}>
                 <Clock className="h-5 w-5" />
               </div>
-            </div>
-
-            {/* Available Licenses */}
-            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200/60 flex items-center justify-between">
-              <div>
-                <span className="block text-slate-400 text-[10px] font-bold uppercase tracking-wider">No Estoque</span>
-                <span className="text-xl font-extrabold text-indigo-700 block mt-1">{availableLicensesCount}</span>
-                <span className="text-[10px] text-slate-400 font-medium block mt-0.5">Livres para vincular</span>
-              </div>
-              <div className="p-2.5 bg-indigo-50 text-indigo-700 rounded-xl">
-                <Tag className="h-5 w-5" />
-              </div>
-            </div>
-          </div>
-
-          {/* Types and association details */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-            
-            {/* Split by Type of License */}
-            <div className="bg-indigo-50/10 p-5 rounded-2xl border border-slate-100 space-y-4">
-              <h3 className="text-xs font-bold text-indigo-950 uppercase tracking-wider">Distribuição por Tipo de Ativação</h3>
-              
-              <div className="grid grid-cols-2 gap-4 pt-1">
-                <div className="bg-white p-3 rounded-xl border border-slate-100">
-                  <span className="text-[10px] text-slate-400 font-semibold block">Sinais de Correção</span>
-                  <span className="text-lg font-black text-slate-800 mt-1 block">{signalLicCount}</span>
-                  <span className="text-[9px] text-slate-400 block mt-0.5">RTX, RTK, Omnistar</span>
-                </div>
-
-                <div className="bg-white p-3 rounded-xl border border-slate-100">
-                  <span className="text-[10px] text-slate-400 font-semibold block">Recursos de Monitor</span>
-                  <span className="text-lg font-black text-slate-800 mt-1 block">{activationLicCount}</span>
-                  <span className="text-[9px] text-slate-400 block mt-0.5">Seção, Taxa Var, Piloto</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Quick list of contracts needing renewal soon */}
-            <div className="bg-slate-50/50 p-5 rounded-2xl border border-slate-100 flex flex-col justify-between">
-              <div>
-                <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">Auditoria Contratual Rápida</h3>
-                {licenses.filter(l => l.status === 'Expirada' || (l.expirationDate && new Date(l.expirationDate).getTime() < Date.now() + 30 * 24 * 60 * 60 * 1000)).length === 0 ? (
-                  <p className="text-xs text-emerald-600 font-medium bg-emerald-50 p-2.5 rounded-xl border border-emerald-100">
-                    ✓ Tudo em dia! Nenhuma licença pendente de renovação técnica imediata.
-                  </p>
-                ) : (
-                  <div className="space-y-2 max-h-[85px] overflow-y-auto pr-1">
-                    {licenses
-                      .filter(l => l.status === 'Expirada' || (l.expirationDate && new Date(l.expirationDate).getTime() < Date.now() + 30 * 24 * 60 * 60 * 1000))
-                      .slice(0, 2)
-                      .map(lic => {
-                        const isExp = lic.status === 'Expirada' || (lic.expirationDate && new Date(lic.expirationDate).getTime() < Date.now());
-                        return (
-                          <div key={lic.id} className="flex justify-between items-center text-xs">
-                            <span className="text-slate-600 truncate max-w-[170px] font-medium" title={lic.name}>{lic.name}</span>
-                            <span className={`font-bold px-1.5 py-0.5 rounded text-[9px] uppercase ${isExp ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'}`}>
-                              {isExp ? 'Expirada' : 'Expira Breve'}
-                            </span>
-                          </div>
-                        );
-                      })}
-                  </div>
-                )}
-              </div>
-
-              <button
-                onClick={() => onNavigate('licenses')}
-                className="mt-4 w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[11px] font-bold transition-all flex items-center justify-center gap-1.5"
-              >
-                Gerenciar Painel de Contratos e Licenças
-                <ArrowRight className="h-3 w-3" />
-              </button>
-            </div>
-
+            </button>
           </div>
 
         </div>
 
+      </div>
+
+      {/* ================= PANEL 3: VISÃO GERAL DO RECOLHIMENTO DE DADOS DE CAMPO ================= */}
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden" id="dashboard-field-data-panel">
+        <div className="bg-slate-900 px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center text-white gap-2">
+          <div className="flex items-center gap-2.5">
+            <Activity className="h-5 w-5 text-emerald-400" />
+            <h2 className="text-md font-bold tracking-tight">3. Visão Geral do Recolhimento de Dados de Campo</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-3 py-1 rounded-full font-bold flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5" />
+              {activeWeekLabel} ({currentWeekId})
+            </span>
+          </div>
+        </div>
+
+        <div className="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+          
+          {/* Left Column: 4 Key Indicator Cards + Quick Action */}
+          <div className="lg:col-span-7 space-y-4">
+            <p className="text-xs text-slate-600 leading-relaxed font-medium">
+              Acompanhamento gerencial do recolhimento de telemetria e dados dos monitores de piloto automático nas frentes de trabalho agrícolas.
+            </p>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {/* Total Frentes */}
+              <button
+                onClick={() => onNavigate('movements', 'kanban')}
+                title="Abrir Kanban de Recolhimento"
+                className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-center cursor-pointer hover:bg-white hover:border-slate-300 hover:shadow-md active:scale-[0.98] transition-all"
+              >
+                <span className="block text-[10px] uppercase font-bold text-slate-500">Frentes Cadastradas</span>
+                <span className="text-xl font-black text-slate-900 mt-1 block">{totalFrentes}</span>
+                <span className="text-[10px] text-slate-500 font-semibold mt-0.5 block truncate">Frentes de Trabalho</span>
+              </button>
+
+              {/* Concluídas */}
+              <button
+                onClick={() => onNavigate('movements', 'kanban', { kanbanStatus: 'Concluído' })}
+                title="Ver máquinas concluídas no Kanban"
+                className="bg-emerald-50 p-3.5 rounded-2xl border border-emerald-200 text-center cursor-pointer hover:bg-emerald-100 hover:border-emerald-300 hover:shadow-md active:scale-[0.98] transition-all"
+              >
+                <span className="block text-[10px] uppercase font-bold text-emerald-700">Concluídas</span>
+                <span className="text-xl font-black text-emerald-700 mt-1 block">{fieldDataCompletedCount}</span>
+                <span className="text-[10px] text-emerald-600 font-semibold mt-0.5 block">Máquinas em dia</span>
+              </button>
+
+              {/* Pendentes */}
+              <button
+                onClick={() => onNavigate('movements', 'kanban', { kanbanStatus: 'Pendente' })}
+                title="Ver máquinas pendentes no Kanban"
+                className="bg-amber-50 p-3.5 rounded-2xl border border-amber-200 text-center cursor-pointer hover:bg-amber-100 hover:border-amber-300 hover:shadow-md active:scale-[0.98] transition-all"
+              >
+                <span className="block text-[10px] uppercase font-bold text-amber-700">Pendentes</span>
+                <span className="text-xl font-black text-amber-700 mt-1 block">{fieldDataPendingCount}</span>
+                <span className="text-[10px] text-amber-600 font-semibold mt-0.5 block">Aguardando recolher</span>
+              </button>
+
+              {/* Percentual */}
+              <button
+                onClick={() => onNavigate('movements', 'kanban')}
+                title="Abrir Kanban de Recolhimento"
+                className="bg-indigo-50 p-3.5 rounded-2xl border border-indigo-200 text-center cursor-pointer hover:bg-indigo-100 hover:border-indigo-300 hover:shadow-md active:scale-[0.98] transition-all"
+              >
+                <span className="block text-[10px] uppercase font-bold text-indigo-700">Cobertura</span>
+                <span className="text-xl font-black text-indigo-700 mt-1 block">{fieldDataCoveragePercent}%</span>
+                <span className="text-[10px] text-indigo-600 font-semibold mt-0.5 block">Progresso Semanal</span>
+              </button>
+            </div>
+
+            {/* Quick Action to open Field Services Kanban */}
+            <div className="pt-2">
+              <button
+                onClick={() => onNavigate('movements', 'kanban')}
+                className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer hover:shadow-md"
+                id="btn-go-to-kanban-from-dashboard"
+              >
+                <Kanban className="h-4 w-4" />
+                Abrir Kanban de Recolhimento Completo (Serviços de Campo)
+                <ArrowRight className="h-4 w-4 ml-1" />
+              </button>
+            </div>
+          </div>
+
+          {/* Right Column: Modern Recharts Donut Pie Chart */}
+          <div className="lg:col-span-5 bg-slate-50 p-5 rounded-2xl border border-slate-200 flex flex-col items-center justify-center min-h-[240px]">
+            <h3 className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5 self-start">
+              <TrendingUp className="h-4 w-4 text-emerald-600" />
+              Gráfico de Recolhimento Semanal
+            </h3>
+
+            <div className="w-full h-44 relative flex items-center justify-center">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={fieldDataPieChart}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={52}
+                    outerRadius={78}
+                    paddingAngle={4}
+                    dataKey="value"
+                  >
+                    {fieldDataPieChart.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} stroke="#ffffff" strokeWidth={2} />
+                    ))}
+                  </Pie>
+                  <Tooltip 
+                    formatter={(val: number) => [`${val} máquina(s)`, 'Quantidade']}
+                    contentStyle={{ borderRadius: '12px', fontSize: '12px', padding: '8px 12px', borderColor: '#e2e8f0', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+
+              {/* Center Donut Label */}
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span className="text-2xl font-black text-slate-900">{fieldDataCoveragePercent}%</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Concluído</span>
+              </div>
+            </div>
+
+            {/* Legend */}
+            <div className="flex items-center justify-center gap-4 mt-2 text-xs font-medium">
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" />
+                <span className="text-slate-700 text-[11px] font-semibold">Concluídas ({fieldDataCompletedCount})</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full bg-amber-500 inline-block" />
+                <span className="text-slate-700 text-[11px] font-semibold">Pendentes ({fieldDataPendingCount})</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
       </div>
 
       {/* ================= RECENT MOVEMENT & QUICK SHORTCUTS ROW ================= */}

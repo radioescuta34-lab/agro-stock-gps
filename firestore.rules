@@ -137,6 +137,24 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Validate FieldDataCollection (weekly field data collection kanban)
+    function isValidFieldDataCollection(fdc) {
+      return fdc.id is string && fdc.id.size() <= 128
+        && fdc.machineId is string && fdc.machineId.size() <= 128
+        && fdc.machinePrefix is string && fdc.machinePrefix.size() <= 128
+        && fdc.weekId is string && fdc.weekId.matches('^[0-9]{4}-W[0-9]{2}$')
+        && (fdc.status == 'Pendente' || fdc.status == 'Concluído')
+        && (!('collectedAt' in fdc) || fdc.collectedAt is string)
+        && (!('collectedBy' in fdc) || (fdc.collectedBy is string && fdc.collectedBy.size() <= 128))
+        && (!('frente' in fdc) || (fdc.frente is string && fdc.frente.size() <= 128));
+    }
+
+    match /field_data_collections/{fdcId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if (isAdmin() || isTechnician()) && isValidId(fdcId) && isValidFieldDataCollection(request.resource.data);
+      allow delete: if false;
+    }
+
     // Validate ThirdParty
     function isValidThirdParty(tp) {
       return tp.id is string && tp.id.size() <= 128

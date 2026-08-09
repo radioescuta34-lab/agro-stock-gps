@@ -36,7 +36,8 @@ import {
   LayoutGrid,
   List,
   Mail,
-  Bell
+  Bell,
+  Filter
 } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'agro_stock_gps_';
@@ -52,6 +53,7 @@ interface LicensesTabProps {
   role: UserRole;
   currentUser?: UserProfile | null;
   isDemoMode: boolean;
+  initialFilter?: 'active' | 'expired' | null;
   onAddLicense: (lic: Omit<License, 'id' | 'updatedAt' | 'updatedBy'>) => Promise<void>;
   onEditLicense: (id: string, updates: Partial<License>) => Promise<void>;
   onDeleteLicense: (id: string) => Promise<void>;
@@ -63,6 +65,7 @@ export default function LicensesTab({
   role,
   currentUser,
   isDemoMode,
+  initialFilter = null,
   onAddLicense,
   onEditLicense,
   onDeleteLicense
@@ -75,6 +78,7 @@ export default function LicensesTab({
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [presetFilter, setPresetFilter] = useState<'active' | 'expired' | null>(initialFilter);
 
   // Expiration alerting & filtering states
   const [expirationRangeFilter, setExpirationRangeFilter] = useState<string>('all');
@@ -759,6 +763,14 @@ export default function LicensesTab({
     const matchesStatus = statusFilter === 'all' || lic.status === statusFilter;
     const matchesType = typeFilter === 'all' || lic.type === typeFilter;
 
+    // Preset filter (arrived from dashboard card click)
+    let matchesPreset = true;
+    if (presetFilter === 'active') {
+      matchesPreset = lic.status === 'Ativa' && lic.unlockStatus === 'desbloqueado';
+    } else if (presetFilter === 'expired') {
+      matchesPreset = lic.status === 'Expirada' || (lic.expirationDate && new Date(lic.expirationDate).getTime() < Date.now());
+    }
+
     // Expiration range filter
     let matchesExpirationRange = true;
     if (expirationRangeFilter !== 'all') {
@@ -779,12 +791,31 @@ export default function LicensesTab({
       }
     }
 
-    return matchesSearch && matchesBrand && matchesStatus && matchesType && matchesExpirationRange;
+    return matchesSearch && matchesBrand && matchesStatus && matchesType && matchesExpirationRange && matchesPreset;
   });
 
   return (
     <div className="space-y-6" id="licenses-tab-wrapper">
-      
+
+      {/* Active preset filter chip (arrived from dashboard card) */}
+      {presetFilter && (
+        <div className="flex items-center justify-between gap-3 bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-3 animate-fade-in">
+          <div className="flex items-center gap-2 text-xs text-emerald-800 font-semibold">
+            <Filter className="h-4 w-4 text-emerald-600 shrink-0" />
+            Filtro ativo: {presetFilter === 'active' ? 'Sinais Ativos' : 'Expiradas'}
+            <span className="text-emerald-600 font-bold">({filteredLicenses.length} licença{filteredLicenses.length === 1 ? '' : 's'})</span>
+          </div>
+          <button
+            onClick={() => setPresetFilter(null)}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-white border border-emerald-200 text-emerald-700 rounded-xl text-[10px] font-bold hover:bg-emerald-100 transition-all cursor-pointer"
+            title="Limpar filtro e mostrar todas as licenças"
+          >
+            <X className="h-3.5 w-3.5" />
+            Limpar filtro
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>

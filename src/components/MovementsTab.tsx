@@ -4,7 +4,8 @@ import {
   Machine, 
   MovementAction, 
   MovementLog, 
-  UserRole 
+  UserRole,
+  FieldDataCollection
 } from '../types';
 import { 
   ClipboardList, 
@@ -15,32 +16,45 @@ import {
   X, 
   Calendar, 
   FileText, 
-  AlertCircle 
+  AlertCircle,
+  Kanban
 } from 'lucide-react';
+import FieldDataKanban from './FieldDataKanban';
 
 interface MovementsTabProps {
   movements: MovementLog[];
   components: AutopilotComponent[];
   machines: Machine[];
+  fieldDataCollections?: FieldDataCollection[];
   role: UserRole;
   currentUserId: string;
   currentUserName: string;
   onAddMovement: (log: Omit<MovementLog, 'id' | 'technicianId' | 'technicianName' | 'createdAt'>) => Promise<void>;
+  onToggleCollectionStatus?: (machine: Machine, targetWeekId: string, currentStatus: 'Pendente' | 'Concluído') => Promise<void>;
+  onBulkCompleteFrente?: (frenteMachines: Machine[], targetWeekId: string) => Promise<void>;
+  initialSubTab?: 'os' | 'kanban';
+  initialKanbanStatus?: 'Pendente' | 'Concluído';
 }
 
 export default function MovementsTab({
   movements,
   components,
   machines,
+  fieldDataCollections = [],
   role,
   currentUserId,
   currentUserName,
-  onAddMovement
+  onAddMovement,
+  onToggleCollectionStatus,
+  onBulkCompleteFrente,
+  initialSubTab,
+  initialKanbanStatus
 }: MovementsTabProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [actionFilter, setActionFilter] = useState<string>('all');
 
   const [isAdding, setIsAdding] = useState(false);
+  const [subTab, setSubTab] = useState<'os' | 'kanban'>(initialSubTab || 'os');
 
   // Form states
   const [componentId, setComponentId] = useState('');
@@ -139,28 +153,61 @@ export default function MovementsTab({
     <div className="space-y-6" id="movements-tab">
       
       {/* Header and Add Button */}
-      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Movimentações e Serviços de Campo</h1>
-          <p className="text-slate-500 text-xs mt-1">
-            Lance instalações em tratores/colhedoras, remoções, calibrações de sinal ou ordens de manutenção.
-          </p>
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+        <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">Movimentações e Serviços de Campo</h1>
+            <p className="text-slate-500 text-xs mt-1">
+              Lance instalações em tratores/colhedoras, remoções, calibrações de sinal, ordens de manutenção e acompanhe o Kanban de recolhimento de dados de campo.
+            </p>
+          </div>
+
+          {!isAdding && (
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => { setIsAdding(true); resetForm(); setSubTab('os'); }}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5 animate-pulse"
+                id="open-add-movement-form"
+              >
+                <Plus className="h-4 w-4" />
+                Lançar Novo Serviço
+              </button>
+            </div>
+          )}
         </div>
 
-        {!isAdding && (
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => { setIsAdding(true); resetForm(); }}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5 animate-pulse"
-              id="open-add-movement-form"
-            >
-              <Plus className="h-4 w-4" />
-              Lançar Novo Serviço
-            </button>
-          </div>
-        )}
+        {/* Sub-Tabs Selector */}
+        <div className="flex items-center gap-2 border-t border-slate-100 pt-4" id="movements-sub-tabs">
+          <button
+            onClick={() => setSubTab('os')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${subTab === 'os' ? 'bg-slate-900 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+          >
+            <ClipboardList className="h-4 w-4" />
+            Ordens de Serviço & Histórico
+          </button>
+
+          <button
+            onClick={() => setSubTab('kanban')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer relative ${subTab === 'kanban' ? 'bg-emerald-600 text-white shadow-sm' : 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'}`}
+          >
+            <Kanban className="h-4 w-4" />
+            Recolhimento de Dados (Semanal)
+          </button>
+        </div>
       </div>
 
+      {subTab === 'kanban' ? (
+        <FieldDataKanban
+          machines={machines}
+          fieldDataCollections={fieldDataCollections}
+          role={role}
+          currentUserName={currentUserName}
+          initialStatusFilter={initialKanbanStatus}
+          onToggleCollectionStatus={onToggleCollectionStatus || (async () => {})}
+          onBulkCompleteFrente={onBulkCompleteFrente}
+        />
+      ) : (
+        <>
       {/* Lançamento Form Area */}
       {isAdding && (
         <div className="bg-white p-6 rounded-2xl border border-emerald-200 shadow-md animate-fade-in" id="add-movement-form-block">
@@ -494,6 +541,9 @@ export default function MovementsTab({
           </div>
         </div>
         </>
+      )}
+
+      </>
       )}
 
     </div>

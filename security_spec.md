@@ -5,6 +5,7 @@
 2. **Component Integrity**: A component's `serialNumber` and `brand` are immutable after creation. Only administrators can create or delete components.
 3. **Movements Record**: Movements are audit logs and can only be created. No one (not even administrators) can update or delete a movement log once written, guaranteeing temporal integrity.
 4. **Machine Fleet Control**: Only administrators can modify the machine fleet registry.
+5. **Field Data Collection**: Weekly field data collection records (`field_data_collections`) can only be created/updated by admins or technicians with a valid shape; deletion is forbidden to preserve the weekly audit trail.
 
 ## The "Dirty Dozen" Payloads
 
@@ -66,6 +67,11 @@ An attacker attempts to create a component log with a non-existent component ref
 ### 12. Deleting Fleet Records
 A technician attempts to delete machine configurations from the plant registry.
 - **Payload**: `deleteDoc(doc(db, 'machines', 'prefixT01'))`
+- **Result**: `PERMISSION_DENIED`
+
+### 13. Deleting Field Data Collection Records
+A technician attempts to delete a weekly field data collection record to hide a missed collection.
+- **Payload**: `deleteDoc(doc(db, 'field_data_collections', 'T01_2026-W32'))`
 - **Result**: `PERMISSION_DENIED`
 
 ---

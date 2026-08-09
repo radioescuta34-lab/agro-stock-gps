@@ -706,6 +706,179 @@ ${extractedText}`;
     }
   });
 
+  // API Route for sending weekly field data collection pending fronts email alerts
+  app.post("/api/field-data/send-alert-email", async (req, res) => {
+    try {
+      const { alertEmail, weekId, weekLabel, pendingMachinesCount, frentesPendente, frentesEmAndamento } = req.body;
+      if (!alertEmail) {
+        return res.status(400).json({ error: "E-mail de destino não especificado." });
+      }
+      if (!weekId) {
+        return res.status(400).json({ error: "Semana não especificada." });
+      }
+
+      // Check if SMTP environment variables are defined
+      const smtpHost = process.env.SMTP_HOST;
+      const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
+      const smtpUser = process.env.SMTP_USER;
+      const smtpPass = process.env.SMTP_PASS;
+      const smtpFromEmail = process.env.SMTP_FROM_EMAIL || smtpUser;
+      const smtpFromName = process.env.SMTP_FROM_NAME || "Agro Stock GPS";
+
+      const isSmtpConfigured = !!(smtpHost && smtpUser && smtpPass);
+
+      const weekLabelSafe = weekLabel || weekId;
+      const pendingTotal = typeof pendingMachinesCount === 'number' ? pendingMachinesCount : 0;
+      const frentesPend = Array.isArray(frentesPendente) ? frentesPendente : [];
+      const frentesAndamento = Array.isArray(frentesEmAndamento) ? frentesEmAndamento : [];
+
+      const buildFrenteRows = () => {
+        let html = '';
+        if (frentesPend.length === 0 && frentesAndamento.length === 0) {
+          html += `
+            <tr>
+              <td colspan="3" style="padding: 12px 10px; color: #10b981; font-weight: 600; text-align: center; border: 1px solid #edf2f7;">
+                🎉 Todas as frentes foram 100% concluídas nesta semana!
+              </td>
+            </tr>
+          `;
+          return html;
+        }
+        frentesPend.forEach((f: any) => {
+          const machines = Array.isArray(f.machines) ? f.machines.join(', ') : '-';
+          html += `
+            <tr style="border-bottom: 1px solid #edf2f7;">
+              <td style="padding: 12px 10px; border: 1px solid #edf2f7; font-weight: 600; color: #1e293b;">${f.frente || 'Sem Frente Atribuída'}</td>
+              <td style="padding: 12px 10px; color: #ef4444; font-weight: 700; border: 1px solid #edf2f7;">100% pendente</td>
+              <td style="padding: 12px 10px; font-size: 11px; color: #475569; line-height: 1.4; border: 1px solid #edf2f7;">${machines}</td>
+            </tr>
+          `;
+        });
+        frentesAndamento.forEach((f: any) => {
+          const machines = Array.isArray(f.machines) ? f.machines.join(', ') : '-';
+          const pendCount = typeof f.pendingCount === 'number' ? f.pendingCount : 0;
+          const totalCount = typeof f.totalCount === 'number' ? f.totalCount : 0;
+          html += `
+            <tr style="border-bottom: 1px solid #edf2f7; background-color: #fafafa;">
+              <td style="padding: 12px 10px; border: 1px solid #edf2f7; font-weight: 600; color: #1e293b;">${f.frente || 'Sem Frente Atribuída'}</td>
+              <td style="padding: 12px 10px; color: #b45309; font-weight: 700; border: 1px solid #edf2f7;">${pendCount}/${totalCount} pendente(s)</td>
+              <td style="padding: 12px 10px; font-size: 11px; color: #475569; line-height: 1.4; border: 1px solid #edf2f7;">${machines}</td>
+            </tr>
+          `;
+        });
+        return html;
+      };
+
+      // Construct detailed email content
+      const title = `⚠️ Agro Stock GPS: ${pendingTotal} Máquina(s) com Recolhimento de Dados Pendente — ${weekLabelSafe}`;
+
+      const emailHtml = `
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 650px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+          <!-- Header Banner -->
+          <div style="background: linear-gradient(135deg, #047857 0%, #065f46 100%); padding: 24px; text-align: center; color: #ffffff;">
+            <h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px;">Agro Stock GPS</h1>
+            <p style="margin: 4px 0 0 0; font-size: 13px; opacity: 0.9; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Recolhimento de Dados de Campo</p>
+          </div>
+
+          <!-- Body Content -->
+          <div style="padding: 24px; background-color: #ffffff;">
+            <p style="font-size: 15px; color: #334155; line-height: 1.6; margin-top: 0;">Olá,</p>
+            <p style="font-size: 14px; color: #475569; line-height: 1.6;">
+              Segue o relatório semanal de recolhimento de telemetria dos monitores de piloto automático para a <strong>${weekLabelSafe}</strong> (${weekId}).
+            </p>
+            <p style="font-size: 13px; color: #b45309; font-weight: 600; margin-bottom: 20px;">
+              ⚠️ Existem <strong>${pendingTotal}</strong> máquina(s) com dados de campo ainda <strong>pendentes</strong> de recolhimento nesta semana.
+            </p>
+
+            <!-- Table of Fronts -->
+            <div style="overflow-x: auto; margin-bottom: 24px;">
+              <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
+                <thead>
+                  <tr style="background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;">
+                    <th style="padding: 10px; font-weight: 600; color: #475569; border: 1px solid #e2e8f0;">Frente de Trabalho</th>
+                    <th style="padding: 10px; font-weight: 600; color: #475569; border: 1px solid #e2e8f0;">Situação</th>
+                    <th style="padding: 10px; font-weight: 600; color: #475569; border: 1px solid #e2e8f0;">Máquinas Pendentes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${buildFrenteRows()}
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Action Advice -->
+            <div style="background-color: #fffbeb; border: 1px dashed #fef3c7; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
+              <h4 style="margin: 0 0 6px 0; font-size: 13px; color: #b45309; font-weight: 700;">Como proceder?</h4>
+              <p style="margin: 0; font-size: 12px; color: #b45309; line-height: 1.5;">
+                Acione os técnicos de campo responsáveis por cada frente para concluir o recolhimento dos dados dos monitores de piloto automático antes do encerramento da semana.
+              </p>
+            </div>
+
+            <p style="font-size: 11px; color: #94a3b8; line-height: 1.5; margin-bottom: 0;">
+              Este é um e-mail automático enviado pelo sistema Agro Stock GPS. Não responda a esta mensagem.
+            </p>
+          </div>
+
+          <!-- Footer -->
+          <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b;">
+            <strong>Agro Stock GPS</strong> - Gestão Eficiente de Tecnologia de Precisão
+          </div>
+        </div>
+      `;
+
+      if (isSmtpConfigured) {
+        // Create Transporter
+        const transporter = nodemailer.createTransport({
+          host: smtpHost,
+          port: smtpPort,
+          secure: smtpPort === 465,
+          auth: {
+            user: smtpUser,
+            pass: smtpPass,
+          },
+        });
+
+        // Send Email
+        await transporter.sendMail({
+          from: `"${smtpFromName}" <${smtpFromEmail}>`,
+          to: alertEmail,
+          subject: title,
+          html: emailHtml,
+        });
+
+        console.log(`✉️  [Nodemailer] Alerta de recolhimento de dados de campo enviado com SUCESSO para ${alertEmail}`);
+
+        return res.json({
+          success: true,
+          message: `E-mail de alerta de recolhimento de dados de campo enviado com sucesso para ${alertEmail}!`,
+          simulated: false
+        });
+      } else {
+        // Simulate sending
+        console.log(`\n========================================================================`);
+        console.log(`✉️  [SIMULAÇÃO DE EMAIL] ENVIANDO ALERTA DE RECOLHIMENTO DE DADOS DE CAMPO`);
+        console.log(`------------------------------------------------------------------------`);
+        console.log(`Para: ${alertEmail}`);
+        console.log(`Assunto: ${title}`);
+        console.log(`Semana: ${weekLabelSafe} (${weekId})`);
+        console.log(`Máquinas pendentes: ${pendingTotal}`);
+        console.log(`------------------------------------------------------------------------`);
+        console.log(`[Aviso do Servidor] Configurações de SMTP do servidor não foram preenchidas.`);
+        console.log(`Para envio em produção, configure as variáveis em Secrets.`);
+        console.log(`========================================================================\n`);
+
+        return res.json({
+          success: true,
+          simulated: true,
+          message: `O e-mail de alerta foi simulado com sucesso. Como as credenciais de SMTP não estão configuradas nas variáveis de ambiente do seu servidor, o email com as frentes pendentes foi impresso no console de desenvolvimento. Para receber em sua caixa de entrada, configure SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS e SMTP_FROM_EMAIL nas configurações de Secrets do AI Studio.`
+        });
+      }
+    } catch (error: any) {
+      console.error("Erro ao enviar e-mail de alerta de recolhimento de dados:", error);
+      return res.status(500).json({ error: error.message || "Erro interno no servidor ao tentar enviar o e-mail de alertas." });
+    }
+  });
+
 
   // API Route for updating a user in Firebase Auth using Admin SDK
   app.post("/api/admin/users/update", async (req, res) => {
