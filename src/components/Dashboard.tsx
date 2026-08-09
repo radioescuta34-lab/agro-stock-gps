@@ -359,17 +359,17 @@ export default function Dashboard({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
             
             {/* Split by Type of License */}
-            <div className="bg-indigo-50/10 p-5 rounded-2xl border border-slate-150 space-y-4">
+            <div className="bg-indigo-50/10 p-5 rounded-2xl border border-slate-100 space-y-4">
               <h3 className="text-xs font-bold text-indigo-950 uppercase tracking-wider">Distribuição por Tipo de Ativação</h3>
               
               <div className="grid grid-cols-2 gap-4 pt-1">
-                <div className="bg-white p-3 rounded-xl border border-slate-150">
+                <div className="bg-white p-3 rounded-xl border border-slate-100">
                   <span className="text-[10px] text-slate-400 font-semibold block">Sinais de Correção</span>
                   <span className="text-lg font-black text-slate-800 mt-1 block">{signalLicCount}</span>
                   <span className="text-[9px] text-slate-400 block mt-0.5">RTX, RTK, Omnistar</span>
                 </div>
 
-                <div className="bg-white p-3 rounded-xl border border-slate-150">
+                <div className="bg-white p-3 rounded-xl border border-slate-100">
                   <span className="text-[10px] text-slate-400 font-semibold block">Recursos de Monitor</span>
                   <span className="text-lg font-black text-slate-800 mt-1 block">{activationLicCount}</span>
                   <span className="text-[9px] text-slate-400 block mt-0.5">Seção, Taxa Var, Piloto</span>
@@ -382,7 +382,7 @@ export default function Dashboard({
               <div>
                 <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-3">Auditoria Contratual Rápida</h3>
                 {licenses.filter(l => l.status === 'Expirada' || (l.expirationDate && new Date(l.expirationDate).getTime() < Date.now() + 30 * 24 * 60 * 60 * 1000)).length === 0 ? (
-                  <p className="text-xs text-emerald-600 font-medium bg-emerald-50 p-2.5 rounded-xl border border-emerald-150">
+                  <p className="text-xs text-emerald-600 font-medium bg-emerald-50 p-2.5 rounded-xl border border-emerald-100">
                     ✓ Tudo em dia! Nenhuma licença pendente de renovação técnica imediata.
                   </p>
                 ) : (
@@ -395,7 +395,7 @@ export default function Dashboard({
                         return (
                           <div key={lic.id} className="flex justify-between items-center text-xs">
                             <span className="text-slate-600 truncate max-w-[170px] font-medium" title={lic.name}>{lic.name}</span>
-                            <span className={`font-bold px-1.5 py-0.5 rounded text-[9px] uppercase ${isExp ? 'bg-rose-150 text-rose-600' : 'bg-amber-150 text-amber-600'}`}>
+                            <span className={`font-bold px-1.5 py-0.5 rounded text-[9px] uppercase ${isExp ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'}`}>
                               {isExp ? 'Expirada' : 'Expira Breve'}
                             </span>
                           </div>

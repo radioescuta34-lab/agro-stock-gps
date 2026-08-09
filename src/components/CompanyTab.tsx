@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CompanyProfile, UserRole, UserProfile } from '../types';
+import { useNotifications } from './NotificationProvider';
 import { 
   Building2, 
   Save, 
@@ -48,6 +49,8 @@ export default function CompanyTab({
   onEditUser,
   onDeleteUser
 }: CompanyTabProps) {
+  const { confirmDialog } = useNotifications();
+
   // Sub-Tab State
   const [activeSubTab, setActiveSubTab] = useState<'profile' | 'users'>('profile');
 
@@ -252,7 +255,14 @@ export default function CompanyTab({
       return;
     }
 
-    if (window.confirm(`Tem certeza de que deseja excluir o usuário "${uEmail}"? Esta ação removerá o acesso ao sistema.`)) {
+    const confirmed = await confirmDialog({
+      title: 'Excluir Usuário',
+      message: `Tem certeza de que deseja excluir o usuário "${uEmail}"? Esta ação removerá o acesso ao sistema.`,
+      confirmLabel: 'Sim, Excluir',
+      cancelLabel: 'Cancelar',
+      danger: true
+    });
+    if (confirmed) {
       setUserLoading(true);
       setUserError(null);
       setUserSuccess(null);

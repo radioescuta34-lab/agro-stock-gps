@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Machine, MachineType, UserRole } from '../types';
+import { useNotifications } from './NotificationProvider';
 import { 
   Plus, 
   Search, 
@@ -26,6 +27,7 @@ export default function MachinesTab({
   onDeleteMachine
 }: MachinesTabProps) {
   const isAdminOrTech = role === 'administrador' || role === 'tecnico' || role === 'ADMINISTRADOR' || role === 'TECNICO_CAMPO';
+  const { showToast, confirmDialog } = useNotifications();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -123,11 +125,18 @@ export default function MachinesTab({
 
   const handleDelete = async (id: string) => {
     if (!isAdminOrTech) return;
-    if (window.confirm('Tem certeza de que deseja remover esta máquina da frota?')) {
+    const confirmed = await confirmDialog({
+      title: 'Remover Máquina',
+      message: 'Tem certeza de que deseja remover esta máquina da frota?',
+      confirmLabel: 'Sim, Remover',
+      cancelLabel: 'Cancelar',
+      danger: true
+    });
+    if (confirmed) {
       try {
         await onDeleteMachine(id);
       } catch (err: any) {
-        alert(err.message || 'Erro ao remover máquina.');
+        showToast('error', err.message || 'Erro ao remover máquina.');
       }
     }
   };
@@ -145,7 +154,7 @@ export default function MachinesTab({
     <div className="space-y-6" id="machines-tab">
       
       {/* Header and Add Button */}
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Frota da Usina</h1>
           <p className="text-slate-500 text-xs mt-1">
@@ -154,14 +163,16 @@ export default function MachinesTab({
         </div>
 
         {isAdminOrTech && !isAdding && !editingMachine && (
-          <button
-            onClick={() => { setIsAdding(true); resetForm(); }}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5"
-            id="open-add-machine-form"
-          >
-            <Plus className="h-4 w-4" />
-            Cadastrar Veículo
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => { setIsAdding(true); resetForm(); }}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5"
+              id="open-add-machine-form"
+            >
+              <Plus className="h-4 w-4" />
+              Cadastrar Veículo
+            </button>
+          </div>
         )}
       </div>
 

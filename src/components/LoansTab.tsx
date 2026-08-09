@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AutopilotComponent, ThirdParty, ComponentLoan, LoanedItem, UserRole, CompanyProfile } from '../types';
+import { useNotifications } from './NotificationProvider';
 import { 
   Plus, 
   Search, 
@@ -60,6 +61,8 @@ export default function LoansTab({
   onPartialReturnLoan,
   onDeleteLoan
 }: LoansTabProps) {
+  const { showToast, showDialog } = useNotifications();
+
   // Navigation within tab
   const [subTab, setSubTab] = useState<'loans' | 'thirdparties' | 'history'>('loans');
   const [historyTypeFilter, setHistoryTypeFilter] = useState<string>('all');
@@ -109,6 +112,11 @@ export default function LoansTab({
   // Overdue calculation
   const todayStr = new Date().toISOString().split('T')[0];
   const overdueLoans = loans.filter(l => l.status === 'Ativo' && l.estimatedReturnDate && l.estimatedReturnDate < todayStr);
+
+  const dueSoonLimit = new Date();
+  dueSoonLimit.setDate(dueSoonLimit.getDate() + 7);
+  const dueSoonStr = dueSoonLimit.toISOString().split('T')[0];
+  const dueSoonLoans = loans.filter(l => l.status === 'Ativo' && l.estimatedReturnDate && l.estimatedReturnDate >= todayStr && l.estimatedReturnDate <= dueSoonStr);
 
   // -------------------------------------------------------------
   // Dynamic Loan History Entries Construction
@@ -215,11 +223,11 @@ export default function LoansTab({
   const handleSendLoanEmailAlerts = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!alertEmail.trim()) {
-      alert('Por favor, insira o e-mail de destino.');
+      showToast('warning', 'Por favor, insira o e-mail de destino.');
       return;
     }
     if (overdueLoans.length === 0) {
-      alert('Não há nenhum empréstimo vencido no momento para alertar.');
+      showToast('info', 'Não há nenhum empréstimo vencido no momento para alertar.');
       return;
     }
 
@@ -243,7 +251,7 @@ export default function LoansTab({
 
       setAlertSuccess(data.message);
     } catch (err: any) {
-      alert(err.message || 'Erro ao enviar alertas.');
+      showToast('error', err.message || 'Erro ao enviar alertas.');
     } finally {
       setSendingAlert(false);
     }
@@ -413,7 +421,7 @@ export default function LoansTab({
       setIsPartialMode(false);
       setSelectedPartialItemIds({});
     } catch (err: any) {
-      alert(err.message || 'Erro ao processar devolução.');
+      showToast('error', err.message || 'Erro ao processar devolução.');
     } finally {
       setLoading(false);
     }
@@ -423,7 +431,7 @@ export default function LoansTab({
   const handleConfirmPartialReturnLoan = async (id: string) => {
     const returnedIds = Object.keys(selectedPartialItemIds).filter(key => selectedPartialItemIds[key]);
     if (returnedIds.length === 0) {
-      alert('Por favor, selecione pelo menos um componente para devolução parcial.');
+      showToast('warning', 'Por favor, selecione pelo menos um componente para devolução parcial.');
       return;
     }
     try {
@@ -433,7 +441,7 @@ export default function LoansTab({
       setIsPartialMode(false);
       setSelectedPartialItemIds({});
     } catch (err: any) {
-      alert(err.message || 'Erro ao processar devolução parcial.');
+      showToast('error', err.message || 'Erro ao processar devolução parcial.');
     } finally {
       setLoading(false);
     }
@@ -446,7 +454,7 @@ export default function LoansTab({
       await onDeleteLoan(id);
       setLoanToDelete(null);
     } catch (err: any) {
-      alert(err.message || 'Erro ao excluir empréstimo.');
+      showToast('error', err.message || 'Erro ao excluir empréstimo.');
     } finally {
       setLoading(false);
     }
@@ -676,10 +684,10 @@ export default function LoansTab({
   );
 
   return (
-    <div className="space-y-6" id="loans-module-root">
+    <div className="space-y-4" id="loans-module-root">
       
       {/* Header & Subtabs Selection */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-5">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
             <Handshake className="h-5 w-5 text-emerald-500" />
@@ -704,7 +712,8 @@ export default function LoansTab({
             className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${subTab === 'thirdparties' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}
           >
             <Users className="h-3.5 w-3.5" />
-            Terceiros ({thirdParties.length})
+            Terceiros
+            <span className="bg-slate-200 text-slate-700 rounded-full px-1.5 text-[9px] font-black leading-4">{thirdParties.length}</span>
           </button>
           <button
             onClick={() => { setSubTab('history'); setSearchTerm(''); }}
@@ -717,64 +726,76 @@ export default function LoansTab({
       </div>
 
       {/* Main Action Bar */}
-      <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+      <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
         
         {/* Search */}
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
-          <input
-            type="text"
-            placeholder={
-              subTab === 'loans' 
-                ? 'Buscar empréstimo (Nº, nome, série)...' 
-                : subTab === 'thirdparties'
-                ? 'Buscar terceiro por nome, CPF/CNPJ ou empresa...'
-                : 'Buscar no histórico (terceiro, componente, série, termo)...'
-            }
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-slate-50 border border-slate-200 pl-10 pr-4 py-2 rounded-xl text-xs focus:bg-white focus:ring-1 focus:ring-emerald-500 outline-none font-medium"
-          />
+        <div className="flex flex-1 min-w-0 items-stretch gap-2.5">
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder={
+                subTab === 'loans' 
+                  ? 'Buscar por nº, terceiro ou nº de série...' 
+                  : subTab === 'thirdparties'
+                  ? 'Buscar terceiro por nome, CPF/CNPJ ou empresa...'
+                  : 'Buscar no histórico (terceiro, componente, série, termo)...'
+              }
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 pl-10 pr-4 py-2 rounded-xl text-xs focus:bg-white focus:ring-1 focus:ring-emerald-500 outline-none font-medium"
+            />
+          </div>
+
+          {subTab === 'loans' && (
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="shrink-0 max-w-[45%] bg-white border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-700"
+            >
+              <option value="all">Todos Status</option>
+              <option value="Ativo">Ativos</option>
+              <option value="Devolvido">Devolvidos</option>
+            </select>
+          )}
         </div>
 
         {/* Right Controls */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           {subTab === 'loans' && (
             <>
-              {/* Status Filter */}
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as any)}
-                className="bg-white border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-700"
-              >
-                <option value="all">Todos Status</option>
-                <option value="Ativo">Ativos</option>
-                <option value="Devolvido">Devolvidos</option>
-              </select>
-
               <button
                 onClick={() => {
                   setIsAlertModalOpen(true);
                   setAlertSuccess(null);
                 }}
-                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5"
+                className="px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5"
               >
                 <Mail className="h-4 w-4" />
-                Criar Alertas por E-mail
+                Configurar alertas
               </button>
 
               <button
                 onClick={() => {
                   if (thirdParties.length === 0) {
-                    alert('Para criar um empréstimo, você precisa cadastrar pelo menos um prestador terceiro.');
-                    setSubTab('thirdparties');
+                    showDialog({
+                      title: 'Nenhum prestador terceiro cadastrado',
+                      message: 'Para criar um empréstimo, você precisa cadastrar pelo menos um prestador terceiro.',
+                      icon: 'warning',
+                      okLabel: 'Cadastrar Prestador Terceiro',
+                      cancelLabel: 'Cancelar',
+                      onOk: () => {
+                        setSubTab('thirdparties');
+                        setIsAddingThirdParty(true);
+                      }
+                    });
                     return;
                   }
                   setIsCreatingLoan(true);
                 }}
-                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5"
               >
-                <Plus className="h-4 w-4 text-emerald-400" />
+                <Plus className="h-4 w-4" />
                 Novo Empréstimo
               </button>
             </>
@@ -836,6 +857,23 @@ export default function LoansTab({
               </p>
             </div>
           ) : (
+            <>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-slate-400" id="loans-context-indicators">
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                {filteredLoans.length} empréstimos
+              </span>
+              <span className="text-slate-300">·</span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400"></span>
+                {filteredLoans.filter(l => l.status === 'Ativo' && l.estimatedReturnDate && l.estimatedReturnDate >= todayStr && l.estimatedReturnDate <= dueSoonStr).length} vencem em breve
+              </span>
+              <span className="text-slate-300">·</span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-red-500"></span>
+                {filteredLoans.filter(l => l.status === 'Ativo' && l.estimatedReturnDate && l.estimatedReturnDate < todayStr).length} atrasado
+              </span>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {filteredLoans.map(loan => {
                 const isReturned = loan.status === 'Devolvido';
@@ -967,6 +1005,7 @@ export default function LoansTab({
                 );
               })}
             </div>
+            </>
           )}
         </div>
       )}
@@ -1162,7 +1201,7 @@ export default function LoansTab({
                           </td>
                           <td className="py-3 px-4">
                             {isReturned ? (
-                              <span className="text-emerald-750 font-bold flex flex-col">
+                              <span className="text-emerald-700 font-bold flex flex-col">
                                 <span>{entry.actualReturnDate ? new Date(entry.actualReturnDate + 'T12:00:00').toLocaleDateString('pt-BR') : 'Concluído'}</span>
                                 <span className="text-[9px] text-emerald-500 font-medium font-mono uppercase">Devolvido</span>
                               </span>
@@ -1192,7 +1231,12 @@ export default function LoansTab({
                             {entry.notes ? (
                               <button 
                                 onClick={() => {
-                                  alert(`Histórico / Observações para o Termo ${entry.contractNumber}:\n\n${entry.notes}`);
+                                  showDialog({
+                                    title: `Observações para o Termo ${entry.contractNumber}`,
+                                    message: entry.notes,
+                                    icon: 'info',
+                                    okLabel: 'Fechar'
+                                  });
                                 }}
                                 className="p-1 text-slate-400 hover:text-indigo-600 font-bold hover:bg-slate-50 rounded"
                                 title="Ver Observações"
@@ -1374,7 +1418,7 @@ export default function LoansTab({
               )}
 
               {/* 1. Select third party & Dates */}
-              <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 space-y-4">
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-4">
                 <h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
                   <Users className="h-3.5 w-3.5 text-slate-400" />
                   Passo 1: Destinatário e Prazos
@@ -1388,7 +1432,7 @@ export default function LoansTab({
                       required
                       value={selectedThirdPartyId}
                       onChange={(e) => setSelectedThirdPartyId(e.target.value)}
-                      className="w-full bg-white border border-slate-200 px-3.5 py-2 rounded-xl text-xs focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-750"
+                      className="w-full bg-white border border-slate-200 px-3.5 py-2 rounded-xl text-xs focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-700"
                     >
                       <option value="">Selecione...</option>
                       {thirdParties.map(tp => (
@@ -1425,7 +1469,7 @@ export default function LoansTab({
               </div>
 
               {/* 2. Select Components to add */}
-              <div className="bg-slate-50 border border-slate-150 rounded-2xl p-4 space-y-4">
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-4">
                 <h3 className="text-xs font-extrabold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
                   <Cpu className="h-3.5 w-3.5 text-slate-400" />
                   Passo 2: Adicionar Equipamentos do Estoque
@@ -1436,7 +1480,7 @@ export default function LoansTab({
                     <select
                       value={tempSelectedComponentId}
                       onChange={(e) => setTempSelectedComponentId(e.target.value)}
-                      className="w-full bg-white border border-slate-200 px-3.5 py-2.5 rounded-xl text-xs focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-750"
+                      className="w-full bg-white border border-slate-200 px-3.5 py-2.5 rounded-xl text-xs focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-700"
                     >
                       <option value="">Selecione um componente disponível...</option>
                       {availableComponents.map(c => (
@@ -1465,7 +1509,7 @@ export default function LoansTab({
                       Nenhum item adicionado ao lote. Escolha um componente acima e clique em Adicionar.
                     </div>
                   ) : (
-                    <div className="border border-slate-150 rounded-xl overflow-hidden bg-white max-h-48 overflow-y-auto divide-y divide-slate-100">
+                    <div className="border border-slate-100 rounded-xl overflow-hidden bg-white max-h-48 overflow-y-auto divide-y divide-slate-100">
                       {loanedItems.map((item, idx) => (
                         <div key={item.id} className="flex items-center justify-between p-3 text-xs hover:bg-slate-50/50 transition-colors">
                           <div className="flex items-center gap-2.5">
@@ -1508,7 +1552,7 @@ export default function LoansTab({
               </div>
 
               {/* Footer Buttons */}
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-150 shrink-0">
+              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 shrink-0">
                 <button
                   type="button"
                   onClick={() => {
@@ -1645,9 +1689,9 @@ export default function LoansTab({
                     <table className="w-full text-left border-collapse text-[10px]">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-300 font-bold text-slate-900">
-                          <th className="py-2 px-3 border-r border-slate-350">Item</th>
-                          <th className="py-2 px-3 border-r border-slate-350">Equipamento Cedido</th>
-                          <th className="py-2 px-3 border-r border-slate-350">Marca</th>
+                          <th className="py-2 px-3 border-r border-slate-300">Item</th>
+                          <th className="py-2 px-3 border-r border-slate-300">Equipamento Cedido</th>
+                          <th className="py-2 px-3 border-r border-slate-300">Marca</th>
                           <th className="py-2 px-3">Número de Série (S/N)</th>
                         </tr>
                       </thead>
@@ -1750,7 +1794,7 @@ export default function LoansTab({
             <div className="flex-1 overflow-y-auto p-6 space-y-5">
               
               {alertSuccess ? (
-                <div className="p-4 bg-emerald-50 border border-emerald-150 text-emerald-850 rounded-2xl space-y-2">
+                <div className="p-4 bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-2xl space-y-2">
                   <p className="font-bold text-xs flex items-center gap-1.5">
                     <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                     Sucesso! Alerta Disparado
@@ -1771,7 +1815,7 @@ export default function LoansTab({
               ) : (
                 <form onSubmit={handleSendLoanEmailAlerts} className="space-y-4">
                   {/* Warning / Explanation banner */}
-                  <div className="p-3 bg-amber-50 border border-amber-200 text-amber-850 text-xs font-semibold rounded-xl leading-relaxed">
+                  <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold rounded-xl leading-relaxed">
                     ⚙️ <strong>Como funciona?</strong> O sistema irá compilar todos os empréstimos ativos cuja data de previsão de retorno estimada já expirou e enviar um relatório detalhado contendo marcas, números de série e terceiros responsáveis para o e-mail informado.
                   </div>
 
@@ -1795,16 +1839,16 @@ export default function LoansTab({
                     </h3>
 
                     {overdueLoans.length === 0 ? (
-                      <div className="p-4 bg-slate-50 border border-slate-150 rounded-2xl text-center">
+                      <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center">
                         <CheckCircle2 className="h-8 w-8 text-emerald-500 mx-auto mb-2" />
                         <p className="text-xs font-bold text-slate-700">Excelente! Nenhum empréstimo está vencido.</p>
                         <p className="text-[10px] text-slate-400 mt-0.5">Todos os equipamentos estão dentro do prazo de devolução estimado.</p>
                       </div>
                     ) : (
-                      <div className="border border-slate-150 rounded-2xl overflow-hidden max-h-60 overflow-y-auto">
+                      <div className="border border-slate-100 rounded-2xl overflow-hidden max-h-60 overflow-y-auto">
                         <table className="w-full text-left border-collapse text-xs">
                           <thead>
-                            <tr className="bg-slate-50 border-b border-slate-150 text-[10px] font-extrabold uppercase text-slate-400">
+                            <tr className="bg-slate-50 border-b border-slate-100 text-[10px] font-extrabold uppercase text-slate-400">
                               <th className="py-2 px-3">Termo / Responsável</th>
                               <th className="py-2 px-3">Empresa</th>
                               <th className="py-2 px-3">Previsão</th>
@@ -1879,7 +1923,7 @@ export default function LoansTab({
             </div>
 
             <div className="p-6 space-y-4">
-              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-150 space-y-2">
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 space-y-2">
                 <div className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">Detalhes do Termo</div>
                 <div className="text-xs text-slate-700 font-bold">Registro: {loanToReturn.contractNumber}</div>
                 <div className="text-xs text-slate-700">Responsável: <strong>{loanToReturn.thirdPartyName}</strong></div>
@@ -1925,7 +1969,7 @@ export default function LoansTab({
                             </div>
                           </div>
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            isSelected ? 'bg-emerald-100 text-emerald-850' : 'bg-slate-100 text-slate-500'
+                            isSelected ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
                           }`}>
                             {isSelected ? 'Devolver' : 'Manter Em uso'}
                           </span>
@@ -1998,7 +2042,7 @@ export default function LoansTab({
                           setIsPartialMode(true);
                           setSelectedPartialItemIds({});
                         }}
-                        className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all border border-slate-250"
+                        className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all border border-slate-200"
                         id="partial-return-trigger-btn"
                       >
                         Devolver parcial
@@ -2037,7 +2081,7 @@ export default function LoansTab({
             </div>
 
             <div className="p-6 space-y-4">
-              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-150 space-y-1 text-xs">
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 space-y-1 text-xs">
                 <div>Termo: <strong>{loanToDelete.contractNumber}</strong></div>
                 <div>Terceiro: <strong>{loanToDelete.thirdPartyName}</strong></div>
                 <div>Status Atual: <span className="font-bold text-amber-600">{loanToDelete.status}</span></div>
@@ -2086,7 +2130,7 @@ export default function LoansTab({
             </div>
 
             <div className="p-6 space-y-4">
-              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-150 space-y-1 text-xs">
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 space-y-1 text-xs">
                 <div>Nome: <strong>{thirdPartyToDelete.name}</strong></div>
                 <div>Documento: <strong>{thirdPartyToDelete.document}</strong></div>
                 {thirdPartyToDelete.company && <div>Empresa: <strong>{thirdPartyToDelete.company}</strong></div>}
@@ -2112,7 +2156,7 @@ export default function LoansTab({
                     await onDeleteThirdParty(thirdPartyToDelete.id);
                     setThirdPartyToDelete(null);
                   } catch (err: any) {
-                    alert(err.message || 'Erro ao deletar terceiro.');
+                    showToast('error', err.message || 'Erro ao deletar terceiro.');
                   }
                 }}
                 className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5"

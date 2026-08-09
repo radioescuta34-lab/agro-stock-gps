@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { useNotifications } from './NotificationProvider';
 import { 
   License, 
   LicenseBrand, 
@@ -14,7 +15,6 @@ import {
 import { 
   Plus, 
   Search, 
-  Filter, 
   Trash2, 
   Edit2, 
   Check, 
@@ -68,6 +68,7 @@ export default function LicensesTab({
   onDeleteLicense
 }: LicensesTabProps) {
   const isAdminOrTech = role === 'administrador' || role === 'tecnico' || role === 'ADMINISTRADOR' || role === 'TECNICO_CAMPO';
+  const { showToast, showDialog, confirmDialog } = useNotifications();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [brandFilter, setBrandFilter] = useState<string>('all');
@@ -279,7 +280,7 @@ export default function LicensesTab({
   const handleSaveAlertSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAdminOrTech) {
-      alert('Apenas administradores ou técnicos podem alterar as configurações de alerta.');
+      showToast('warning', 'Apenas administradores ou técnicos podem alterar as configurações de alerta.');
       return;
     }
 
@@ -311,7 +312,7 @@ export default function LicensesTab({
       setTimeout(() => setAlertSuccessToast(null), 4000);
     } catch (err: any) {
       console.error(err);
-      alert('Erro ao salvar as configurações de alerta: ' + err.message);
+      showToast('error', 'Erro ao salvar as configurações de alerta: ' + err.message);
     } finally {
       setIsSavingAlertSettings(false);
     }
@@ -320,7 +321,12 @@ export default function LicensesTab({
   // Trigger manual simulation checks
   const handleTriggerManualAlerts = async () => {
     if (!alertEmailInput) {
-      alert('Por favor, cadastre um e-mail de destino primeiro.');
+      showDialog({
+        title: 'E-mail de destino não cadastrado',
+        message: 'Por favor, cadastre um e-mail de destino primeiro.',
+        icon: 'warning',
+        okLabel: 'Entendi'
+      });
       return;
     }
     setIsSendingAlertManual(true);
@@ -377,7 +383,7 @@ export default function LicensesTab({
       }
       setTimeout(() => setAlertSuccessToast(null), 12000);
     } catch (err: any) {
-      alert('Erro ao rodar varredura de alertas: ' + err.message);
+      showToast('error', 'Erro ao rodar varredura de alertas: ' + err.message);
     } finally {
       setIsSendingAlertManual(false);
     }
@@ -672,7 +678,7 @@ export default function LicensesTab({
       } : null);
       
     } catch (err: any) {
-      alert('Erro ao confirmar desbloqueio: ' + err.message);
+      showToast('error', 'Erro ao confirmar desbloqueio: ' + err.message);
     }
   };
 
@@ -692,7 +698,7 @@ export default function LicensesTab({
       } : null);
       
     } catch (err: any) {
-      alert('Erro ao redefinir status de desbloqueio: ' + err.message);
+      showToast('error', 'Erro ao redefinir status de desbloqueio: ' + err.message);
     }
   };
 
@@ -718,15 +724,22 @@ export default function LicensesTab({
 
   const handleDelete = async (id: string) => {
     if (!isAdminOrTech) {
-      alert('Apenas administradores ou técnicos podem remover licenças.');
+      showToast('warning', 'Apenas administradores ou técnicos podem remover licenças.');
       return;
     }
-    if (confirm('Tem certeza de que deseja remover esta licença de sinal/software permanentemente?')) {
+    const confirmed = await confirmDialog({
+      title: 'Remover Licença',
+      message: 'Tem certeza de que deseja remover esta licença de sinal/software permanentemente?',
+      confirmLabel: 'Sim, Remover',
+      cancelLabel: 'Cancelar',
+      danger: true
+    });
+    if (confirmed) {
       try {
         await onDeleteLicense(id);
       } catch (err) {
         console.error(err);
-        alert('Erro ao excluir licença.');
+        showToast('error', 'Erro ao excluir licença.');
       }
     }
   };
@@ -773,10 +786,10 @@ export default function LicensesTab({
     <div className="space-y-6" id="licenses-tab-wrapper">
       
       {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 rounded-2xl border border-slate-200 shadow-sm gap-4">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Gerenciamento de Licenças</h1>
-          <p className="text-slate-500 text-sm mt-1">
+          <h1 className="text-xl font-bold text-slate-900">Gerenciamento de Licenças</h1>
+          <p className="text-slate-500 text-xs mt-1">
             Controle de assinaturas de sinal de correção (RTX, RTK) e ativações de recursos permanentes para monitores de piloto automático.
           </p>
         </div>
@@ -784,10 +797,10 @@ export default function LicensesTab({
         <div className="flex flex-wrap gap-2 shrink-0 w-full md:w-auto">
           <button
             onClick={() => setIsAlertSettingsOpen(!isAlertSettingsOpen)}
-            className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 border shadow-sm w-full sm:w-auto cursor-pointer ${
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border shadow-sm w-full sm:w-auto cursor-pointer ${
               isAlertSettingsOpen 
-                ? 'bg-emerald-50 border-emerald-350 text-emerald-700' 
-                : 'bg-white border-slate-250 text-slate-700 hover:bg-slate-50'
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-700' 
+                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
             }`}
             id="toggle-alert-settings-btn"
           >
@@ -801,10 +814,10 @@ export default function LicensesTab({
                 resetForm();
                 setIsAdding(true);
               }}
-              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-sm shrink-0 w-full sm:w-auto cursor-pointer"
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm shrink-0 w-full sm:w-auto cursor-pointer"
               id="register-license-btn"
             >
-              <Plus className="h-4.5 w-4.5" />
+              <Plus className="h-4 w-4" />
               Cadastrar Nova Licença
             </button>
           )}
@@ -848,7 +861,7 @@ export default function LicensesTab({
                       value={alertEmailInput}
                       onChange={e => setAlertEmailInput(e.target.value)}
                       disabled={!isAdminOrTech}
-                      className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 disabled:opacity-60"
+                      className="w-full pl-9 pr-3 py-2 border border-slate-300 bg-white rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs disabled:opacity-60"
                     />
                   </div>
                 </div>
@@ -857,7 +870,7 @@ export default function LicensesTab({
                   <button
                     type="submit"
                     disabled={isSavingAlertSettings}
-                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 shrink-0 w-full sm:w-auto cursor-pointer"
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 shrink-0 w-full sm:w-auto cursor-pointer"
                   >
                     {isSavingAlertSettings ? 'Salvando...' : 'Salvar E-mail'}
                   </button>
@@ -874,19 +887,19 @@ export default function LicensesTab({
               <div className="space-y-2 text-[11px] text-slate-600">
                 <div className="flex justify-between items-center">
                   <span>Alerta 60 Dias:</span>
-                  <span className="font-semibold text-slate-850 bg-slate-100 px-2 py-0.5 rounded">
+                  <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
                     {alertSettings?.lastSent60 ? `Enviado em: ${new Date(alertSettings.lastSent60).toLocaleDateString('pt-BR')}` : 'Nunca disparado'}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span>Alerta 30 Dias:</span>
-                  <span className="font-semibold text-slate-850 bg-slate-100 px-2 py-0.5 rounded">
+                  <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
                     {alertSettings?.lastSent30 ? `Enviado em: ${new Date(alertSettings.lastSent30).toLocaleDateString('pt-BR')}` : 'Nunca disparado'}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span>Alerta 15 Dias:</span>
-                  <span className="font-semibold text-slate-850 bg-slate-100 px-2 py-0.5 rounded">
+                  <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
                     {alertSettings?.lastSent15 ? `Enviado em: ${new Date(alertSettings.lastSent15).toLocaleDateString('pt-BR')}` : 'Nunca disparado'}
                   </span>
                 </div>
@@ -906,7 +919,7 @@ export default function LicensesTab({
 
           {/* Success / Status alerts */}
           {alertSuccessToast && (
-            <div className="bg-emerald-50 border border-emerald-200 p-3.5 rounded-xl flex items-start gap-2.5 text-emerald-850 text-xs shadow-sm">
+            <div className="bg-emerald-50 border border-emerald-200 p-3.5 rounded-xl flex items-start gap-2.5 text-emerald-800 text-xs shadow-sm">
               <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
               <div className="leading-normal">
                 {alertSuccessToast}
@@ -918,7 +931,7 @@ export default function LicensesTab({
 
       {/* Adding/Editing Form Box */}
       {(isAdding || editingLic) && (
-        <div className="bg-white p-6 rounded-2xl border-2 border-emerald-500/30 shadow-md animate-fade-in" id="license-form-box">
+        <div className="bg-white p-6 rounded-2xl border border-emerald-200 shadow-md animate-fade-in" id="license-form-box">
           <div className="flex justify-between items-center pb-4 mb-6 border-b border-slate-100">
             <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
               <Key className="h-5 w-5 text-emerald-500" />
@@ -945,7 +958,7 @@ export default function LicensesTab({
             )}
 
             {isAdding && (
-              <div className="bg-gradient-to-br from-indigo-50/40 via-purple-50/10 to-transparent p-5 rounded-2xl border border-indigo-150 shadow-sm mb-6">
+              <div className="bg-gradient-to-br from-indigo-50/40 via-purple-50/10 to-transparent p-5 rounded-2xl border border-indigo-100 shadow-sm mb-6">
                 <div className="flex items-center gap-2 mb-3">
                   <div className="p-1.5 bg-indigo-50 rounded-lg text-indigo-600">
                     <Sparkles className="h-5 w-5 animate-pulse" />
@@ -1068,7 +1081,7 @@ export default function LicensesTab({
                   placeholder="Ex: Trimble CenterPoint RTX (Anual)"
                   value={name}
                   onChange={e => setName(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-sm text-slate-800"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs"
                 />
               </div>
 
@@ -1081,7 +1094,7 @@ export default function LicensesTab({
                   placeholder="Ex: RTX-ANUAL-9982-XXXX"
                   value={code}
                   onChange={e => setCode(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-sm font-mono text-slate-800"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs font-mono"
                 />
               </div>
 
@@ -1091,7 +1104,7 @@ export default function LicensesTab({
                 <select
                   value={brand}
                   onChange={e => setBrand(e.target.value as LicenseBrand)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-sm text-slate-800 bg-white"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs bg-white"
                 >
                   <option value="Trimble">Trimble</option>
                   <option value="Topcon">Topcon</option>
@@ -1104,7 +1117,7 @@ export default function LicensesTab({
                 <select
                   value={type}
                   onChange={e => setType(e.target.value as LicenseType)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-sm text-slate-800 bg-white"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs bg-white"
                 >
                   <option value="Assinatura de Sinal">Assinatura de Sinal (RTX / RTK / Satélite)</option>
                   <option value="Ativação de Tela">Ativação de Tela (Piloto, Seção, Multi-produto)</option>
@@ -1117,7 +1130,7 @@ export default function LicensesTab({
                 <select
                   value={status}
                   onChange={e => setStatus(e.target.value as LicenseStatus)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-sm text-slate-800 bg-white"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs bg-white"
                 >
                   <option value="Ativa">Ativa (Habilitada e em uso)</option>
                   <option value="Disponível">Disponível (Não vinculada / No estoque)</option>
@@ -1133,7 +1146,7 @@ export default function LicensesTab({
                   type="date"
                   value={startDate}
                   onChange={e => setStartDate(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-sm text-slate-800 bg-white"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs bg-white"
                 />
               </div>
 
@@ -1157,7 +1170,7 @@ export default function LicensesTab({
                   disabled={isPerpetual}
                   value={isPerpetual ? '' : expirationDate}
                   onChange={e => setExpirationDate(e.target.value)}
-                  className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-sm text-slate-800 bg-white ${isPerpetual ? 'opacity-50 cursor-not-allowed bg-slate-50' : ''}`}
+                  className={`w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs bg-white ${isPerpetual ? 'opacity-50 cursor-not-allowed bg-slate-50' : ''}`}
                 />
               </div>
 
@@ -1169,7 +1182,7 @@ export default function LicensesTab({
                   placeholder="Ex: FmX, GFX-750"
                   value={deviceModel}
                   onChange={e => setDeviceModel(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-sm text-slate-800"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs"
                 />
               </div>
 
@@ -1181,7 +1194,7 @@ export default function LicensesTab({
                   placeholder="Ex: 5348542353"
                   value={deviceSerialNumber}
                   onChange={e => setDeviceSerialNumber(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-sm font-mono text-slate-800"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs font-mono"
                 />
               </div>
 
@@ -1193,7 +1206,7 @@ export default function LicensesTab({
                   placeholder="Ex: 542353-FMX20-27091-71D6C21A"
                   value={masterUnlockKey}
                   onChange={e => setMasterUnlockKey(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-sm font-mono text-slate-800"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs font-mono"
                 />
               </div>
 
@@ -1203,7 +1216,7 @@ export default function LicensesTab({
                 <select
                   value={associatedComponentSerial}
                   onChange={e => setAssociatedComponentSerial(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-sm text-slate-800 bg-white"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs bg-white"
                 >
                   <option value="">Nenhum - Disponível no Estoque / Não Vinculado</option>
                   {components
@@ -1255,67 +1268,58 @@ export default function LicensesTab({
             placeholder="Buscar por nome, chave, S/N equipamento ou máquina..."
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-xs text-slate-800"
+            className="w-full pl-10 pr-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs"
           />
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 md:w-auto shrink-0 w-full sm:w-auto">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 flex-1 sm:flex-initial">
             {/* Brand Filter */}
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 rounded-xl">
-              <Filter className="h-3.5 w-3.5 text-slate-400 shrink-0 hidden sm:inline" />
-              <select
-                value={brandFilter}
-                onChange={e => setBrandFilter(e.target.value)}
-                className="bg-transparent border-none text-[11px] font-bold text-slate-600 focus:outline-none pr-2 py-1.5 w-full cursor-pointer"
-              >
-                <option value="all">Tecnologia (Todas)</option>
-                <option value="Trimble">Trimble</option>
-                <option value="Topcon">Topcon</option>
-              </select>
-            </div>
+            <select
+              value={brandFilter}
+              onChange={e => setBrandFilter(e.target.value)}
+              className="bg-white border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-700"
+            >
+              <option value="all">Tecnologia (Todas)</option>
+              <option value="Trimble">Trimble</option>
+              <option value="Topcon">Topcon</option>
+            </select>
 
             {/* Type Filter */}
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 rounded-xl">
-              <select
-                value={typeFilter}
-                onChange={e => setTypeFilter(e.target.value)}
-                className="bg-transparent border-none text-[11px] font-bold text-slate-600 focus:outline-none pr-2 py-1.5 w-full cursor-pointer"
-              >
-                <option value="all">Tipo (Todos)</option>
-                <option value="Assinatura de Sinal">Sinal</option>
-                <option value="Ativação de Tela">Ativação</option>
-              </select>
-            </div>
+            <select
+              value={typeFilter}
+              onChange={e => setTypeFilter(e.target.value)}
+              className="bg-white border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-700"
+            >
+              <option value="all">Tipo (Todos)</option>
+              <option value="Assinatura de Sinal">Sinal</option>
+              <option value="Ativação de Tela">Ativação</option>
+            </select>
 
             {/* Status Filter */}
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 rounded-xl">
-              <select
-                value={statusFilter}
-                onChange={e => setStatusFilter(e.target.value)}
-                className="bg-transparent border-none text-[11px] font-bold text-slate-600 focus:outline-none pr-2 py-1.5 w-full cursor-pointer"
-              >
-                <option value="all">Status (Todos)</option>
-                <option value="Ativa">Ativas</option>
-                <option value="Disponível">Disponíveis</option>
-                <option value="Pendente">Pendentes</option>
-                <option value="Expirada">Expiradas</option>
-              </select>
-            </div>
+            <select
+              value={statusFilter}
+              onChange={e => setStatusFilter(e.target.value)}
+              className="bg-white border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-700"
+            >
+              <option value="all">Status (Todos)</option>
+              <option value="Ativa">Ativas</option>
+              <option value="Disponível">Disponíveis</option>
+              <option value="Pendente">Pendentes</option>
+              <option value="Expirada">Expiradas</option>
+            </select>
 
             {/* Expiration Filter */}
-            <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 px-3 rounded-xl">
-              <select
-                value={expirationRangeFilter}
-                onChange={e => setExpirationRangeFilter(e.target.value)}
-                className="bg-transparent border-none text-[11px] font-bold text-slate-600 focus:outline-none pr-2 py-1.5 w-full cursor-pointer"
-              >
-                <option value="all">Vencimento (Todos)</option>
-                <option value="15">Vencendo em até 15 dias</option>
-                <option value="30">Vencendo em até 30 dias</option>
-                <option value="60">Vencendo em até 60 dias</option>
-              </select>
-            </div>
+            <select
+              value={expirationRangeFilter}
+              onChange={e => setExpirationRangeFilter(e.target.value)}
+              className="bg-white border border-slate-200 text-xs px-3 py-2 rounded-xl focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-700"
+            >
+              <option value="all">Vencimento (Todos)</option>
+              <option value="15">Vencendo em até 15 dias</option>
+              <option value="30">Vencendo em até 30 dias</option>
+              <option value="60">Vencendo em até 60 dias</option>
+            </select>
           </div>
 
           {/* View Mode Toggle */}
@@ -1624,7 +1628,7 @@ export default function LicensesTab({
                       {/* Marca/Tipo */}
                       <td className="py-3 px-4">
                         <div className="flex flex-col gap-1">
-                          <span className={`self-start text-[10px] font-extrabold uppercase tracking-wide px-2 py-0.5 rounded-md border ${isTrimble ? 'bg-indigo-50 text-indigo-700 border-indigo-150' : 'bg-sky-50 text-sky-700 border-sky-150'}`}>
+                          <span className={`self-start text-[10px] font-extrabold uppercase tracking-wide px-2 py-0.5 rounded-md border ${isTrimble ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-sky-50 text-sky-700 border-sky-100'}`}>
                             {lic.brand}
                           </span>
                           <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
@@ -1830,13 +1834,13 @@ export default function LicensesTab({
               </div>
 
               {/* Unlock Status Banner inside the Modal */}
-              <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs ${qrModalLicense.unlockStatus === 'desbloqueado' ? 'bg-emerald-50 border-emerald-150 text-emerald-900' : 'bg-amber-50 border-amber-150 text-amber-900'}`}>
-                <div className="flex items-start gap-2.5">
-                  {qrModalLicense.unlockStatus === 'desbloqueado' ? (
-                    <CheckCircle2 className="h-5 w-5 text-emerald-650 shrink-0 mt-0.5 animate-bounce" />
-                  ) : (
-                    <Clock className="h-5 w-5 text-amber-650 shrink-0 mt-0.5 animate-pulse" />
-                  )}
+              <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs ${qrModalLicense.unlockStatus === 'desbloqueado' ? 'bg-emerald-50 border-emerald-100 text-emerald-900' : 'bg-amber-50 border-amber-100 text-amber-900'}`}>
+                  <div className="flex items-center gap-2">
+                    {qrModalLicense.unlockStatus === 'desbloqueado' ? (
+                      <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5 animate-bounce" />
+                    ) : (
+                      <Clock className="h-5 w-5 text-amber-600 shrink-0 mt-0.5 animate-pulse" />
+                    )}
                   <div>
                     <p className="font-bold">
                       {qrModalLicense.unlockStatus === 'desbloqueado' 
@@ -1851,7 +1855,7 @@ export default function LicensesTab({
                   </div>
                 </div>
                 <div className="shrink-0 flex items-center">
-                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${qrModalLicense.unlockStatus === 'desbloqueado' ? 'bg-emerald-100 border-emerald-250 text-emerald-800' : 'bg-amber-100 border-amber-250 text-amber-800'}`}>
+                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${qrModalLicense.unlockStatus === 'desbloqueado' ? 'bg-emerald-100 border-emerald-200 text-emerald-800' : 'bg-amber-100 border-amber-200 text-amber-800'}`}>
                     {qrModalLicense.unlockStatus === 'desbloqueado' ? 'Realizado' : 'Pendente'}
                   </span>
                 </div>
@@ -1885,7 +1889,7 @@ export default function LicensesTab({
                       type="button"
                       onClick={() => {
                         navigator.clipboard.writeText(qrModalLicense.code);
-                        alert('Código de ativação copiado para a área de transferência!');
+                        showToast('success', 'Código de ativação copiado para a área de transferência!');
                       }}
                       className="w-full py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-[10px] rounded-lg transition-all"
                     >
@@ -1922,7 +1926,7 @@ export default function LicensesTab({
                           type="button"
                           onClick={() => {
                             navigator.clipboard.writeText(qrModalLicense.masterUnlockKey || '');
-                            alert('Master Unlock Key copiada para a área de transferência!');
+                            showToast('success', 'Master Unlock Key copiada para a área de transferência!');
                           }}
                           className="w-full py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-[10px] rounded-lg transition-all"
                         >

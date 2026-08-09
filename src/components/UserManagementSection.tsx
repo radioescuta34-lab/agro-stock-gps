@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { UserProfile, UserRole } from '../types';
+import { useNotifications } from './NotificationProvider';
 import {
   Users,
   Search,
@@ -32,6 +33,7 @@ export default function UserManagementSection({
   onEditUser,
   onDeleteUser
 }: UserManagementSectionProps) {
+  const { confirmDialog } = useNotifications();
   const [searchTerm, setSearchTerm] = useState('');
   const [userFormMode, setUserFormMode] = useState<'add' | 'edit'>('add');
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
@@ -125,7 +127,14 @@ export default function UserManagementSection({
       return;
     }
 
-    if (window.confirm(`Tem certeza de que deseja excluir o usuário "${uEmail}"? Esta ação removerá o acesso ao sistema.`)) {
+    const confirmed = await confirmDialog({
+      title: 'Excluir Usuário',
+      message: `Tem certeza de que deseja excluir o usuário "${uEmail}"? Esta ação removerá o acesso ao sistema.`,
+      confirmLabel: 'Sim, Excluir',
+      cancelLabel: 'Cancelar',
+      danger: true
+    });
+    if (confirmed) {
       setUserLoading(true);
       setUserError(null);
       setUserSuccess(null);

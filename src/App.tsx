@@ -33,6 +33,7 @@ import {
   MaintenanceProvider
 } from './types';
 import AuthScreen from './components/AuthScreen';
+import { useNotifications } from './components/NotificationProvider';
 import { hashPassword } from './utils/crypto';
 import Dashboard from './components/Dashboard';
 import ComponentsTab from './components/ComponentsTab';
@@ -75,6 +76,7 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
 };
 
 export default function App() {
+  const { showToast } = useNotifications();
   const [user, setUser] = useState<UserProfile | null>(null);
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -768,10 +770,10 @@ export default function App() {
       }
 
       // We will let Firestore listener update the local react state automatically!
-      alert('Banco de dados populado com sucesso com dados da frota, estoque e licenças!');
+      showToast('success', 'Banco de dados populado com sucesso com dados da frota, estoque e licenças!');
     } catch (err) {
       console.error('Error seeding Firestore', err);
-      alert('Erro ao popular banco de dados real. Certifique-se de que as regras do Firestore foram implantadas.');
+      showToast('error', 'Erro ao popular banco de dados real. Certifique-se de que as regras do Firestore foram implantadas.');
     } finally {
       setLoadingApp(false);
     }

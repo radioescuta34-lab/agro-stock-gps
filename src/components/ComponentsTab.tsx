@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNotifications } from './NotificationProvider';
 import { 
   AutopilotComponent, 
   ComponentBrand, 
@@ -60,6 +61,7 @@ export default function ComponentsTab({
   onAddProvider
 }: ComponentsTabProps) {
   const isAdminOrTech = role === 'administrador' || role === 'tecnico' || role === 'ADMINISTRADOR' || role === 'TECNICO_CAMPO';
+  const { showToast, confirmDialog } = useNotifications();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [brandFilter, setBrandFilter] = useState<string>('all');
@@ -293,11 +295,18 @@ export default function ComponentsTab({
 
   const handleDelete = async (id: string) => {
     if (!isAdminOrTech) return;
-    if (window.confirm('Tem certeza de que deseja excluir este componente do estoque? Esta ação é irreversível.')) {
+    const confirmed = await confirmDialog({
+      title: 'Excluir Componente',
+      message: 'Tem certeza de que deseja excluir este componente do estoque? Esta ação é irreversível.',
+      confirmLabel: 'Sim, Excluir',
+      cancelLabel: 'Cancelar',
+      danger: true
+    });
+    if (confirmed) {
       try {
         await onDeleteComponent(id);
       } catch (err: any) {
-        alert(err.message || 'Erro ao excluir componente.');
+        showToast('error', err.message || 'Erro ao excluir componente.');
       }
     }
   };
@@ -590,8 +599,8 @@ export default function ComponentsTab({
         )}
 
         {/* 3. Toggle List Tabs */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
-          <div className="flex gap-2">
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setMaintListTab('ativos')}
               className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
@@ -624,7 +633,58 @@ export default function ComponentsTab({
               Não há equipamentos em manutenção externa no momento.
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <>
+            {/* Mobile Cards */}
+            <div className="md:hidden grid grid-cols-1 gap-4" id="active-maintenances-mobile-cards">
+              {activeMaintenances.map((m) => (
+                <div key={m.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-3">
+                  <div className="flex justify-between items-start gap-2">
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${m.componentBrand === 'Trimble' ? 'bg-indigo-50 text-indigo-700 border-indigo-100' : 'bg-sky-50 text-sky-700 border-sky-100'}`}>
+                        {m.componentBrand}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-100">
+                        Em Manutenção
+                      </span>
+                    </div>
+                    {isAdminOrTech && (
+                      <button
+                        onClick={() => {
+                          setReturningMaint(m);
+                          setMaintReturnDate(new Date().toISOString().split('T')[0]);
+                          setError(null);
+                        }}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-bold transition-all flex items-center gap-1 shrink-0"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                        Registrar Retorno
+                      </button>
+                    )}
+                  </div>
+
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">{m.componentName}</h3>
+                    <p className="text-[10px] text-slate-500 font-mono font-medium mt-0.5">S/N: {m.componentSerial}</p>
+                  </div>
+
+                  <div className="space-y-1.5 text-xs border-t border-slate-100 pt-3">
+                    <p className="text-slate-600">
+                      <span className="text-slate-400 font-medium">Assistência:</span> {m.providerName}
+                    </p>
+                    <p className="text-slate-600">
+                      <span className="text-slate-400 font-medium">Enviado em:</span>{' '}
+                      {new Date(m.sentDate).toLocaleDateString('pt-BR')}
+                    </p>
+                    <p className="text-slate-600">
+                      <span className="text-slate-400 font-medium">Defeito:</span> {m.issueDescription}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop Table */}
+            <div className="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -676,6 +736,7 @@ export default function ComponentsTab({
                 </table>
               </div>
             </div>
+            </>
           )
         ) : (
           pastMaintenances.length === 0 ? (
@@ -683,7 +744,50 @@ export default function ComponentsTab({
               Nenhum histórico de manutenção registrado até o momento.
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <>
+            {/* Mobile Cards */}
+            <div className="md:hidden grid grid-cols-1 gap-4" id="past-maintenances-mobile-cards">
+              {pastMaintenances.map((m) => (
+                <div key={m.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      m.status === 'Concluído' 
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-100' 
+                        : 'bg-rose-50 text-rose-700 border-rose-100'
+                    }`}>
+                      {m.status === 'Concluído' ? 'Consertado' : 'Sem Conserto'}
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-100 text-slate-700 border-slate-200">
+                      {new Date(m.sentDate).toLocaleDateString('pt-BR')} até {m.returnDate ? new Date(m.returnDate).toLocaleDateString('pt-BR') : 'N/A'}
+                    </span>
+                  </div>
+
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">{m.componentName}</h3>
+                    <p className="text-[10px] text-slate-500 font-mono font-medium mt-0.5">S/N: {m.componentSerial}</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Defeito: {m.issueDescription}</p>
+                  </div>
+
+                  <div className="space-y-1.5 text-xs border-t border-slate-100 pt-3">
+                    <p className="text-slate-600">
+                      <span className="text-slate-400 font-medium">Assistência:</span> {m.providerName}
+                    </p>
+                    {m.replacedParts && (
+                      <p className="text-slate-600"><span className="text-slate-400 font-medium">Peças:</span> {m.replacedParts}</p>
+                    )}
+                    {m.servicesPerformed && (
+                      <p className="text-slate-600"><span className="text-slate-400 font-medium">Serviços:</span> {m.servicesPerformed}</p>
+                    )}
+                    <p className="font-bold text-slate-900">
+                      Custo: {m.cost ? `R$ ${m.cost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : 'R$ 0,00'}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop Table */}
+            <div className="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -732,6 +836,7 @@ export default function ComponentsTab({
                 </table>
               </div>
             </div>
+            </>
           )
         )}
 
@@ -839,7 +944,7 @@ export default function ComponentsTab({
     <div className="space-y-6" id="components-tab">
       
       {/* Header and Add Button */}
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Estoque de Hardware GPS</h1>
           <p className="text-slate-500 text-xs mt-1">
@@ -850,7 +955,7 @@ export default function ComponentsTab({
         </div>
 
         {isAdminOrTech && !isAdding && !editingComp && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => { setShowMaintenanceView(true); resetForm(); }}
               className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5"
@@ -1174,7 +1279,92 @@ export default function ComponentsTab({
           Nenhum equipamento de piloto automático correspondente aos filtros foi encontrado.
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" id="components-table-container">
+        <>
+        {/* Mobile Cards */}
+        <div className="md:hidden grid grid-cols-1 gap-4" id="components-mobile-cards">
+          {filteredComponents.map((comp) => {
+            let statusBadge = 'bg-slate-100 text-slate-700 border-slate-200';
+            if (comp.status === 'Disponível') statusBadge = 'bg-blue-50 text-blue-700 border-blue-100';
+            if (comp.status === 'Em Uso') statusBadge = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+            if (comp.status === 'Manutenção') statusBadge = 'bg-amber-50 text-amber-700 border-amber-100';
+            if (comp.status === 'Descartado') statusBadge = 'bg-rose-50 text-rose-700 border-rose-100';
+
+            const brandBadge = comp.brand === 'Trimble' 
+              ? 'bg-indigo-50 text-indigo-700 border-indigo-100' 
+              : 'bg-sky-50 text-sky-700 border-sky-100';
+
+            const foundMachine = machines.find(m => m.prefix.trim().toUpperCase() === (comp.currentMachine || '').trim().toUpperCase());
+
+            return (
+              <div 
+                key={comp.id} 
+                className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-3"
+              >
+                <div className="flex justify-between items-start gap-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${brandBadge}`}>
+                      {comp.brand}
+                    </span>
+                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${statusBadge}`}>
+                      {comp.status}
+                    </span>
+                  </div>
+                  {isAdminOrTech && (
+                    <div className="flex gap-1.5 shrink-0">
+                      <button
+                        onClick={() => startEdit(comp)}
+                        className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors"
+                        title="Editar equipamento"
+                      >
+                        <Edit className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(comp.id)}
+                        className="p-1.5 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
+                        title="Excluir equipamento"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">{comp.name}</h3>
+                  <p className="text-[10px] text-slate-500 font-mono font-medium mt-0.5">
+                    S/N: {comp.serialNumber}
+                  </p>
+                </div>
+
+                <div className="space-y-1.5 text-xs border-t border-slate-100 pt-3">
+                  <p className="text-slate-600">
+                    <span className="text-slate-400 font-medium">Tipo:</span> {comp.type}
+                  </p>
+                  <p className="text-slate-600">
+                    <span className="text-slate-400 font-medium">Máquina / Localização:</span>{' '}
+                    {comp.status === 'Em Uso' ? (
+                      <span className="flex flex-col gap-0.5">
+                        <span className="font-bold text-slate-800 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md inline-block w-fit">
+                          {comp.currentMachine || 'N/A'}
+                        </span>
+                        {foundMachine && foundMachine.fleet && (
+                          <span className="text-[10px] text-slate-500 font-semibold">
+                            {foundMachine.fleet}
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 italic">Almoxarifado Central</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Desktop Table */}
+        <div className="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" id="components-table-container">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -1272,6 +1462,7 @@ export default function ComponentsTab({
             </table>
           </div>
         </div>
+        </>
       )}
 
       {/* Tech workflow guidance notice */}

@@ -139,7 +139,7 @@ export default function MovementsTab({
     <div className="space-y-6" id="movements-tab">
       
       {/* Header and Add Button */}
-      <div className="flex justify-between items-center bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Movimentações e Serviços de Campo</h1>
           <p className="text-slate-500 text-xs mt-1">
@@ -148,14 +148,16 @@ export default function MovementsTab({
         </div>
 
         {!isAdding && (
-          <button
-            onClick={() => { setIsAdding(true); resetForm(); }}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5 animate-pulse"
-            id="open-add-movement-form"
-          >
-            <Plus className="h-4 w-4" />
-            Lançar Novo Serviço
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => { setIsAdding(true); resetForm(); }}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5 animate-pulse"
+              id="open-add-movement-form"
+            >
+              <Plus className="h-4 w-4" />
+              Lançar Novo Serviço
+            </button>
+          </div>
         )}
       </div>
 
@@ -375,7 +377,61 @@ export default function MovementsTab({
           Nenhuma movimentação ou atividade técnica registrada corresponde aos filtros.
         </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" id="movements-table-container">
+        <>
+        {/* Mobile Cards */}
+        <div className="md:hidden grid grid-cols-1 gap-4" id="movements-mobile-cards">
+          {filteredMovements.map((move) => {
+            let actionBadge = 'bg-slate-100 text-slate-700 border-slate-200';
+            if (move.action === 'Instalação') actionBadge = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+            if (move.action === 'Remoção') actionBadge = 'bg-slate-100 text-slate-700 border-slate-200';
+            if (move.action === 'Manutenção') actionBadge = 'bg-amber-50 text-amber-700 border-amber-100';
+            if (move.action === 'Calibração') actionBadge = 'bg-indigo-50 text-indigo-700 border-indigo-100';
+
+            const moveDate = move.date?.toDate ? move.date.toDate() : new Date(move.date);
+
+            return (
+              <div key={move.id} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-3">
+                <div className="flex justify-between items-start gap-2">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${actionBadge}`}>
+                    {move.action}
+                  </span>
+                  <span className="text-[10px] font-medium text-slate-500 whitespace-nowrap">
+                    {moveDate.toLocaleDateString('pt-BR')} {moveDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">{move.componentName}</h3>
+                  <p className="text-[10px] text-slate-500 font-mono font-medium mt-0.5">S/N: {move.componentSerial}</p>
+                </div>
+
+                <div className="space-y-1.5 text-xs border-t border-slate-100 pt-3">
+                  <p className="text-slate-600">
+                    <span className="text-slate-400 font-medium">Veículo Alvo:</span>{' '}
+                    {move.machinePrefix === 'Almoxarifado' ? (
+                      <span className="text-slate-400 italic">Almoxarifado</span>
+                    ) : (
+                      <span className="font-bold text-slate-800 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md inline-block w-fit">
+                        {move.machinePrefix}
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-slate-600">
+                    <span className="text-slate-400 font-medium">Técnico:</span> {move.technicianName}
+                  </p>
+                  {move.notes && (
+                    <p className="text-slate-600 leading-relaxed italic border-l-2 border-slate-200 pl-2 mt-1">
+                      {move.notes}
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Desktop Table */}
+        <div className="hidden md:block bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" id="movements-table-container">
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -437,6 +493,7 @@ export default function MovementsTab({
             </table>
           </div>
         </div>
+        </>
       )}
 
     </div>

@@ -7,3 +7,4 @@ coverage/
 .env*
 !.env.example
 *.traineddata
+graphify-out/
