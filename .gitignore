@@ -8,3 +8,6 @@ coverage/
 !.env.example
 *.traineddata
 graphify-out/
+
+.vercel
+.env*

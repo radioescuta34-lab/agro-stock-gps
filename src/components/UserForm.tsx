@@ -85,7 +85,7 @@ export default function UserForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
+    <form onSubmit={handleSubmit} className="space-y-4">
       {error && (
         <div className="bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold p-3 rounded-xl">
           {error}
@@ -100,7 +100,7 @@ export default function UserForm({
       )}
 
       {/* Nome & Sobrenome */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
         <div className="space-y-1.5">
           <label className="text-[10px] uppercase font-black text-slate-400">
             Nome <span className="text-rose-500">*</span>
@@ -115,7 +115,7 @@ export default function UserForm({
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
               disabled={loading}
-              className="w-full pl-10 pr-3.5 py-1.5 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
+              className="min-h-11 w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-3.5 text-xs font-medium focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
             />
           </div>
         </div>
@@ -129,7 +129,7 @@ export default function UserForm({
             value={lastName}
             onChange={(e) => setLastName(e.target.value)}
             disabled={loading}
-            className="w-full px-3.5 py-1.5 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 disabled:bg-slate-50"
+            className="min-h-11 w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-xs font-medium focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-50"
           />
         </div>
       </div>
@@ -149,7 +149,7 @@ export default function UserForm({
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             disabled={loading}
-            className="w-full pl-10 pr-3.5 py-1.5 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
+            className="min-h-11 w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-3.5 text-xs font-medium focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
           />
         </div>
       </div>
@@ -171,7 +171,7 @@ export default function UserForm({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             disabled={loading}
-            className="w-full pl-10 pr-3.5 py-1.5 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500"
+            className="min-h-11 w-full rounded-xl border border-slate-200 py-2.5 pl-10 pr-3.5 text-xs font-medium focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
           />
         </div>
       </div>
@@ -180,12 +180,12 @@ export default function UserForm({
       {mode === 'admin' && (
         <div className="space-y-1.5">
           <label className="text-[10px] uppercase font-black text-slate-400">Função / Perfil no Sistema</label>
-          <div className="grid grid-cols-2 gap-3 mt-1">
+          <div className="mt-1 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
             <button
               type="button"
               onClick={() => setRole('TECNICO_CAMPO')}
               disabled={loading}
-              className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+              className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-bold transition-all ${
                 role === 'TECNICO_CAMPO' || role === 'tecnico'
                   ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
                   : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
@@ -201,7 +201,7 @@ export default function UserForm({
               type="button"
               onClick={() => setRole('ADMINISTRADOR')}
               disabled={loading}
-              className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
+              className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-bold transition-all ${
                 role === 'ADMINISTRADOR' || role === 'administrador'
                   ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
                   : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
@@ -218,13 +218,13 @@ export default function UserForm({
       )}
 
       {/* Buttons */}
-      <div className="flex gap-2 pt-1">
+      <div className="grid grid-cols-1 gap-2 pt-1 min-[420px]:grid-cols-2">
         {onCancel && (
           <button
             type="button"
             onClick={onCancel}
             disabled={loading}
-            className="flex-1 py-2 px-3 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+            className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-bold text-slate-600 transition-all hover:bg-slate-50"
           >
             <X className="h-3.5 w-3.5" />
             Cancelar
@@ -233,7 +233,7 @@ export default function UserForm({
         <button
           type="submit"
           disabled={loading || !firstName.trim() || !username.trim()}
-          className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm shadow-emerald-600/10 flex items-center justify-center gap-1.5 disabled:opacity-50"
+          className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-bold text-white shadow-sm shadow-emerald-600/10 transition-all hover:bg-emerald-700 disabled:opacity-50"
         >
           <Save className="h-3.5 w-3.5" />
           {loading ? 'Salvando...' : (submitLabel || 'Salvar Alterações')}

@@ -32,7 +32,13 @@ import {
   ComponentStatus,
   MaintenanceProvider,
   FieldDataCollection,
-  DashboardNavPreset
+  DashboardNavPreset,
+  LicenseSettings,
+  CampoAlertSettings,
+  LoanAlertSettings,
+  MaintenanceAlertSettings,
+  IdleAlertSettings,
+  AlertHistoryEntry
 } from './types';
 import AuthScreen from './components/AuthScreen';
 import { useNotifications } from './components/NotificationProvider';
@@ -45,6 +51,18 @@ import LicensesTab from './components/LicensesTab';
 import LoansTab from './components/LoansTab';
 import ProfileTab from './components/ProfileTab';
 import SettingsTab from './components/SettingsTab';
+import { useLicenseAlertSettings } from './hooks/useLicenseAlertSettings';
+import { useCampoAlertSettings } from './hooks/useCampoAlertSettings';
+import { useLoanAlertSettings } from './hooks/useLoanAlertSettings';
+import { useMaintenanceAlertSettings } from './hooks/useMaintenanceAlertSettings';
+import { useIdleAlertSettings } from './hooks/useIdleAlertSettings';
+import { getLicensesExpiringInDays, sendLicenseExpirationEmail } from './utils/licenseAlerts';
+import { buildFieldDataReport, sendFieldDataAlertEmail } from './utils/fieldDataAlerts';
+import { getOverdueLoans, sendLoansAlertEmail } from './utils/loansAlerts';
+import { getOverdueMaintenances, getCompletedMaintenances, sendMaintenanceAlertEmail } from './utils/maintenanceAlerts';
+import { getIdleComponents, sendIdleComponentsAlertEmail } from './utils/idleComponentsAlerts';
+import { isCampoAlertDue, isLoansAlertDue, getTodayStr } from './utils/automationUtils';
+import { getISOWeekId } from './utils/dateUtils';
 import { 
   Cpu, 
   Tractor,
@@ -104,6 +122,13 @@ export default function App() {
   const [kanbanPresetFilter, setKanbanPresetFilter] = useState<DashboardNavPreset | null>(null);
 
   const [loadingApp, setLoadingApp] = useState(true);
+
+  // License alert settings (global background auto-scan)
+  const { alertSettings: licenseAlertSettings, saveAlertSettings } = useLicenseAlertSettings(isDemoMode);
+  const { campoSettings, saveCampoSettings } = useCampoAlertSettings(isDemoMode);
+  const { loanSettings, saveLoanSettings } = useLoanAlertSettings(isDemoMode);
+  const { maintenanceSettings, saveMaintenanceSettings } = useMaintenanceAlertSettings(isDemoMode);
+  const { idleSettings, saveIdleSettings } = useIdleAlertSettings(isDemoMode);
 
   useEffect(() => {
     if (!isUserMenuOpen) return;
@@ -184,6 +209,301 @@ export default function App() {
 
     return () => unsubscribe();
   }, [isDemoMode]);
+
+  // Global background auto-scan for expiring licenses (60/30/15 days) + expired — DEMO MODE ONLY
+  // In production this is handled by the /api/cron/alerts server job.
+  useEffect(() => {
+    if (!isDemoMode) return;
+    if (!licenses || licenses.length === 0 || !licenseAlertSettings) return;
+    if (!licenseAlertSettings.enabled) return;
+    if (!licenseAlertSettings.alertEmails || licenseAlertSettings.alertEmails.length === 0) return;
+
+    const runAutoAlertCheck = async () => {
+      const today = getTodayStr();
+      const thresholds = licenseAlertSettings.thresholds || { '15': true, '30': true, '60': true };
+      const updates: Partial<LicenseSettings> = {};
+      const newHistory: AlertHistoryEntry[] = [...(licenseAlertSettings.history || [])];
+      let hasUpdates = false;
+
+      const attempts: Array<{ key: 'lastSent15' | 'lastSent30' | 'lastSent60'; type: '15' | '30' | '60'; days: number }> = [
+        { key: 'lastSent15', type: '15', days: 15 },
+        { key: 'lastSent30', type: '30', days: 30 },
+        { key: 'lastSent60', type: '60', days: 60 }
+      ];
+
+      for (const attempt of attempts) {
+        if (!thresholds[attempt.type]) continue;
+        if (licenseAlertSettings[attempt.key] === today) continue;
+        const expiring = getLicensesExpiringInDays(licenses, attempt.days);
+        if (expiring.length === 0) continue;
+
+        console.log(`[AutoAlert] Disparando e-mail de alerta de ${attempt.days} dias para: ${licenseAlertSettings.alertEmails.join(', ')}`);
+        const res = await sendLicenseExpirationEmail(licenseAlertSettings.alertEmails, attempt.days, expiring);
+        if (res.success) {
+          updates[attempt.key] = today;
+          newHistory.push({
+            type: attempt.type,
+            date: new Date().toISOString(),
+            recipient: licenseAlertSettings.alertEmails.join(', '),
+            status: 'Enviado'
+          });
+          hasUpdates = true;
+        }
+      }
+
+      if (licenseAlertSettings.notifyExpired && licenseAlertSettings.lastSentExpired !== today) {
+        const todayDate = getTodayStr();
+        const expired = licenses.filter(l => l.expirationDate && l.expirationDate < todayDate);
+        if (expired.length > 0) {
+          const res = await sendLicenseExpirationEmail(licenseAlertSettings.alertEmails, 0, expired, 'expired');
+          if (res.success) {
+            updates.lastSentExpired = today;
+            newHistory.push({
+              type: 'expired',
+              date: new Date().toISOString(),
+              recipient: licenseAlertSettings.alertEmails.join(', '),
+              status: 'Enviado'
+            });
+            hasUpdates = true;
+          }
+        }
+      }
+
+      if (hasUpdates) {
+        if (newHistory.length > 50) newHistory.splice(0, newHistory.length - 50);
+        const updatedByStr = user?.name || user?.email || 'Sistema';
+
+        const newSettings: LicenseSettings = {
+          ...licenseAlertSettings,
+          ...updates,
+          history: newHistory,
+          updatedAt: new Date().toISOString(),
+          updatedBy: updatedByStr
+        };
+
+        try {
+          await saveAlertSettings(newSettings);
+        } catch (err) {
+          console.error("Erro ao salvar logs de alerta de licenças:", err);
+        }
+      }
+    };
+
+    const timer = setTimeout(() => {
+      runAutoAlertCheck();
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [licenses, licenseAlertSettings, isDemoMode, user, saveAlertSettings]);
+
+  // Global background auto-scan for weekly field data pending fronts — DEMO MODE ONLY
+  useEffect(() => {
+    if (!isDemoMode) return;
+    if (!machines || machines.length === 0 || !campoSettings || !campoSettings.enabled) return;
+    if (!campoSettings.alertEmails || campoSettings.alertEmails.length === 0) return;
+
+    const runCampoCheck = async () => {
+      if (!isCampoAlertDue(campoSettings)) return;
+
+      const report = buildFieldDataReport(machines, fieldDataCollections, getISOWeekId(new Date()));
+      if (report.pendingMachinesCount === 0) return;
+
+      console.log(`[AutoAlert] Disparando e-mail de pendências de campo para: ${campoSettings.alertEmails.join(', ')}`);
+      const res = await sendFieldDataAlertEmail(campoSettings.alertEmails, report);
+      if (res.success) {
+        const newHistory: AlertHistoryEntry[] = [...(campoSettings.history || [])];
+        newHistory.push({
+          type: 'campo',
+          date: new Date().toISOString(),
+          recipient: campoSettings.alertEmails.join(', '),
+          status: 'Enviado'
+        });
+        if (newHistory.length > 50) newHistory.splice(0, newHistory.length - 50);
+
+        const updated: CampoAlertSettings = {
+          ...campoSettings,
+          lastSentWeek: report.weekId,
+          history: newHistory,
+          updatedAt: new Date().toISOString(),
+          updatedBy: user?.name || user?.email || 'Sistema'
+        };
+        try {
+          await saveCampoSettings(updated);
+        } catch (err) {
+          console.error("Erro ao salvar configurações de alerta de campo:", err);
+        }
+      }
+    };
+
+    const timer = setTimeout(() => {
+      runCampoCheck();
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [machines, fieldDataCollections, campoSettings, isDemoMode, user, saveCampoSettings]);
+
+  // Global background auto-scan for overdue loans (once per day) — DEMO MODE ONLY
+  useEffect(() => {
+    if (!isDemoMode) return;
+    if (!loans || loans.length === 0 || !loanSettings || !loanSettings.enabled) return;
+    if (!loanSettings.alertEmails || loanSettings.alertEmails.length === 0) return;
+
+    const runLoansCheck = async () => {
+      const overdue = getOverdueLoans(loans);
+      if (!isLoansAlertDue(loanSettings.enabled, loanSettings.lastSentDate, overdue.length)) return;
+
+      console.log(`[AutoAlert] Disparando e-mail de empréstimos vencidos para: ${loanSettings.alertEmails.join(', ')}`);
+      const res = await sendLoansAlertEmail(loanSettings.alertEmails, overdue);
+      if (res.success) {
+        const newHistory: AlertHistoryEntry[] = [...(loanSettings.history || [])];
+        newHistory.push({
+          type: 'loans',
+          date: new Date().toISOString(),
+          recipient: loanSettings.alertEmails.join(', '),
+          status: 'Enviado'
+        });
+        if (newHistory.length > 50) newHistory.splice(0, newHistory.length - 50);
+
+        const updated: LoanAlertSettings = {
+          ...loanSettings,
+          lastSentDate: getTodayStr(),
+          history: newHistory,
+          updatedAt: new Date().toISOString(),
+          updatedBy: user?.name || user?.email || 'Sistema'
+        };
+        try {
+          await saveLoanSettings(updated);
+        } catch (err) {
+          console.error("Erro ao salvar configurações de alerta de empréstimos:", err);
+        }
+      }
+    };
+
+    const timer = setTimeout(() => {
+      runLoansCheck();
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [loans, loanSettings, isDemoMode, user, saveLoanSettings]);
+
+  // Global background auto-scan for maintenances (overdue daily + completed once) — DEMO MODE ONLY
+  useEffect(() => {
+    if (!isDemoMode) return;
+    if (!maintenances || maintenances.length === 0 || !maintenanceSettings || !maintenanceSettings.enabled) return;
+    if (!maintenanceSettings.alertEmails || maintenanceSettings.alertEmails.length === 0) return;
+
+    const runMaintenanceCheck = async () => {
+      const today = getTodayStr();
+      const newHistory: AlertHistoryEntry[] = [...(maintenanceSettings.history || [])];
+      let notifiedIds = [...(maintenanceSettings.notifiedIds || [])];
+      let updated = false;
+
+      if (maintenanceSettings.lastSentDate !== today) {
+        const overdue = getOverdueMaintenances(maintenances, maintenanceSettings.overdueDays);
+        if (overdue.length > 0) {
+          const res = await sendMaintenanceAlertEmail(maintenanceSettings.alertEmails, overdue, 'overdue', maintenanceSettings.overdueDays);
+          if (res.success) {
+            newHistory.push({
+              type: 'maintenance_overdue',
+              date: new Date().toISOString(),
+              recipient: maintenanceSettings.alertEmails.join(', '),
+              status: 'Enviado'
+            });
+            updated = true;
+          }
+        }
+      }
+
+      if (maintenanceSettings.notifyCompleted) {
+        const completed = getCompletedMaintenances(maintenances, notifiedIds);
+        if (completed.length > 0) {
+          const res = await sendMaintenanceAlertEmail(maintenanceSettings.alertEmails, completed, 'completed', maintenanceSettings.overdueDays);
+          if (res.success) {
+            completed.forEach(m => {
+              if (!notifiedIds.includes(m.id)) notifiedIds.push(m.id);
+            });
+            newHistory.push({
+              type: 'maintenance_completed',
+              date: new Date().toISOString(),
+              recipient: maintenanceSettings.alertEmails.join(', '),
+              status: 'Enviado'
+            });
+            updated = true;
+          }
+        }
+      }
+
+      if (updated) {
+        if (newHistory.length > 50) newHistory.splice(0, newHistory.length - 50);
+        if (notifiedIds.length > 100) notifiedIds.splice(0, notifiedIds.length - 100);
+        const updatedSettings: MaintenanceAlertSettings = {
+          ...maintenanceSettings,
+          lastSentDate: today,
+          notifiedIds,
+          history: newHistory,
+          updatedAt: new Date().toISOString(),
+          updatedBy: user?.name || user?.email || 'Sistema'
+        };
+        try {
+          await saveMaintenanceSettings(updatedSettings);
+        } catch (err) {
+          console.error("Erro ao salvar configurações de alerta de manutenções:", err);
+        }
+      }
+    };
+
+    const timer = setTimeout(() => {
+      runMaintenanceCheck();
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [maintenances, maintenanceSettings, isDemoMode, user, saveMaintenanceSettings]);
+
+  // Global background auto-scan for idle components (daily) — DEMO MODE ONLY
+  useEffect(() => {
+    if (!isDemoMode) return;
+    if (!components || components.length === 0 || !idleSettings || !idleSettings.enabled) return;
+    if (!idleSettings.alertEmails || idleSettings.alertEmails.length === 0) return;
+
+    const runIdleCheck = async () => {
+      const today = getTodayStr();
+      if (idleSettings.lastSentDate === today) return;
+
+      const idleComponents = getIdleComponents(components, movements, idleSettings.idleDays);
+      if (idleComponents.length === 0) return;
+
+      const res = await sendIdleComponentsAlertEmail(idleSettings.alertEmails, idleComponents, idleSettings.idleDays);
+      if (res.success) {
+        const newHistory: AlertHistoryEntry[] = [...(idleSettings.history || [])];
+        newHistory.push({
+          type: 'idle',
+          date: new Date().toISOString(),
+          recipient: idleSettings.alertEmails.join(', '),
+          status: 'Enviado'
+        });
+        if (newHistory.length > 50) newHistory.splice(0, newHistory.length - 50);
+
+        const updated: IdleAlertSettings = {
+          ...idleSettings,
+          lastSentDate: today,
+          history: newHistory,
+          updatedAt: new Date().toISOString(),
+          updatedBy: user?.name || user?.email || 'Sistema'
+        };
+        try {
+          await saveIdleSettings(updated);
+        } catch (err) {
+          console.error("Erro ao salvar configurações de alerta de componentes ociosos:", err);
+        }
+      }
+    };
+
+    const timer = setTimeout(() => {
+      runIdleCheck();
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [components, movements, idleSettings, isDemoMode, user, saveIdleSettings]);
 
   // Real-time Firestore Listeners (only when authenticated with Firestore and NOT in demo mode)
   useEffect(() => {
@@ -2337,7 +2657,7 @@ export default function App() {
       </nav>
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 relative">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-5 sm:py-8 relative">
         
         {/* Render Active Tab */}
         {currentTab === 'dashboard' && (
@@ -2449,6 +2769,15 @@ export default function App() {
             role={user.role}
             currentUserName={user.name}
             usersList={usersList}
+            licenses={licenses}
+            machines={machines}
+            fieldDataCollections={fieldDataCollections}
+            loans={loans}
+            components={components}
+            movements={movements}
+            maintenances={maintenances}
+            currentUser={user}
+            isDemoMode={isDemoMode}
             onUpdateCompany={handleUpdateCompany}
             onAddUser={handleAddUser}
             onEditUser={handleEditUser}

@@ -153,17 +153,167 @@
     },
     "LicenseAlertSettings": {
       "title": "License Alert Settings",
-      "description": "Email alert settings for license expirations.",
+      "description": "Email alert settings for license expirations (doc: settings/licenses).",
       "type": "object",
       "properties": {
-        "alertEmail": { "type": "string" },
+        "alertEmails": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "alertEmail": { "type": "string", "description": "Legacy field (migrated to alertEmails)." },
+        "enabled": { "type": "boolean" },
+        "thresholds": {
+          "type": "object",
+          "properties": {
+            "15": { "type": "boolean" },
+            "30": { "type": "boolean" },
+            "60": { "type": "boolean" }
+          }
+        },
+        "notifyExpired": { "type": "boolean" },
+        "lastSentExpired": { "type": "string" },
         "lastSent60": { "type": "string" },
         "lastSent30": { "type": "string" },
         "lastSent15": { "type": "string" },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "date": { "type": "string", "format": "date-time" },
+              "recipient": { "type": "string" },
+              "status": { "type": "string", "enum": ["Enviado", "Falhou"] }
+            }
+          }
+        },
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       },
-      "required": ["alertEmail", "updatedAt", "updatedBy"]
+      "required": ["alertEmails", "enabled", "thresholds", "notifyExpired", "updatedAt", "updatedBy"]
+    },
+    "CampoAlertSettings": {
+      "title": "Field Data Alert Settings",
+      "description": "Weekly field data pending-fronts alert settings (doc: settings/campo_alerts).",
+      "type": "object",
+      "properties": {
+        "alertEmails": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "alertEmail": { "type": "string", "description": "Legacy field (migrated to alertEmails)." },
+        "enabled": { "type": "boolean" },
+        "scheduleDay": { "type": "string" },
+        "scheduleTime": { "type": "string" },
+        "lastSentWeek": { "type": "string" },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "date": { "type": "string", "format": "date-time" },
+              "recipient": { "type": "string" },
+              "status": { "type": "string", "enum": ["Enviado", "Falhou"] }
+            }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["alertEmails", "enabled", "scheduleDay", "scheduleTime", "updatedAt", "updatedBy"]
+    },
+    "LoanAlertSettings": {
+      "title": "Loan Alert Settings",
+      "description": "Overdue loan alert settings (doc: settings/loan_alerts).",
+      "type": "object",
+      "properties": {
+        "alertEmails": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "alertEmail": { "type": "string", "description": "Legacy field (migrated to alertEmails)." },
+        "enabled": { "type": "boolean" },
+        "lastSentDate": { "type": "string" },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "date": { "type": "string", "format": "date-time" },
+              "recipient": { "type": "string" },
+              "status": { "type": "string", "enum": ["Enviado", "Falhou"] }
+            }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["alertEmails", "enabled", "updatedAt", "updatedBy"]
+    },
+    "MaintenanceAlertSettings": {
+      "title": "Maintenance Alert Settings",
+      "description": "Overdue/completed maintenance alert settings (doc: settings/maintenance_alerts).",
+      "type": "object",
+      "properties": {
+        "alertEmails": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "enabled": { "type": "boolean" },
+        "overdueDays": { "type": "number" },
+        "notifyCompleted": { "type": "boolean" },
+        "lastSentDate": { "type": "string" },
+        "notifiedIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "date": { "type": "string", "format": "date-time" },
+              "recipient": { "type": "string" },
+              "status": { "type": "string", "enum": ["Enviado", "Falhou"] }
+            }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["alertEmails", "enabled", "overdueDays", "notifyCompleted", "updatedAt", "updatedBy"]
+    },
+    "IdleAlertSettings": {
+      "title": "Idle Components Alert Settings",
+      "description": "Idle (available, no movement) components alert settings (doc: settings/idle_alerts).",
+      "type": "object",
+      "properties": {
+        "alertEmails": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "enabled": { "type": "boolean" },
+        "idleDays": { "type": "number" },
+        "lastSentDate": { "type": "string" },
+        "history": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "date": { "type": "string", "format": "date-time" },
+              "recipient": { "type": "string" },
+              "status": { "type": "string", "enum": ["Enviado", "Falhou"] }
+            }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["alertEmails", "enabled", "idleDays", "updatedAt", "updatedBy"]
     }
   },
   "firestore": {
@@ -193,7 +343,7 @@
     },
     "/settings/{settingId}": {
       "schema": { "$ref": "#/entities/CompanyProfileSettings" },
-      "description": "System configuration parameters and company profiles."
+      "description": "System configuration parameters and company profiles. Also stores settings/licenses (LicenseAlertSettings), settings/campo_alerts (CampoAlertSettings), settings/loan_alerts (LoanAlertSettings), settings/maintenance_alerts (MaintenanceAlertSettings) and settings/idle_alerts (IdleAlertSettings)."
     }
   }
 }

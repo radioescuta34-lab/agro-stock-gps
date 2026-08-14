@@ -103,15 +103,8 @@ export default function LoansTab({
   const [error, setError] = useState<string | null>(null);
   const [shareSuccess, setShareSuccess] = useState(false);
 
-  // Email alert states
-  const [isAlertModalOpen, setIsAlertModalOpen] = useState(false);
-  const [alertEmail, setAlertEmail] = useState('');
-  const [alertSuccess, setAlertSuccess] = useState<string | null>(null);
-  const [sendingAlert, setSendingAlert] = useState(false);
-
   // Overdue calculation
   const todayStr = new Date().toISOString().split('T')[0];
-  const overdueLoans = loans.filter(l => l.status === 'Ativo' && l.estimatedReturnDate && l.estimatedReturnDate < todayStr);
 
   const dueSoonLimit = new Date();
   dueSoonLimit.setDate(dueSoonLimit.getDate() + 7);
@@ -219,43 +212,6 @@ export default function LoansTab({
   const statsTotalCount = historyEntries.length;
   const statsActiveCount = historyEntries.filter(e => e.status === 'Ativo').length;
   const statsReturnedCount = historyEntries.filter(e => e.status === 'Devolvido').length;
-
-  const handleSendLoanEmailAlerts = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!alertEmail.trim()) {
-      showToast('warning', 'Por favor, insira o e-mail de destino.');
-      return;
-    }
-    if (overdueLoans.length === 0) {
-      showToast('info', 'Não há nenhum empréstimo vencido no momento para alertar.');
-      return;
-    }
-
-    setSendingAlert(true);
-    try {
-      const response = await fetch('/api/loans/send-alert-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          alertEmail: alertEmail.trim(),
-          loans: overdueLoans
-        })
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Erro ao disparar e-mails de alerta.');
-      }
-
-      setAlertSuccess(data.message);
-    } catch (err: any) {
-      showToast('error', err.message || 'Erro ao enviar alertas.');
-    } finally {
-      setSendingAlert(false);
-    }
-  };
 
   // Helper lists
   const availableComponents = components.filter(c => c.status === 'Disponível');
@@ -764,17 +720,6 @@ export default function LoansTab({
         <div className="flex flex-wrap items-center gap-2.5">
           {subTab === 'loans' && (
             <>
-              <button
-                onClick={() => {
-                  setIsAlertModalOpen(true);
-                  setAlertSuccess(null);
-                }}
-                className="px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5"
-              >
-                <Mail className="h-4 w-4" />
-                Configurar alertas
-              </button>
-
               <button
                 onClick={() => {
                   if (thirdParties.length === 0) {
@@ -1762,141 +1707,6 @@ export default function LoansTab({
               * Para assinar digitalmente ou fisicamente, faça o download do arquivo PDF acima ou envie diretamente via canais de compartilhamento.
             </div>
 
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================= */}
-      {/* MODAL: EMAIL ALERTS FOR OVERDUE LOANS */}
-      {/* ========================================================= */}
-      {isAlertModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-xl shadow-xl overflow-hidden border border-slate-100 animate-slide-up flex flex-col max-h-[90vh]">
-            
-            {/* Header */}
-            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between shrink-0">
-              <h2 className="text-sm font-extrabold uppercase tracking-wider flex items-center gap-2">
-                <Mail className="h-4 w-4 text-emerald-400" />
-                Alertas por E-mail (Empréstimos Vencidos)
-              </h2>
-              <button 
-                onClick={() => {
-                  setIsAlertModalOpen(false);
-                  setAlertSuccess(null);
-                }}
-                className="text-slate-400 hover:text-white transition-colors"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Scrollable Container */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-5">
-              
-              {alertSuccess ? (
-                <div className="p-4 bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-2xl space-y-2">
-                  <p className="font-bold text-xs flex items-center gap-1.5">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                    Sucesso! Alerta Disparado
-                  </p>
-                  <p className="text-[11px] leading-relaxed text-slate-700">
-                    {alertSuccess}
-                  </p>
-                  <button
-                    onClick={() => {
-                      setIsAlertModalOpen(false);
-                      setAlertSuccess(null);
-                    }}
-                    className="mt-2 w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all"
-                  >
-                    Fechar Janela
-                  </button>
-                </div>
-              ) : (
-                <form onSubmit={handleSendLoanEmailAlerts} className="space-y-4">
-                  {/* Warning / Explanation banner */}
-                  <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold rounded-xl leading-relaxed">
-                    ⚙️ <strong>Como funciona?</strong> O sistema irá compilar todos os empréstimos ativos cuja data de previsão de retorno estimada já expirou e enviar um relatório detalhado contendo marcas, números de série e terceiros responsáveis para o e-mail informado.
-                  </div>
-
-                  {/* Recipient Email Input */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] uppercase font-black text-slate-400">E-mail de Destino para o Alerta *</label>
-                    <input
-                      type="email"
-                      required
-                      placeholder="Ex: gestor@agrostockgps.com"
-                      value={alertEmail}
-                      onChange={(e) => setAlertEmail(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 px-3.5 py-2.5 rounded-xl text-xs focus:bg-white focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-800"
-                    />
-                  </div>
-
-                  {/* List of overdue items to be included */}
-                  <div className="space-y-2">
-                    <h3 className="text-[10px] uppercase font-black text-slate-400">
-                      Empréstimos Vencidos Identificados ({overdueLoans.length})
-                    </h3>
-
-                    {overdueLoans.length === 0 ? (
-                      <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center">
-                        <CheckCircle2 className="h-8 w-8 text-emerald-500 mx-auto mb-2" />
-                        <p className="text-xs font-bold text-slate-700">Excelente! Nenhum empréstimo está vencido.</p>
-                        <p className="text-[10px] text-slate-400 mt-0.5">Todos os equipamentos estão dentro do prazo de devolução estimado.</p>
-                      </div>
-                    ) : (
-                      <div className="border border-slate-100 rounded-2xl overflow-hidden max-h-60 overflow-y-auto">
-                        <table className="w-full text-left border-collapse text-xs">
-                          <thead>
-                            <tr className="bg-slate-50 border-b border-slate-100 text-[10px] font-extrabold uppercase text-slate-400">
-                              <th className="py-2 px-3">Termo / Responsável</th>
-                              <th className="py-2 px-3">Empresa</th>
-                              <th className="py-2 px-3">Previsão</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 text-[11px] font-medium text-slate-700">
-                            {overdueLoans.map(loan => (
-                              <tr key={loan.id} className="hover:bg-slate-50/50">
-                                <td className="py-2.5 px-3">
-                                  <div className="font-bold text-slate-900">{loan.contractNumber}</div>
-                                  <div className="text-slate-500 text-[10px]">{loan.thirdPartyName}</div>
-                                </td>
-                                <td className="py-2.5 px-3 text-slate-500">{loan.thirdPartyCompany}</td>
-                                <td className="py-2.5 px-3 font-bold text-rose-600">
-                                  {loan.estimatedReturnDate ? new Date(loan.estimatedReturnDate).toLocaleDateString('pt-BR') : '-'}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Modal Actions */}
-                  <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsAlertModalOpen(false);
-                        setAlertSuccess(null);
-                      }}
-                      className="px-4 py-2 hover:bg-slate-50 border border-slate-200 text-slate-600 font-bold text-xs rounded-xl transition-all"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={sendingAlert || overdueLoans.length === 0}
-                      className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
-                    >
-                      {sendingAlert ? 'Disparando...' : 'Enviar Alertas por E-mail'}
-                    </button>
-                  </div>
-                </form>
-              )}
-
-            </div>
           </div>
         </div>
       )}

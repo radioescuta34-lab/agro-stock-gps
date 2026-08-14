@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CompanyProfile, UserRole, UserProfile } from '../types';
+import { CompanyProfile, UserRole, UserProfile, License, Machine, FieldDataCollection, ComponentLoan, AutopilotComponent, MovementLog, ComponentMaintenance } from '../types';
 import {
   Settings,
   Brain,
@@ -10,15 +10,17 @@ import {
   Save,
   RefreshCw,
   Bell,
-  Clock,
   ChevronDown,
   Building2,
   Users,
+  PlugZap,
+  ShieldCheck,
   AlertTriangle,
   ExternalLink
 } from 'lucide-react';
 import CompanyProfileSection from './CompanyProfileSection';
 import UserManagementSection from './UserManagementSection';
+import AlertSettingsSection from './AlertSettingsSection';
 
 const PROVIDERS = {
   openai: { label: 'OpenAI', placeholder: 'sk-...', docsUrl: 'https://platform.openai.com/api-keys', docsLabel: 'platform.openai.com', defaultModel: 'gpt-4o-mini' },
@@ -48,11 +50,54 @@ function ProviderLogo({ provider, className }: { provider: Provider; className?:
   );
 }
 
+interface SettingsSectionToggleProps {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  open: boolean;
+  onClick: () => void;
+}
+
+function SettingsSectionToggle({ icon, title, description, open, onClick }: SettingsSectionToggleProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={open}
+      className={`group flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500 sm:px-5 ${
+        open ? 'border-b border-emerald-100 bg-emerald-50/60' : 'hover:bg-slate-50'
+      }`}
+    >
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${
+        open ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500 group-hover:bg-emerald-50 group-hover:text-emerald-700'
+      }`}>
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[13px] font-extrabold text-slate-800">{title}</span>
+        <span className="mt-0.5 block truncate text-[11px] text-slate-500">{description}</span>
+      </span>
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 group-hover:bg-white group-hover:text-slate-600">
+        <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+      </span>
+    </button>
+  );
+}
+
 interface SettingsTabProps {
   companyProfile: CompanyProfile;
   role: UserRole;
   currentUserName: string;
   usersList: UserProfile[];
+  licenses: License[];
+  machines: Machine[];
+  fieldDataCollections: FieldDataCollection[];
+  loans: ComponentLoan[];
+  components?: AutopilotComponent[];
+  movements?: MovementLog[];
+  maintenances?: ComponentMaintenance[];
+  currentUser?: UserProfile | null;
+  isDemoMode: boolean;
   onUpdateCompany: (updates: Omit<CompanyProfile, 'updatedAt' | 'updatedBy'>) => Promise<void>;
   onAddUser?: (newUser: Omit<UserProfile, 'createdAt'>, password?: string) => Promise<void>;
   onEditUser?: (uid: string, updates: Partial<Omit<UserProfile, 'uid' | 'createdAt'>>, password?: string) => Promise<any>;
@@ -64,6 +109,15 @@ export default function SettingsTab({
   role,
   currentUserName,
   usersList = [],
+  licenses,
+  machines,
+  fieldDataCollections,
+  loans,
+  components = [],
+  movements = [],
+  maintenances = [],
+  currentUser,
+  isDemoMode,
   onUpdateCompany,
   onAddUser,
   onEditUser,
@@ -215,55 +269,57 @@ export default function SettingsTab({
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header Card */}
-      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-emerald-100 text-emerald-600 rounded-xl">
+    <div className="space-y-4 sm:space-y-6">
+      {/* Page Header */}
+      <div className="relative overflow-hidden rounded-2xl border border-emerald-100 bg-gradient-to-br from-white via-white to-emerald-50 p-4 shadow-sm sm:p-5">
+        <div className="pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full bg-emerald-100/60 blur-2xl" />
+        <div className="relative flex items-start gap-3.5">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-sm shadow-emerald-200">
             <Settings className="h-5 w-5" />
           </div>
-          <div>
-            <h1 className="text-lg font-extrabold text-slate-900">Configurações</h1>
-            <p className="text-slate-500 text-xs mt-0.5">Gerencie as integrações e preferências do sistema</p>
+          <div className="min-w-0 pt-0.5">
+            <div className="mb-1 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-700">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Painel administrativo
+            </div>
+            <h1 className="text-xl font-extrabold tracking-tight text-slate-950">Configurações</h1>
+            <p className="mt-1 text-xs leading-relaxed text-slate-500">Gerencie integrações, acessos e preferências do sistema.</p>
           </div>
         </div>
       </div>
 
       {/* Integrações Section */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <button
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <SettingsSectionToggle
+          icon={<PlugZap className="h-4 w-4" />}
+          title="Integrações"
+          description="Inteligência artificial e serviços externos"
+          open={openSection === 'integracoes'}
           onClick={() => setOpenSection(openSection === 'integracoes' ? null : 'integracoes')}
-          className="w-full px-5 py-4 border-b border-slate-100 flex items-center justify-between hover:bg-slate-50 transition-colors"
-        >
-          <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
-            <Settings className="h-3.5 w-3.5" />
-            Integrações
-          </h2>
-          <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${openSection === 'integracoes' ? 'rotate-180' : ''}`} />
-        </button>
+        />
 
         {openSection === 'integracoes' && (
-        <div className="p-5">
-          <div className="flex items-start gap-4">
-            <div className="p-2.5 bg-emerald-100 text-emerald-600 rounded-xl shrink-0">
+        <div className="p-4 sm:p-5">
+          <div className="flex items-start gap-3.5">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
               <Brain className="h-5 w-5" />
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="text-sm font-bold text-slate-800">A.I.</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Configure o provedor de IA para o módulo de OCR de licenças.
-                A chave é armazenada com segurança no banco de dados e usada pelo servidor.
+              <h3 className="text-sm font-extrabold text-slate-900">Inteligência artificial</h3>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                Selecione o provedor usado na leitura automática de licenças por OCR.
               </p>
             </div>
           </div>
 
-          <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 space-y-3 mt-4">
+          <div className="mt-4 space-y-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 sm:p-5">
             {/* Connection Status */}
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 pb-4">
+              <span className="text-[11px] font-bold text-slate-500">Status da integração</span>
               {statusBadge()}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {/* Provider Selector */}
               <div>
                 <label className="text-[10px] uppercase font-black text-slate-400">
@@ -274,7 +330,7 @@ export default function SettingsTab({
                   <select
                     value={provider}
                     onChange={e => handleProviderChange(e.target.value as Provider)}
-                    className="w-full pl-9 pr-8 py-1.5 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 text-slate-800 appearance-none bg-white"
+                    className="min-h-11 w-full appearance-none rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-8 text-xs font-medium text-slate-800 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
                   >
                     {Object.entries(PROVIDERS).map(([key, p]) => (
                       <option key={key} value={key}>{p.label}</option>
@@ -294,7 +350,7 @@ export default function SettingsTab({
                   placeholder={cfg.defaultModel}
                   value={model}
                   onChange={e => setModel(e.target.value)}
-                  className="w-full px-3.5 py-1.5 mt-1.5 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 disabled:bg-slate-50 disabled:text-slate-500 placeholder:text-slate-400 font-mono"
+                  className="mt-1.5 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 font-mono text-xs font-medium placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-50 disabled:text-slate-500"
                 />
                 <p className="text-[10px] text-slate-400 mt-1.5">
                   Padrão: <code className="text-slate-500 bg-slate-100 px-1 rounded">{cfg.defaultModel}</code>
@@ -303,7 +359,7 @@ export default function SettingsTab({
             </div>
 
             {/* API Key Input */}
-            <div className="border-t border-slate-200/60 pt-3">
+            <div className="border-t border-slate-200 pt-4">
               <div>
                 <label className="text-[10px] uppercase font-black text-slate-400">
                   Chave da API <span className="text-rose-500">*</span>
@@ -315,7 +371,7 @@ export default function SettingsTab({
                     placeholder={cfg.placeholder}
                     value={apiKey}
                     onChange={e => setApiKey(e.target.value)}
-                    className="w-full pl-9 pr-3.5 py-1.5 border border-slate-200 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 disabled:bg-slate-50 disabled:text-slate-500 placeholder:text-slate-400 font-mono"
+                    className="min-h-11 w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3.5 font-mono text-xs font-medium placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-50 disabled:text-slate-500"
                   />
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1.5">
@@ -403,12 +459,12 @@ export default function SettingsTab({
             )}
 
             {/* Action Buttons */}
-            <div className="border-t border-slate-100 pt-3">
-              <div className="flex flex-wrap gap-2">
+            <div className="border-t border-slate-200 pt-4">
+              <div className="grid grid-cols-1 gap-2 min-[380px]:grid-cols-2 sm:flex">
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+                  className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition-all hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
                 >
                   {saving ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -420,7 +476,7 @@ export default function SettingsTab({
                 <button
                   onClick={handleTest}
                   disabled={testing}
-                  className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed text-slate-600 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                  className="flex min-h-11 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 transition-all hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {testing ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -437,32 +493,17 @@ export default function SettingsTab({
       </div>
 
       {/* Empresa Section */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <button
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <SettingsSectionToggle
+          icon={<Building2 className="h-4 w-4" />}
+          title="Empresa"
+          description="Dados institucionais e informações de contato"
+          open={openSection === 'empresa'}
           onClick={() => setOpenSection(openSection === 'empresa' ? null : 'empresa')}
-          className="w-full px-5 py-4 border-b border-slate-100 flex items-center justify-between hover:bg-slate-50 transition-colors"
-        >
-          <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
-            <Building2 className="h-3.5 w-3.5" />
-            Empresa
-          </h2>
-          <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${openSection === 'empresa' ? 'rotate-180' : ''}`} />
-        </button>
+        />
 
         {openSection === 'empresa' && (
-          <div className="p-5">
-            <div className="flex items-start gap-4 mb-4">
-              <div className="p-2.5 bg-emerald-100 text-emerald-600 rounded-xl shrink-0">
-                <Building2 className="h-5 w-5" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-bold text-slate-800">Dados da Empresa</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Gerencie o cadastro da empresa proprietária de licenças.
-                </p>
-              </div>
-            </div>
-
+          <div className="p-4 sm:p-5">
             <CompanyProfileSection
               companyProfile={companyProfile}
               role={role}
@@ -474,32 +515,17 @@ export default function SettingsTab({
       </div>
 
       {/* Usuários Section */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <button
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <SettingsSectionToggle
+          icon={<Users className="h-4 w-4" />}
+          title="Usuários"
+          description="Acessos, perfis e permissões"
+          open={openSection === 'usuarios'}
           onClick={() => setOpenSection(openSection === 'usuarios' ? null : 'usuarios')}
-          className="w-full px-5 py-4 border-b border-slate-100 flex items-center justify-between hover:bg-slate-50 transition-colors"
-        >
-          <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
-            <Users className="h-3.5 w-3.5" />
-            Usuários
-          </h2>
-          <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${openSection === 'usuarios' ? 'rotate-180' : ''}`} />
-        </button>
+        />
 
         {openSection === 'usuarios' && (
-          <div className="p-5">
-            <div className="flex items-start gap-4 mb-4">
-              <div className="p-2.5 bg-emerald-100 text-emerald-600 rounded-xl shrink-0">
-                <Users className="h-5 w-5" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-bold text-slate-800">Usuários Cadastrados</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Gerencie os usuários autorizados a acessar o painel administrativo e operacional.
-                </p>
-              </div>
-            </div>
-
+          <div className="p-4 sm:p-5">
             <UserManagementSection
               usersList={usersList}
               role={role}
@@ -513,37 +539,28 @@ export default function SettingsTab({
       </div>
 
       {/* Notificações Section */}
-      <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-        <button
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <SettingsSectionToggle
+          icon={<Bell className="h-4 w-4" />}
+          title="Notificações"
+          description="Alertas automáticos e destinatários"
+          open={openSection === 'notificacoes'}
           onClick={() => setOpenSection(openSection === 'notificacoes' ? null : 'notificacoes')}
-          className="w-full px-5 py-4 border-b border-slate-100 flex items-center justify-between hover:bg-slate-50 transition-colors"
-        >
-          <h2 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
-            <Bell className="h-3.5 w-3.5" />
-            Notificações
-          </h2>
-          <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${openSection === 'notificacoes' ? 'rotate-180' : ''}`} />
-        </button>
+        />
 
         {openSection === 'notificacoes' && (
-        <div className="p-5">
-          <div className="flex items-start gap-4">
-            <div className="p-2.5 bg-slate-100 text-slate-400 rounded-xl shrink-0">
-              <Bell className="h-5 w-5" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h3 className="text-sm font-bold text-slate-800">Central de Notificações</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Gerencie alertas e notificações do sistema, como lembretes de vencimento de licenças,
-                avisos de manutenção e notificações de empréstimos.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4 flex items-center justify-center gap-2 p-4 bg-slate-50 border border-slate-200 rounded-xl">
-            <Clock className="h-4 w-4 text-slate-400" />
-            <span className="text-xs font-semibold text-slate-400">Em desenvolvimento</span>
-          </div>
+        <div className="p-4 sm:p-5">
+          <AlertSettingsSection
+            licenses={licenses}
+            machines={machines}
+            fieldDataCollections={fieldDataCollections}
+            loans={loans}
+            components={components}
+            movements={movements}
+            maintenances={maintenances}
+            currentUser={currentUser}
+            isDemoMode={isDemoMode}
+          />
         </div>
         )}
       </div>

@@ -6,8 +6,41 @@ import nodemailer from "nodemailer";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
+import {
+  buildLicenseAlertEmail,
+  buildLoansAlertEmail,
+  buildCampoAlertEmail,
+  buildMaintenanceAlertEmail,
+  buildIdleComponentsAlertEmail,
+  getExpiringLicenses,
+  sendAlertEmail,
+  isCampoDue,
+  isLoansDue,
+  getIsoWeekId,
+  todayStr,
+  resolveSettingsEmails,
+  getOverdueMaintenances,
+  getCompletedMaintenances,
+  getIdleComponents
+} from "./alertEmailTemplates";
 
 dotenv.config();
+
+// Accepts recipients as alertEmails (array) or legacy alertEmail (string, comma/semicolon separated)
+function resolveEmails(body: any): string[] {
+  if (Array.isArray(body?.alertEmails)) {
+    const list: string[] = (body.alertEmails as unknown[])
+      .filter((e): e is string => typeof e === 'string')
+      .map((e: string) => e.trim())
+      .filter(Boolean);
+    if (list.length > 0) return [...new Set(list)];
+  }
+  if (typeof body?.alertEmail === 'string' && body.alertEmail.trim()) {
+    const list: string[] = body.alertEmail.split(/[,;]/).map((e: string) => e.trim()).filter(Boolean);
+    return [...new Set(list)];
+  }
+  return [];
+}
 
 export async function createApp() {
   const app = express();
@@ -392,8 +425,9 @@ ${extractedText}`;
   // API Route for sending license expiration email alerts
   app.post("/api/licenses/send-alert-email", async (req, res) => {
     try {
-      const { alertEmail, days, licenses } = req.body;
-      if (!alertEmail) {
+      const { days, licenses, mode } = req.body;
+      const alertEmails = resolveEmails(req.body);
+      if (alertEmails.length === 0) {
         return res.status(400).json({ error: "E-mail de destino não especificado." });
       }
       if (!licenses || !Array.isArray(licenses) || licenses.length === 0) {
@@ -410,84 +444,8 @@ ${extractedText}`;
 
       const isSmtpConfigured = !!(smtpHost && smtpUser && smtpPass);
 
-      // Construct detailed email content
-      const title = `⚠️ Alerta AgroStockGPS: ${licenses.length} Licença(s) vencendo em até ${days} dias!`;
-      
-      const emailHtml = `
-        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 650px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-          <!-- Header Banner -->
-          <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 24px; text-align: center; color: #ffffff;">
-            <h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px;">Agro Stock GPS</h1>
-            <p style="margin: 4px 0 0 0; font-size: 13px; opacity: 0.9; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Gestão Automática de Ativos & Licenças</p>
-          </div>
-          
-          <!-- Body Content -->
-          <div style="padding: 24px; background-color: #ffffff;">
-            <p style="font-size: 15px; color: #334155; line-height: 1.6; margin-top: 0;">Olá,</p>
-            <p style="font-size: 14px; color: #475569; line-height: 1.6;">
-              Identificamos que as seguintes licenças de tecnologia e monitoramento agrícola estão com data de expiração programada para os próximos <strong>${days} dias</strong>.
-            </p>
-            <p style="font-size: 13px; color: #ef4444; font-weight: 600; margin-bottom: 20px; display: flex; align-items: center;">
-              ⚠️ É recomendada a renovação com os representantes para evitar prejuízos e paradas indesejadas nas operações agrícolas de campo.
-            </p>
-
-            <!-- License Cards Table -->
-            <div style="overflow-x: auto; margin-bottom: 24px;">
-              <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
-                <thead>
-                  <tr style="background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;">
-                    <th style="padding: 10px; font-weight: 600; color: #475569;">Licença / Tecnologia</th>
-                    <th style="padding: 10px; font-weight: 600; color: #475569;">Número de Série (S/N)</th>
-                    <th style="padding: 10px; font-weight: 600; color: #475569;">Vencimento</th>
-                    <th style="padding: 10px; font-weight: 600; color: #475569;">Máquina</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${licenses.map((lic: any, idx: number) => {
-                    const serialNum = lic.deviceSerialNumber || lic.associatedComponentSerial || "Não cadastrado";
-                    const expDateFormatted = lic.expirationDate ? new Date(lic.expirationDate).toLocaleDateString('pt-BR') : 'Perpétua';
-                    return `
-                      <tr style="border-bottom: 1px solid #edf2f7; ${idx % 2 === 1 ? 'background-color: #fafafa;' : ''}">
-                        <td style="padding: 12px 10px;">
-                          <div style="font-weight: 600; color: #1e293b;">${lic.name}</div>
-                          <div style="font-size: 11px; color: #64748b;">Chave: <code style="background-color: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-family: monospace;">${lic.code}</code></div>
-                          <div style="font-size: 11px; color: #64748b;">Marca: ${lic.brand}</div>
-                        </td>
-                        <td style="padding: 12px 10px; font-family: monospace; font-weight: 600; color: #0f172a;">
-                          ${serialNum}
-                        </td>
-                        <td style="padding: 12px 10px; font-weight: 600; color: #ef4444;">
-                          ${expDateFormatted}
-                        </td>
-                        <td style="padding: 12px 10px; color: #334155;">
-                          ${lic.associatedMachinePrefix || "Almoxarifado"}
-                        </td>
-                      </tr>
-                    `;
-                  }).join('')}
-                </tbody>
-              </table>
-            </div>
-
-            <!-- Action Advice -->
-            <div style="background-color: #f0fdf4; border: 1px dashed #bbf7d0; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
-              <h4 style="margin: 0 0 6px 0; font-size: 13px; color: #166534; font-weight: 700;">Como proceder?</h4>
-              <p style="margin: 0; font-size: 12px; color: #166534; line-height: 1.5;">
-                Entre em contato com a revendedora autorizada informando a marca e os <strong>Números de Série (S/N)</strong> destacados acima para solicitar o faturamento ou reativação do sinal contratado.
-              </p>
-            </div>
-
-            <p style="font-size: 11px; color: #94a3b8; line-height: 1.5; margin-bottom: 0;">
-              Este é um e-mail automático enviado pelo sistema Agro Stock GPS. Não responda a esta mensagem.
-            </p>
-          </div>
-
-          <!-- Footer -->
-          <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b;">
-            <strong>Agro Stock GPS</strong> - Gestão Eficiente de Tecnologia de Precisão
-          </div>
-        </div>
-      `;
+      const isExpired = mode === 'expired';
+      const { title, html } = buildLicenseAlertEmail(licenses, days, isExpired ? 'expired' : 'upcoming');
 
       if (isSmtpConfigured) {
         // Create Transporter
@@ -501,28 +459,29 @@ ${extractedText}`;
           },
         });
 
-        // Send Email
-        await transporter.sendMail({
-          from: `"${smtpFromName}" <${smtpFromEmail}>`,
-          to: alertEmail,
-          subject: title,
-          html: emailHtml,
-        });
-
-        console.log(`✉️  [Nodemailer] Alerta de expiração enviado com SUCESSO para ${alertEmail}`);
+        // Send Email to all recipients
+        for (const alertEmail of alertEmails) {
+          await transporter.sendMail({
+            from: `"${smtpFromName}" <${smtpFromEmail}>`,
+            to: alertEmail,
+            subject: title,
+            html,
+          });
+          console.log(`✉️  [Nodemailer] Alerta de expiração enviado com SUCESSO para ${alertEmail}`);
+        }
 
         return res.json({
           success: true,
-          message: `E-mail de alerta de ${days} dias enviado com sucesso para ${alertEmail}!`,
+          message: `${isExpired ? 'E-mail de alerta de licenças vencidas' : `E-mail de alerta de ${days} dias`} enviado com sucesso para ${alertEmails.join(', ')}!`,
           sentCount: licenses.length,
           simulated: false
         });
       } else {
         // Simulate sending and show detailed debug message in terminal + response
         console.log(`\n========================================================================`);
-        console.log(`✉️  [SIMULAÇÃO DE EMAIL] ENVIANDO ALERTA DE VENCIMENTO DE LICENÇA (${days} DIAS)`);
+        console.log(`✉️  [SIMULAÇÃO DE EMAIL] ${isExpired ? 'LICENÇAS VENCIDAS' : `ALERTA DE VENCIMENTO DE LICENÇA (${days} DIAS)`}`);
         console.log(`------------------------------------------------------------------------`);
-        console.log(`Para: ${alertEmail}`);
+        console.log(`Para: ${alertEmails.join(', ')}`);
         console.log(`Assunto: ${title}`);
         console.log(`------------------------------------------------------------------------`);
         console.log(`[Aviso do Servidor] Configurações de SMTP do servidor não foram preenchidas.`);
@@ -551,8 +510,9 @@ ${extractedText}`;
   // API Route for sending loan expiration/overdue email alerts
   app.post("/api/loans/send-alert-email", async (req, res) => {
     try {
-      const { alertEmail, loans } = req.body;
-      if (!alertEmail) {
+      const { loans } = req.body;
+      const alertEmails = resolveEmails(req.body);
+      if (alertEmails.length === 0) {
         return res.status(400).json({ error: "E-mail de destino não especificado." });
       }
       if (!loans || !Array.isArray(loans) || loans.length === 0) {
@@ -569,89 +529,7 @@ ${extractedText}`;
 
       const isSmtpConfigured = !!(smtpHost && smtpUser && smtpPass);
 
-      // Construct detailed email content
-      const title = `⚠️ Alerta AgroStockGPS: ${loans.length} Empréstimo(s) Vencido(s) ou Pendente(s)!`;
-      
-      const emailHtml = `
-        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 650px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-          <!-- Header Banner -->
-          <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 24px; text-align: center; color: #ffffff;">
-            <h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px;">Agro Stock GPS</h1>
-            <p style="margin: 4px 0 0 0; font-size: 13px; opacity: 0.9; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Gestão de Empréstimos & Controle de Devolução</p>
-          </div>
-          
-          <!-- Body Content -->
-          <div style="padding: 24px; background-color: #ffffff;">
-            <p style="font-size: 15px; color: #334155; line-height: 1.6; margin-top: 0;">Olá,</p>
-            <p style="font-size: 14px; color: #475569; line-height: 1.6;">
-              Identificamos os seguintes empréstimos de equipamentos agrícolas concedidos a terceiros que estão <strong>vencidos ou pendentes de devolução</strong>.
-            </p>
-            <p style="font-size: 13px; color: #ef4444; font-weight: 600; margin-bottom: 20px;">
-              ⚠️ Solicitamos que os responsáveis ou empresas listadas sejam contatados para providenciar a restituição dos itens ao estoque.
-            </p>
-
-            <!-- Table of Loans -->
-            <div style="overflow-x: auto; margin-bottom: 24px;">
-              <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
-                <thead>
-                  <tr style="background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;">
-                    <th style="padding: 10px; font-weight: 600; color: #475569; border: 1px solid #e2e8f0;">Nº Termo / Responsável</th>
-                    <th style="padding: 10px; font-weight: 600; color: #475569; border: 1px solid #e2e8f0;">Empresa / Terceiro</th>
-                    <th style="padding: 10px; font-weight: 600; color: #475569; border: 1px solid #e2e8f0;">Data de Saída</th>
-                    <th style="padding: 10px; font-weight: 600; color: #475569; border: 1px solid #e2e8f0;">Previsão de Retorno</th>
-                    <th style="padding: 10px; font-weight: 600; color: #475569; border: 1px solid #e2e8f0;">Equipamentos</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${loans.map((loan: any, idx: number) => {
-                    const outDate = loan.loanDate ? new Date(loan.loanDate).toLocaleDateString('pt-BR') : '-';
-                    const estReturn = loan.estimatedReturnDate ? new Date(loan.estimatedReturnDate).toLocaleDateString('pt-BR') : 'Indeterminada';
-                    const itemsList = loan.items.map((it: any) => `${it.componentName} (S/N: ${it.componentSerial})`).join('<br/>');
-                    return `
-                      <tr style="border-bottom: 1px solid #edf2f7; ${idx % 2 === 1 ? 'background-color: #fafafa;' : ''}">
-                        <td style="padding: 12px 10px; border: 1px solid #edf2f7;">
-                          <div style="font-weight: 600; color: #1e293b;">${loan.contractNumber}</div>
-                          <div style="font-size: 12px; color: #475569;">${loan.thirdPartyName}</div>
-                          <div style="font-size: 11px; color: #64748b;">Doc: ${loan.thirdPartyDocument}</div>
-                        </td>
-                        <td style="padding: 12px 10px; color: #334155; font-weight: 500; border: 1px solid #edf2f7;">
-                          ${loan.thirdPartyCompany}
-                        </td>
-                        <td style="padding: 12px 10px; color: #475569; border: 1px solid #edf2f7;">
-                          ${outDate}
-                        </td>
-                        <td style="padding: 12px 10px; font-weight: 600; color: #ef4444; border: 1px solid #edf2f7;">
-                          ${estReturn}
-                        </td>
-                        <td style="padding: 12px 10px; font-size: 11px; color: #475569; line-height: 1.4; border: 1px solid #edf2f7;">
-                          ${itemsList}
-                        </td>
-                      </tr>
-                    `;
-                  }).join('')}
-                </tbody>
-              </table>
-            </div>
-
-            <!-- Action Advice -->
-            <div style="background-color: #fffbeb; border: 1px dashed #fef3c7; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
-              <h4 style="margin: 0 0 6px 0; font-size: 13px; color: #b45309; font-weight: 700;">Como proceder?</h4>
-              <p style="margin: 0; font-size: 12px; color: #b45309; line-height: 1.5;">
-                Sugerimos acionar os contatos dos prestadores terceiros listados para agendar a entrega física dos equipamentos no almoxarifado de sua usina ou unidade.
-              </p>
-            </div>
-
-            <p style="font-size: 11px; color: #94a3b8; line-height: 1.5; margin-bottom: 0;">
-              Este é um e-mail automático enviado pelo sistema Agro Stock GPS. Não responda a esta mensagem.
-            </p>
-          </div>
-
-          <!-- Footer -->
-          <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b;">
-            <strong>Agro Stock GPS</strong> - Gestão Eficiente de Tecnologia de Precisão
-          </div>
-        </div>
-      `;
+      const { title, html } = buildLoansAlertEmail(loans);
 
       if (isSmtpConfigured) {
         // Create Transporter
@@ -665,19 +543,20 @@ ${extractedText}`;
           },
         });
 
-        // Send Email
-        await transporter.sendMail({
-          from: `"${smtpFromName}" <${smtpFromEmail}>`,
-          to: alertEmail,
-          subject: title,
-          html: emailHtml,
-        });
-
-        console.log(`✉️  [Nodemailer] Alerta de empréstimos vencidos enviado com SUCESSO para ${alertEmail}`);
+        // Send Email to all recipients
+        for (const alertEmail of alertEmails) {
+          await transporter.sendMail({
+            from: `"${smtpFromName}" <${smtpFromEmail}>`,
+            to: alertEmail,
+            subject: title,
+            html,
+          });
+          console.log(`✉️  [Nodemailer] Alerta de empréstimos vencidos enviado com SUCESSO para ${alertEmail}`);
+        }
 
         return res.json({
           success: true,
-          message: `E-mail de alerta de empréstimos vencidos enviado com sucesso para ${alertEmail}!`,
+          message: `E-mail de alerta de empréstimos vencidos enviado com sucesso para ${alertEmails.join(', ')}!`,
           sentCount: loans.length,
           simulated: false
         });
@@ -686,7 +565,7 @@ ${extractedText}`;
         console.log(`\n========================================================================`);
         console.log(`✉️  [SIMULAÇÃO DE EMAIL] ENVIANDO ALERTA DE EMPRÉSTIMOS VENCIDOS`);
         console.log(`------------------------------------------------------------------------`);
-        console.log(`Para: ${alertEmail}`);
+        console.log(`Para: ${alertEmails.join(', ')}`);
         console.log(`Assunto: ${title}`);
         console.log(`------------------------------------------------------------------------`);
         console.log(`[Aviso do Servidor] Configurações de SMTP do servidor não foram preenchidas.`);
@@ -709,8 +588,9 @@ ${extractedText}`;
   // API Route for sending weekly field data collection pending fronts email alerts
   app.post("/api/field-data/send-alert-email", async (req, res) => {
     try {
-      const { alertEmail, weekId, weekLabel, pendingMachinesCount, frentesPendente, frentesEmAndamento } = req.body;
-      if (!alertEmail) {
+      const { weekId, weekLabel, pendingMachinesCount, frentesPendente, frentesEmAndamento } = req.body;
+      const alertEmails = resolveEmails(req.body);
+      if (alertEmails.length === 0) {
         return res.status(400).json({ error: "E-mail de destino não especificado." });
       }
       if (!weekId) {
@@ -732,99 +612,13 @@ ${extractedText}`;
       const frentesPend = Array.isArray(frentesPendente) ? frentesPendente : [];
       const frentesAndamento = Array.isArray(frentesEmAndamento) ? frentesEmAndamento : [];
 
-      const buildFrenteRows = () => {
-        let html = '';
-        if (frentesPend.length === 0 && frentesAndamento.length === 0) {
-          html += `
-            <tr>
-              <td colspan="3" style="padding: 12px 10px; color: #10b981; font-weight: 600; text-align: center; border: 1px solid #edf2f7;">
-                🎉 Todas as frentes foram 100% concluídas nesta semana!
-              </td>
-            </tr>
-          `;
-          return html;
-        }
-        frentesPend.forEach((f: any) => {
-          const machines = Array.isArray(f.machines) ? f.machines.join(', ') : '-';
-          html += `
-            <tr style="border-bottom: 1px solid #edf2f7;">
-              <td style="padding: 12px 10px; border: 1px solid #edf2f7; font-weight: 600; color: #1e293b;">${f.frente || 'Sem Frente Atribuída'}</td>
-              <td style="padding: 12px 10px; color: #ef4444; font-weight: 700; border: 1px solid #edf2f7;">100% pendente</td>
-              <td style="padding: 12px 10px; font-size: 11px; color: #475569; line-height: 1.4; border: 1px solid #edf2f7;">${machines}</td>
-            </tr>
-          `;
-        });
-        frentesAndamento.forEach((f: any) => {
-          const machines = Array.isArray(f.machines) ? f.machines.join(', ') : '-';
-          const pendCount = typeof f.pendingCount === 'number' ? f.pendingCount : 0;
-          const totalCount = typeof f.totalCount === 'number' ? f.totalCount : 0;
-          html += `
-            <tr style="border-bottom: 1px solid #edf2f7; background-color: #fafafa;">
-              <td style="padding: 12px 10px; border: 1px solid #edf2f7; font-weight: 600; color: #1e293b;">${f.frente || 'Sem Frente Atribuída'}</td>
-              <td style="padding: 12px 10px; color: #b45309; font-weight: 700; border: 1px solid #edf2f7;">${pendCount}/${totalCount} pendente(s)</td>
-              <td style="padding: 12px 10px; font-size: 11px; color: #475569; line-height: 1.4; border: 1px solid #edf2f7;">${machines}</td>
-            </tr>
-          `;
-        });
-        return html;
-      };
-
-      // Construct detailed email content
-      const title = `⚠️ Agro Stock GPS: ${pendingTotal} Máquina(s) com Recolhimento de Dados Pendente — ${weekLabelSafe}`;
-
-      const emailHtml = `
-        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 650px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-          <!-- Header Banner -->
-          <div style="background: linear-gradient(135deg, #047857 0%, #065f46 100%); padding: 24px; text-align: center; color: #ffffff;">
-            <h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.5px;">Agro Stock GPS</h1>
-            <p style="margin: 4px 0 0 0; font-size: 13px; opacity: 0.9; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Recolhimento de Dados de Campo</p>
-          </div>
-
-          <!-- Body Content -->
-          <div style="padding: 24px; background-color: #ffffff;">
-            <p style="font-size: 15px; color: #334155; line-height: 1.6; margin-top: 0;">Olá,</p>
-            <p style="font-size: 14px; color: #475569; line-height: 1.6;">
-              Segue o relatório semanal de recolhimento de telemetria dos monitores de piloto automático para a <strong>${weekLabelSafe}</strong> (${weekId}).
-            </p>
-            <p style="font-size: 13px; color: #b45309; font-weight: 600; margin-bottom: 20px;">
-              ⚠️ Existem <strong>${pendingTotal}</strong> máquina(s) com dados de campo ainda <strong>pendentes</strong> de recolhimento nesta semana.
-            </p>
-
-            <!-- Table of Fronts -->
-            <div style="overflow-x: auto; margin-bottom: 24px;">
-              <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
-                <thead>
-                  <tr style="background-color: #f8fafc; border-bottom: 2px solid #e2e8f0;">
-                    <th style="padding: 10px; font-weight: 600; color: #475569; border: 1px solid #e2e8f0;">Frente de Trabalho</th>
-                    <th style="padding: 10px; font-weight: 600; color: #475569; border: 1px solid #e2e8f0;">Situação</th>
-                    <th style="padding: 10px; font-weight: 600; color: #475569; border: 1px solid #e2e8f0;">Máquinas Pendentes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${buildFrenteRows()}
-                </tbody>
-              </table>
-            </div>
-
-            <!-- Action Advice -->
-            <div style="background-color: #fffbeb; border: 1px dashed #fef3c7; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
-              <h4 style="margin: 0 0 6px 0; font-size: 13px; color: #b45309; font-weight: 700;">Como proceder?</h4>
-              <p style="margin: 0; font-size: 12px; color: #b45309; line-height: 1.5;">
-                Acione os técnicos de campo responsáveis por cada frente para concluir o recolhimento dos dados dos monitores de piloto automático antes do encerramento da semana.
-              </p>
-            </div>
-
-            <p style="font-size: 11px; color: #94a3b8; line-height: 1.5; margin-bottom: 0;">
-              Este é um e-mail automático enviado pelo sistema Agro Stock GPS. Não responda a esta mensagem.
-            </p>
-          </div>
-
-          <!-- Footer -->
-          <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0; font-size: 12px; color: #64748b;">
-            <strong>Agro Stock GPS</strong> - Gestão Eficiente de Tecnologia de Precisão
-          </div>
-        </div>
-      `;
+      const { title, html } = buildCampoAlertEmail({
+        weekId,
+        weekLabel: weekLabelSafe,
+        pendingMachinesCount: pendingTotal,
+        frentesPendente: frentesPend,
+        frentesEmAndamento: frentesAndamento
+      });
 
       if (isSmtpConfigured) {
         // Create Transporter
@@ -838,19 +632,20 @@ ${extractedText}`;
           },
         });
 
-        // Send Email
-        await transporter.sendMail({
-          from: `"${smtpFromName}" <${smtpFromEmail}>`,
-          to: alertEmail,
-          subject: title,
-          html: emailHtml,
-        });
-
-        console.log(`✉️  [Nodemailer] Alerta de recolhimento de dados de campo enviado com SUCESSO para ${alertEmail}`);
+        // Send Email to all recipients
+        for (const alertEmail of alertEmails) {
+          await transporter.sendMail({
+            from: `"${smtpFromName}" <${smtpFromEmail}>`,
+            to: alertEmail,
+            subject: title,
+            html,
+          });
+          console.log(`✉️  [Nodemailer] Alerta de recolhimento de dados de campo enviado com SUCESSO para ${alertEmail}`);
+        }
 
         return res.json({
           success: true,
-          message: `E-mail de alerta de recolhimento de dados de campo enviado com sucesso para ${alertEmail}!`,
+          message: `E-mail de alerta de recolhimento de dados de campo enviado com sucesso para ${alertEmails.join(', ')}!`,
           simulated: false
         });
       } else {
@@ -858,7 +653,7 @@ ${extractedText}`;
         console.log(`\n========================================================================`);
         console.log(`✉️  [SIMULAÇÃO DE EMAIL] ENVIANDO ALERTA DE RECOLHIMENTO DE DADOS DE CAMPO`);
         console.log(`------------------------------------------------------------------------`);
-        console.log(`Para: ${alertEmail}`);
+        console.log(`Para: ${alertEmails.join(', ')}`);
         console.log(`Assunto: ${title}`);
         console.log(`Semana: ${weekLabelSafe} (${weekId})`);
         console.log(`Máquinas pendentes: ${pendingTotal}`);
@@ -879,6 +674,136 @@ ${extractedText}`;
     }
   });
 
+
+  // API Route for sending maintenance alerts (overdue / completed)
+  app.post("/api/maintenances/send-alert-email", async (req, res) => {
+    try {
+      const { maintenances, kind, overdueDays } = req.body;
+      const alertEmails = resolveEmails(req.body);
+      if (alertEmails.length === 0) {
+        return res.status(400).json({ error: "E-mail de destino não especificado." });
+      }
+      if (!maintenances || !Array.isArray(maintenances) || maintenances.length === 0) {
+        return res.status(400).json({ error: "Nenhuma manutenção fornecida para o alerta." });
+      }
+
+      const smtpHost = process.env.SMTP_HOST;
+      const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
+      const smtpUser = process.env.SMTP_USER;
+      const smtpPass = process.env.SMTP_PASS;
+      const smtpFromEmail = process.env.SMTP_FROM_EMAIL || smtpUser;
+      const smtpFromName = process.env.SMTP_FROM_NAME || "Agro Stock GPS";
+      const isSmtpConfigured = !!(smtpHost && smtpUser && smtpPass);
+
+      const decorated = (maintenances as any[]).map((m: any) => ({ ...m, overdueDays }));
+      const { title, html } = buildMaintenanceAlertEmail(decorated, kind === 'completed' ? 'completed' : 'overdue');
+
+      if (isSmtpConfigured) {
+        const transporter = nodemailer.createTransport({
+          host: smtpHost,
+          port: smtpPort,
+          secure: smtpPort === 465,
+          auth: { user: smtpUser, pass: smtpPass }
+        });
+        for (const alertEmail of alertEmails) {
+          await transporter.sendMail({
+            from: `"${smtpFromName}" <${smtpFromEmail}>`,
+            to: alertEmail,
+            subject: title,
+            html
+          });
+          console.log(`✉️  [Nodemailer] Alerta de manutenções enviado com SUCESSO para ${alertEmail}`);
+        }
+        return res.json({
+          success: true,
+          message: `E-mail de alerta de manutenções enviado com sucesso para ${alertEmails.join(', ')}!`,
+          sentCount: maintenances.length,
+          simulated: false
+        });
+      }
+
+      console.log(`\n========================================================================`);
+      console.log(`✉️  [SIMULAÇÃO DE EMAIL] ALERTA DE MANUTENÇÕES (${kind})`);
+      console.log(`------------------------------------------------------------------------`);
+      console.log(`Para: ${alertEmails.join(', ')}`);
+      console.log(`Assunto: ${title}`);
+      console.log(`========================================================================\n`);
+      return res.json({
+        success: true,
+        simulated: true,
+        sentCount: maintenances.length,
+        message: `O e-mail de alerta foi simulado com sucesso. Como as credenciais de SMTP não estão configuradas nas variáveis de ambiente do seu servidor, o e-mail foi impresso no console de desenvolvimento.`
+      });
+    } catch (error: any) {
+      console.error("Erro ao enviar e-mail de alerta de manutenções:", error);
+      return res.status(500).json({ error: error.message || "Erro interno no servidor ao tentar enviar o e-mail de alertas." });
+    }
+  });
+
+  // API Route for sending idle components alert email
+  app.post("/api/components/send-idle-alert-email", async (req, res) => {
+    try {
+      const { components, idleDays } = req.body;
+      const alertEmails = resolveEmails(req.body);
+      if (alertEmails.length === 0) {
+        return res.status(400).json({ error: "E-mail de destino não especificado." });
+      }
+      if (!components || !Array.isArray(components) || components.length === 0) {
+        return res.status(400).json({ error: "Nenhum componente fornecido para o alerta." });
+      }
+
+      const smtpHost = process.env.SMTP_HOST;
+      const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : 587;
+      const smtpUser = process.env.SMTP_USER;
+      const smtpPass = process.env.SMTP_PASS;
+      const smtpFromEmail = process.env.SMTP_FROM_EMAIL || smtpUser;
+      const smtpFromName = process.env.SMTP_FROM_NAME || "Agro Stock GPS";
+      const isSmtpConfigured = !!(smtpHost && smtpUser && smtpPass);
+
+      const decorated = (components as any[]).map((c: any) => ({ ...c, idleDays }));
+      const { title, html } = buildIdleComponentsAlertEmail(decorated);
+
+      if (isSmtpConfigured) {
+        const transporter = nodemailer.createTransport({
+          host: smtpHost,
+          port: smtpPort,
+          secure: smtpPort === 465,
+          auth: { user: smtpUser, pass: smtpPass }
+        });
+        for (const alertEmail of alertEmails) {
+          await transporter.sendMail({
+            from: `"${smtpFromName}" <${smtpFromEmail}>`,
+            to: alertEmail,
+            subject: title,
+            html
+          });
+          console.log(`✉️  [Nodemailer] Alerta de componentes ociosos enviado com SUCESSO para ${alertEmail}`);
+        }
+        return res.json({
+          success: true,
+          message: `E-mail de alerta de componentes ociosos enviado com sucesso para ${alertEmails.join(', ')}!`,
+          sentCount: components.length,
+          simulated: false
+        });
+      }
+
+      console.log(`\n========================================================================`);
+      console.log(`✉️  [SIMULAÇÃO DE EMAIL] ALERTA DE COMPONENTES OCIOSOS`);
+      console.log(`------------------------------------------------------------------------`);
+      console.log(`Para: ${alertEmails.join(', ')}`);
+      console.log(`Assunto: ${title}`);
+      console.log(`========================================================================\n`);
+      return res.json({
+        success: true,
+        simulated: true,
+        sentCount: components.length,
+        message: `O e-mail de alerta foi simulado com sucesso. Como as credenciais de SMTP não estão configuradas nas variáveis de ambiente do seu servidor, o e-mail foi impresso no console de desenvolvimento.`
+      });
+    } catch (error: any) {
+      console.error("Erro ao enviar e-mail de alerta de componentes ociosos:", error);
+      return res.status(500).json({ error: error.message || "Erro interno no servidor ao tentar enviar o e-mail de alertas." });
+    }
+  });
 
   // API Route for updating a user in Firebase Auth using Admin SDK
   app.post("/api/admin/users/update", async (req, res) => {
@@ -919,6 +844,382 @@ ${extractedText}`;
         return res.json({ success: true, warning: "Usuário não existia no Firebase Auth." });
       }
       return res.status(500).json({ error: error.message || "Erro ao deletar usuário no Firebase Auth." });
+    }
+  });
+
+  // Vercel Cron: hourly automation that sends due alert emails (idempotent via lastSent markers)
+  app.get("/api/cron/alerts", async (req, res) => {
+    try {
+      const secret = process.env.CRON_SECRET;
+      if (secret) {
+        const headerAuth = req.headers.authorization || '';
+        const querySecret = typeof req.query.secret === 'string' ? req.query.secret : '';
+        const provided = headerAuth.startsWith('Bearer ') ? headerAuth.slice(7) : querySecret;
+        if (provided !== secret) {
+          return res.status(401).json({ error: "Unauthorized" });
+        }
+      }
+      if (!process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+        return res.status(503).json({ error: "FIREBASE_SERVICE_ACCOUNT_KEY não configurada — o cron não pode acessar o Firestore." });
+      }
+
+      const db = getFirestore();
+      const now = new Date();
+      const result: any = {
+        licenses: { checked: false },
+        campo: { checked: false },
+        loans: { checked: false },
+        maintenance: { checked: false },
+        idle: { checked: false },
+        emailsSent: 0,
+        simulated: 0
+      };
+
+      const [licSettingsDoc, campoSettingsDoc, loanSettingsDoc, maintSettingsDoc, idleSettingsDoc] = await Promise.all([
+        db.collection("settings").doc("licenses").get(),
+        db.collection("settings").doc("campo_alerts").get(),
+        db.collection("settings").doc("loan_alerts").get(),
+        db.collection("settings").doc("maintenance_alerts").get(),
+        db.collection("settings").doc("idle_alerts").get()
+      ]);
+      const licSettings = licSettingsDoc.exists ? licSettingsDoc.data()! : null;
+      const campoSettings = campoSettingsDoc.exists ? campoSettingsDoc.data()! : null;
+      const loanSettings = loanSettingsDoc.exists ? loanSettingsDoc.data()! : null;
+      const maintSettings = maintSettingsDoc.exists ? maintSettingsDoc.data()! : null;
+      const idleSettings = idleSettingsDoc.exists ? idleSettingsDoc.data()! : null;
+
+      // ---- Licenses (daily, per threshold, gated by enabled + thresholds) ----
+      const licEmails = resolveSettingsEmails(licSettings);
+      if (licSettings?.enabled && licEmails.length > 0) {
+        result.licenses.checked = true;
+        const licSnap = await db.collection("licenses").get();
+        const allLicenses = licSnap.docs.map(d => d.data());
+        const thresholds = licSettings.thresholds || { '15': true, '30': true, '60': true };
+        const lastSent: any = {
+          '15': licSettings.lastSent15 || '',
+          '30': licSettings.lastSent30 || '',
+          '60': licSettings.lastSent60 || ''
+        };
+        const today = todayStr(now);
+        const licenseHistory: any[] = Array.isArray(licSettings.history) ? [...licSettings.history] : [];
+
+        for (const [key, days] of [['15', 15], ['30', 30], ['60', 60]] as const) {
+          if (!thresholds[key]) continue;
+          if (lastSent[key] === today) continue;
+          const expiring = getExpiringLicenses(allLicenses, days);
+          if (expiring.length === 0) continue;
+
+          const { title, html } = buildLicenseAlertEmail(expiring, days);
+          let sentAny = false;
+          for (const email of licEmails) {
+            const outcome = await sendAlertEmail(email, title, html, `alerta de vencimento de licenças (${days} dias)`);
+            if (outcome.sent) sentAny = true;
+            else result.simulated += 1;
+          }
+          if (sentAny) {
+            licenseHistory.push({
+              type: key,
+              date: now.toISOString(),
+              recipient: licEmails.join(', '),
+              status: 'Enviado'
+            });
+            if (licenseHistory.length > 50) licenseHistory.splice(0, licenseHistory.length - 50);
+
+            await db.collection("settings").doc("licenses").update({
+              [`lastSent${key}`]: today,
+              history: licenseHistory,
+              updatedAt: now.toISOString(),
+              updatedBy: "Cron"
+            });
+            result.emailsSent += 1;
+            result.licenses.sent = (result.licenses.sent || 0) + expiring.length;
+          }
+        }
+
+        // Expired licenses (daily, gated by notifyExpired)
+        if (licSettings.notifyExpired && licSettings.lastSentExpired !== today) {
+          const expired = allLicenses.filter((l: any) => l.expirationDate && l.expirationDate < today);
+          if (expired.length > 0) {
+            const { title, html } = buildLicenseAlertEmail(expired, null, 'expired');
+            let sentAny = false;
+            for (const email of licEmails) {
+              const outcome = await sendAlertEmail(email, title, html, "alerta de licenças vencidas");
+              if (outcome.sent) sentAny = true;
+              else result.simulated += 1;
+            }
+            if (sentAny) {
+              licenseHistory.push({
+                type: 'expired',
+                date: now.toISOString(),
+                recipient: licEmails.join(', '),
+                status: 'Enviado'
+              });
+              if (licenseHistory.length > 50) licenseHistory.splice(0, licenseHistory.length - 50);
+
+              await db.collection("settings").doc("licenses").update({
+                lastSentExpired: today,
+                history: licenseHistory,
+                updatedAt: now.toISOString(),
+                updatedBy: "Cron"
+              });
+              result.emailsSent += 1;
+              result.licenses.expiredSent = expired.length;
+            }
+          }
+        }
+      }
+
+      // ---- Campo (weekly, on configured weekday/time) ----
+      if (isCampoDue(campoSettings, now)) {
+        result.campo.checked = true;
+        const [machSnap, fieldSnap] = await Promise.all([
+          db.collection("machines").get(),
+          db.collection("field_data_collections").get()
+        ]);
+        const machines = machSnap.docs.map(d => d.data());
+        const fieldData = fieldSnap.docs.map(d => d.data());
+        const weekId = getIsoWeekId(now);
+
+        const fleeteGroups: Record<string, any[]> = {};
+        machines.forEach((m: any) => {
+          const fleet = m.fleet && String(m.fleet).trim() ? String(m.fleet).trim() : "Sem Frente Atribuída";
+          if (!fleeteGroups[fleet]) fleeteGroups[fleet] = [];
+          fleeteGroups[fleet].push(m);
+        });
+
+        const status = (machineId: string) => {
+          const rec = fieldData.find((c: any) => c.machineId === machineId && c.weekId === weekId);
+          return rec?.status === "Concluído" ? "Concluído" : "Pendente";
+        };
+
+        const frentesPendente: any[] = [];
+        const frentesEmAndamento: any[] = [];
+        let pendingTotal = 0;
+
+        Object.keys(fleeteGroups).forEach(frente => {
+          const group = fleeteGroups[frente];
+          const completed = group.filter((m: any) => status(m.id) === "Concluído").length;
+          const pending = group.length - completed;
+          pendingTotal += pending;
+          if (completed === 0) {
+            frentesPendente.push({ frente, machines: group.map((m: any) => m.prefix) });
+          } else if (pending > 0) {
+            frentesEmAndamento.push({
+              frente,
+              totalCount: group.length,
+              pendingCount: pending,
+              machines: group.filter((m: any) => status(m.id) === "Pendente").map((m: any) => m.prefix)
+            });
+          }
+        });
+
+        if (pendingTotal > 0) {
+          const weekLabel = `Semana ${weekId.split('-W')[1]}`;
+          const { title, html } = buildCampoAlertEmail({
+            weekId,
+            weekLabel,
+            pendingMachinesCount: pendingTotal,
+            frentesPendente,
+            frentesEmAndamento
+          });
+          const campoEmails = resolveSettingsEmails(campoSettings);
+          let sentAny = false;
+          for (const email of campoEmails) {
+            const outcome = await sendAlertEmail(email, title, html, `alerta de pendências de campo (${weekId})`);
+            if (outcome.sent) sentAny = true;
+            else result.simulated += 1;
+          }
+          if (sentAny) {
+            const campoHistory = Array.isArray(campoSettings.history) ? [...campoSettings.history] : [];
+            campoHistory.push({
+              type: 'campo',
+              date: now.toISOString(),
+              recipient: campoEmails.join(', '),
+              status: 'Enviado'
+            });
+            if (campoHistory.length > 50) campoHistory.splice(0, campoHistory.length - 50);
+
+            await db.collection("settings").doc("campo_alerts").update({
+              lastSentWeek: weekId,
+              history: campoHistory,
+              updatedAt: now.toISOString(),
+              updatedBy: "Cron"
+            });
+            result.emailsSent += 1;
+            result.campo.pending = pendingTotal;
+          }
+        }
+      }
+
+      // ---- Empréstimos (daily, while overdue exist) ----
+      const loanEmails = resolveSettingsEmails(loanSettings);
+      if (loanSettings?.enabled && loanEmails.length > 0) {
+        result.loans.checked = true;
+        const loanSnap = await db.collection("loans").get();
+        const allLoans = loanSnap.docs.map(d => d.data());
+        const overdue = allLoans.filter((l: any) =>
+          l.status === "Ativo" && l.estimatedReturnDate && l.estimatedReturnDate < todayStr(now)
+        );
+
+        if (isLoansDue(true, loanSettings.lastSentDate, overdue.length, now)) {
+          const { title, html } = buildLoansAlertEmail(overdue);
+          let sentAny = false;
+          for (const email of loanEmails) {
+            const outcome = await sendAlertEmail(email, title, html, "alerta de empréstimos vencidos");
+            if (outcome.sent) sentAny = true;
+            else result.simulated += 1;
+          }
+          if (sentAny) {
+            const loanHistory = Array.isArray(loanSettings.history) ? [...loanSettings.history] : [];
+            loanHistory.push({
+              type: 'loans',
+              date: now.toISOString(),
+              recipient: loanEmails.join(', '),
+              status: 'Enviado'
+            });
+            if (loanHistory.length > 50) loanHistory.splice(0, loanHistory.length - 50);
+
+            await db.collection("settings").doc("loan_alerts").update({
+              lastSentDate: todayStr(now),
+              history: loanHistory,
+              updatedAt: now.toISOString(),
+              updatedBy: "Cron"
+            });
+            result.emailsSent += 1;
+            result.loans.overdue = overdue.length;
+          }
+        }
+      }
+
+      // ---- Manutenções (overdue daily + completed once per maintenance) ----
+      const maintEmails = resolveSettingsEmails(maintSettings);
+      if (maintSettings?.enabled && maintEmails.length > 0) {
+        result.maintenance.checked = true;
+        const maintSnap = await db.collection("maintenances").get();
+        const allMaintenances = maintSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        const today = todayStr(now);
+        const notifiedIds = Array.isArray(maintSettings.notifiedIds) ? [...maintSettings.notifiedIds] : [];
+        const maintHistory: any[] = Array.isArray(maintSettings.history) ? [...maintSettings.history] : [];
+        let updated = false;
+
+        // Overdue: daily marker
+        if (maintSettings.lastSentDate !== today) {
+          const overdueDays = Number(maintSettings.overdueDays) || 7;
+          const overdue = getOverdueMaintenances(allMaintenances, overdueDays, now);
+          if (overdue.length > 0) {
+            const { title, html } = buildMaintenanceAlertEmail(overdue.map((m: any) => ({ ...m, overdueDays })), 'overdue');
+            let sentAny = false;
+            for (const email of maintEmails) {
+              const outcome = await sendAlertEmail(email, title, html, "alerta de manutenções atrasadas");
+              if (outcome.sent) sentAny = true;
+              else result.simulated += 1;
+            }
+            if (sentAny) {
+              maintHistory.push({
+                type: 'maintenance_overdue',
+                date: now.toISOString(),
+                recipient: maintEmails.join(', '),
+                status: 'Enviado'
+              });
+              updated = true;
+              result.emailsSent += 1;
+              result.maintenance.overdue = overdue.length;
+            }
+          }
+        }
+
+        // Completed: one-time per maintenance
+        if (maintSettings.notifyCompleted) {
+          const completed = getCompletedMaintenances(allMaintenances, notifiedIds, now);
+          if (completed.length > 0) {
+            const { title, html } = buildMaintenanceAlertEmail(completed, 'completed');
+            let sentAny = false;
+            for (const email of maintEmails) {
+              const outcome = await sendAlertEmail(email, title, html, "alerta de manutenção concluída");
+              if (outcome.sent) sentAny = true;
+              else result.simulated += 1;
+            }
+            if (sentAny) {
+              completed.forEach((m: any) => {
+                if (!notifiedIds.includes(m.id)) notifiedIds.push(m.id);
+              });
+              maintHistory.push({
+                type: 'maintenance_completed',
+                date: now.toISOString(),
+                recipient: maintEmails.join(', '),
+                status: 'Enviado'
+              });
+              updated = true;
+              result.emailsSent += 1;
+              result.maintenance.completed = completed.length;
+            }
+          }
+        }
+
+        if (updated) {
+          if (maintHistory.length > 50) maintHistory.splice(0, maintHistory.length - 50);
+          if (notifiedIds.length > 100) notifiedIds.splice(0, notifiedIds.length - 100);
+          await db.collection("settings").doc("maintenance_alerts").update({
+            lastSentDate: today,
+            notifiedIds,
+            history: maintHistory,
+            updatedAt: now.toISOString(),
+            updatedBy: "Cron"
+          });
+        }
+      }
+
+      // ---- Componentes ociosos (daily) ----
+      const idleEmails = resolveSettingsEmails(idleSettings);
+      if (idleSettings?.enabled && idleEmails.length > 0) {
+        result.idle.checked = true;
+        const today = todayStr(now);
+        if (idleSettings.lastSentDate !== today) {
+          const [compSnap, moveSnap] = await Promise.all([
+            db.collection("components").get(),
+            db.collection("movements").get()
+          ]);
+          const allComponents = compSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+          const allMovements = moveSnap.docs.map(d => d.data());
+          const idleDays = Number(idleSettings.idleDays) || 30;
+          const idleComponents = getIdleComponents(allComponents, allMovements, idleDays, now);
+
+          if (idleComponents.length > 0) {
+            const { title, html } = buildIdleComponentsAlertEmail(idleComponents.map((c: any) => ({ ...c, idleDays })));
+            let sentAny = false;
+            for (const email of idleEmails) {
+              const outcome = await sendAlertEmail(email, title, html, "alerta de componentes ociosos");
+              if (outcome.sent) sentAny = true;
+              else result.simulated += 1;
+            }
+            if (sentAny) {
+              const idleHistory = Array.isArray(idleSettings.history) ? [...idleSettings.history] : [];
+              idleHistory.push({
+                type: 'idle',
+                date: now.toISOString(),
+                recipient: idleEmails.join(', '),
+                status: 'Enviado'
+              });
+              if (idleHistory.length > 50) idleHistory.splice(0, idleHistory.length - 50);
+
+              await db.collection("settings").doc("idle_alerts").update({
+                lastSentDate: today,
+                history: idleHistory,
+                updatedAt: now.toISOString(),
+                updatedBy: "Cron"
+              });
+              result.emailsSent += 1;
+              result.idle.count = idleComponents.length;
+            }
+          }
+        }
+      }
+
+      return res.json({ ok: true, ...result });
+    } catch (error: any) {
+      console.error("[Cron] Erro ao executar automação de alertas:", error);
+      return res.status(500).json({ error: error.message || "Erro interno no cron de alertas." });
     }
   });
 

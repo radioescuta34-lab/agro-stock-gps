@@ -157,11 +157,65 @@ export interface CompanyProfile {
   updatedBy: string;
 }
 
+export interface AlertHistoryEntry {
+  type: string;      // '15' | '30' | '60' | 'campo' | 'loans'
+  date: string;      // ISO string
+  recipient: string;
+  status: 'Enviado' | 'Falhou';
+}
+
 export interface LicenseSettings {
-  alertEmail: string;
+  alertEmails: string[];
+  enabled: boolean;
+  thresholds: { '15': boolean; '30': boolean; '60': boolean };
+  notifyExpired: boolean;
+  lastSentExpired?: string;
   lastSent60?: string;
   lastSent30?: string;
   lastSent15?: string;
+  history?: AlertHistoryEntry[];
+  updatedAt: any;
+  updatedBy: string;
+}
+
+export interface CampoAlertSettings {
+  alertEmails: string[];
+  enabled: boolean;
+  scheduleDay: string;   // 'segunda' | 'terca' | ... | 'domingo'
+  scheduleTime: string;  // 'HH:mm'
+  lastSentWeek?: string; // ISO week, e.g. '2026-W32'
+  history?: AlertHistoryEntry[];
+  updatedAt: any;
+  updatedBy: string;
+}
+
+export interface LoanAlertSettings {
+  alertEmails: string[];
+  enabled: boolean;
+  lastSentDate?: string;
+  history?: AlertHistoryEntry[];
+  updatedAt: any;
+  updatedBy: string;
+}
+
+export interface MaintenanceAlertSettings {
+  alertEmails: string[];
+  enabled: boolean;
+  overdueDays: number;       // notify maintenances stuck in 'Em Manutenção' for more than N days
+  notifyCompleted: boolean;  // send a one-time notice when a maintenance is completed
+  lastSentDate?: string;     // daily marker for overdue maintenance alert
+  notifiedIds?: string[];    // maintenance ids already notified about completion
+  history?: AlertHistoryEntry[];
+  updatedAt: any;
+  updatedBy: string;
+}
+
+export interface IdleAlertSettings {
+  alertEmails: string[];
+  enabled: boolean;
+  idleDays: number;      // components 'Disponível' without movement for more than N days
+  lastSentDate?: string; // daily marker
+  history?: AlertHistoryEntry[];
   updatedAt: any;
   updatedBy: string;
 }

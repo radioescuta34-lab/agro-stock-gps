@@ -1,6 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../firebase';
 import { useNotifications } from './NotificationProvider';
 import { 
   License, 
@@ -9,8 +7,7 @@ import {
   LicenseStatus, 
   AutopilotComponent,
   UserRole,
-  UserProfile,
-  LicenseSettings
+  UserProfile
 } from '../types';
 import { 
   Plus, 
@@ -35,8 +32,6 @@ import {
   QrCode,
   LayoutGrid,
   List,
-  Mail,
-  Bell,
   Filter
 } from 'lucide-react';
 
@@ -71,7 +66,7 @@ export default function LicensesTab({
   onDeleteLicense
 }: LicensesTabProps) {
   const isAdminOrTech = role === 'administrador' || role === 'tecnico' || role === 'ADMINISTRADOR' || role === 'TECNICO_CAMPO';
-  const { showToast, showDialog, confirmDialog } = useNotifications();
+  const { showToast, confirmDialog } = useNotifications();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [brandFilter, setBrandFilter] = useState<string>('all');
@@ -82,316 +77,6 @@ export default function LicensesTab({
 
   // Expiration alerting & filtering states
   const [expirationRangeFilter, setExpirationRangeFilter] = useState<string>('all');
-  const [alertSettings, setAlertSettings] = useState<LicenseSettings | null>(null);
-  const [alertEmailInput, setAlertEmailInput] = useState('');
-  const [isAlertSettingsOpen, setIsAlertSettingsOpen] = useState(false);
-  const [isSavingAlertSettings, setIsSavingAlertSettings] = useState(false);
-  const [isSendingAlertManual, setIsSendingAlertManual] = useState(false);
-  const [alertSuccessToast, setAlertSuccessToast] = useState<string | null>(null);
-
-  // Load and subscribe alert settings
-  useEffect(() => {
-    if (isDemoMode) {
-      const saved = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}license_alerts`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setAlertSettings(parsed);
-        setAlertEmailInput(parsed.alertEmail || '');
-      } else {
-        const defaultAlert = {
-          alertEmail: '',
-          lastSent60: '',
-          lastSent30: '',
-          lastSent15: '',
-          updatedAt: new Date().toISOString(),
-          updatedBy: 'Sistema'
-        };
-        setAlertSettings(defaultAlert);
-        setAlertEmailInput('');
-      }
-    } else {
-      const unsub = onSnapshot(
-        doc(db, 'settings', 'licenses'),
-        (docSnap) => {
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            const loaded: LicenseSettings = {
-              alertEmail: data.alertEmail || '',
-              lastSent60: data.lastSent60 || '',
-              lastSent30: data.lastSent30 || '',
-              lastSent15: data.lastSent15 || '',
-              updatedAt: data.updatedAt || '',
-              updatedBy: data.updatedBy || ''
-            };
-            setAlertSettings(loaded);
-            setAlertEmailInput(loaded.alertEmail);
-          } else {
-            const defaultAlert = {
-              alertEmail: '',
-              lastSent60: '',
-              lastSent30: '',
-              lastSent15: '',
-              updatedAt: '',
-              updatedBy: ''
-            };
-            setAlertSettings(defaultAlert);
-            setAlertEmailInput('');
-          }
-        },
-        (err) => {
-          console.error("Erro ao carregar configurações de alerta:", err);
-        }
-      );
-      return () => unsub();
-    }
-  }, [isDemoMode]);
-
-  // Helper to filter expiring licenses in next N days
-  const getLicensesExpiringInDays = (days: number): License[] => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    return licenses.filter(lic => {
-      if (!lic.expirationDate) return false;
-      const expDate = new Date(lic.expirationDate);
-      const diffTime = expDate.getTime() - today.getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      return diffDays >= 0 && diffDays <= days;
-    });
-  };
-
-  // Helper to trigger API request to send email alert
-  const sendExpirationEmail = async (days: number, expiringLics: License[]) => {
-    if (!alertSettings?.alertEmail) return { success: false, message: 'Nenhum e-mail de alerta cadastrado' };
-
-    try {
-      const payload = {
-        alertEmail: alertSettings.alertEmail,
-        days,
-        licenses: expiringLics.map(l => ({
-          name: l.name,
-          brand: l.brand,
-          code: l.code,
-          expirationDate: l.expirationDate,
-          deviceSerialNumber: l.deviceSerialNumber || l.associatedComponentSerial || '',
-          associatedMachinePrefix: l.associatedMachinePrefix || ''
-        }))
-      };
-
-      const res = await fetch('/api/licenses/send-alert-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Falha no envio de e-mail pela API');
-      }
-      return { success: true, message: data.message, simulated: data.simulated };
-    } catch (err: any) {
-      console.error(`Erro ao enviar alerta de ${days} dias:`, err);
-      return { success: false, message: err.message || 'Erro de conexão' };
-    }
-  };
-
-  // Automatic Expiration Alert Check Effect
-  useEffect(() => {
-    if (!licenses || licenses.length === 0 || !alertSettings || !alertSettings.alertEmail) return;
-
-    const runAutoAlertCheck = async () => {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const updates: Partial<LicenseSettings> = {};
-      let hasUpdates = false;
-
-      // Check 15 days threshold
-      if (alertSettings.lastSent15 !== todayStr) {
-        const expiring15 = getLicensesExpiringInDays(15);
-        if (expiring15.length > 0) {
-          console.log(`[AutoAlert] Disparando e-mail de alerta de 15 dias para: ${alertSettings.alertEmail}`);
-          const res = await sendExpirationEmail(15, expiring15);
-          if (res.success) {
-            updates.lastSent15 = todayStr;
-            hasUpdates = true;
-          }
-        }
-      }
-
-      // Check 30 days threshold
-      if (alertSettings.lastSent30 !== todayStr) {
-        const expiring30 = getLicensesExpiringInDays(30);
-        if (expiring30.length > 0) {
-          console.log(`[AutoAlert] Disparando e-mail de alerta de 30 dias para: ${alertSettings.alertEmail}`);
-          const res = await sendExpirationEmail(30, expiring30);
-          if (res.success) {
-            updates.lastSent30 = todayStr;
-            hasUpdates = true;
-          }
-        }
-      }
-
-      // Check 60 days threshold
-      if (alertSettings.lastSent60 !== todayStr) {
-        const expiring60 = getLicensesExpiringInDays(60);
-        if (expiring60.length > 0) {
-          console.log(`[AutoAlert] Disparando e-mail de alerta de 60 dias para: ${alertSettings.alertEmail}`);
-          const res = await sendExpirationEmail(60, expiring60);
-          if (res.success) {
-            updates.lastSent60 = todayStr;
-            hasUpdates = true;
-          }
-        }
-      }
-
-      if (hasUpdates) {
-        const timestampStr = new Date().toISOString();
-        const updatedByStr = currentUser?.name || currentUser?.email || 'Sistema';
-
-        const newSettings: LicenseSettings = {
-          ...alertSettings,
-          ...updates,
-          updatedAt: timestampStr,
-          updatedBy: updatedByStr
-        };
-
-        if (isDemoMode) {
-          setAlertSettings(newSettings);
-          localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}license_alerts`, JSON.stringify(newSettings));
-        } else {
-          try {
-            const docRef = doc(db, 'settings', 'licenses');
-            await setDoc(docRef, {
-              ...newSettings,
-              updatedAt: serverTimestamp()
-            }, { merge: true });
-          } catch (err) {
-            console.error("Erro ao salvar logs de alerta no Firestore:", err);
-          }
-        }
-      }
-    };
-
-    const timer = setTimeout(() => {
-      runAutoAlertCheck();
-    }, 4000);
-
-    return () => clearTimeout(timer);
-  }, [licenses, alertSettings, isDemoMode, currentUser]);
-
-  // Save email alert settings
-  const handleSaveAlertSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isAdminOrTech) {
-      showToast('warning', 'Apenas administradores ou técnicos podem alterar as configurações de alerta.');
-      return;
-    }
-
-    setIsSavingAlertSettings(true);
-    const timestampStr = new Date().toISOString();
-    const updatedByStr = currentUser?.name || currentUser?.email || 'Sistema';
-
-    const newSettings: LicenseSettings = {
-      alertEmail: alertEmailInput.trim(),
-      lastSent60: alertSettings?.lastSent60 || '',
-      lastSent30: alertSettings?.lastSent30 || '',
-      lastSent15: alertSettings?.lastSent15 || '',
-      updatedAt: timestampStr,
-      updatedBy: updatedByStr
-    };
-
-    try {
-      if (isDemoMode) {
-        setAlertSettings(newSettings);
-        localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}license_alerts`, JSON.stringify(newSettings));
-      } else {
-        const docRef = doc(db, 'settings', 'licenses');
-        await setDoc(docRef, {
-          ...newSettings,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-      }
-      setAlertSuccessToast('E-mail de alertas salvo e registrado com sucesso!');
-      setTimeout(() => setAlertSuccessToast(null), 4000);
-    } catch (err: any) {
-      console.error(err);
-      showToast('error', 'Erro ao salvar as configurações de alerta: ' + err.message);
-    } finally {
-      setIsSavingAlertSettings(false);
-    }
-  };
-
-  // Trigger manual simulation checks
-  const handleTriggerManualAlerts = async () => {
-    if (!alertEmailInput) {
-      showDialog({
-        title: 'E-mail de destino não cadastrado',
-        message: 'Por favor, cadastre um e-mail de destino primeiro.',
-        icon: 'warning',
-        okLabel: 'Entendi'
-      });
-      return;
-    }
-    setIsSendingAlertManual(true);
-    setAlertSuccessToast(null);
-
-    try {
-      const expiring15 = getLicensesExpiringInDays(15);
-      const expiring30 = getLicensesExpiringInDays(30);
-      const expiring60 = getLicensesExpiringInDays(60);
-
-      let totalSent = 0;
-      let lastMessage = '';
-      let isSimulated = false;
-
-      if (expiring15.length > 0) {
-        const res = await sendExpirationEmail(15, expiring15);
-        if (res.success) {
-          totalSent += expiring15.length;
-          lastMessage = res.message || '';
-          isSimulated = !!res.simulated;
-        } else {
-          throw new Error(`Erro enviando alerta de 15 dias: ${res.message}`);
-        }
-      }
-      if (expiring30.length > 0) {
-        const res = await sendExpirationEmail(30, expiring30);
-        if (res.success) {
-          totalSent += expiring30.length;
-          lastMessage = res.message || '';
-          isSimulated = !!res.simulated;
-        } else {
-          throw new Error(`Erro enviando alerta de 30 dias: ${res.message}`);
-        }
-      }
-      if (expiring60.length > 0) {
-        const res = await sendExpirationEmail(60, expiring60);
-        if (res.success) {
-          totalSent += expiring60.length;
-          lastMessage = res.message || '';
-          isSimulated = !!res.simulated;
-        } else {
-          throw new Error(`Erro enviando alerta de 60 dias: ${res.message}`);
-        }
-      }
-
-      if (totalSent > 0) {
-        if (isSimulated) {
-          setAlertSuccessToast(lastMessage);
-        } else {
-          setAlertSuccessToast(`Varredura concluída! ${lastMessage} (Total de ${totalSent} licenças com vencimento iminente notificadas com sucesso contendo seus respectivos Números de Série).`);
-        }
-      } else {
-        setAlertSuccessToast('Varredura manual concluída. Nenhuma licença de sinal/software está vencendo nos próximos 15, 30 ou 60 dias. Nenhum alerta foi enviado.');
-      }
-      setTimeout(() => setAlertSuccessToast(null), 12000);
-    } catch (err: any) {
-      showToast('error', 'Erro ao rodar varredura de alertas: ' + err.message);
-    } finally {
-      setIsSendingAlertManual(false);
-    }
-  };
 
   const [isAdding, setIsAdding] = useState(false);
   const [editingLic, setEditingLic] = useState<License | null>(null);
@@ -826,19 +511,6 @@ export default function LicensesTab({
         </div>
         
         <div className="flex flex-wrap gap-2 shrink-0 w-full md:w-auto">
-          <button
-            onClick={() => setIsAlertSettingsOpen(!isAlertSettingsOpen)}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 border shadow-sm w-full sm:w-auto cursor-pointer ${
-              isAlertSettingsOpen 
-                ? 'bg-emerald-50 border-emerald-300 text-emerald-700' 
-                : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-            }`}
-            id="toggle-alert-settings-btn"
-          >
-            <Mail className="h-4 w-4 text-emerald-600" />
-            Configurar Alertas
-          </button>
-
           {isAdminOrTech && !isAdding && !editingLic && (
             <button
               onClick={() => {
@@ -854,111 +526,6 @@ export default function LicensesTab({
           )}
         </div>
       </div>
-
-      {/* Alert Settings Collapsible Card */}
-      {isAlertSettingsOpen && (
-        <div className="bg-slate-50 border border-slate-200 p-6 rounded-2xl shadow-sm space-y-4" id="alert-settings-box">
-          <div className="flex justify-between items-center border-b border-slate-200 pb-3">
-            <h3 className="font-bold text-slate-800 flex items-center gap-2 text-xs uppercase tracking-wider">
-              <Bell className="h-5 w-5 text-emerald-600" />
-              Configuração de Alertas Automáticos de Vencimento
-            </h3>
-            <button
-              onClick={() => setIsAlertSettingsOpen(false)}
-              className="p-1 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-slate-600 transition-all cursor-pointer"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left side: email form */}
-            <div className="lg:col-span-2 space-y-3">
-              <p className="text-xs text-slate-500 leading-relaxed">
-                O sistema realiza uma varredura automática em busca de licenças de sinal ou ativações de monitores prestes a expirar. Os alertas são disparados com 60, 30 e 15 dias de antecedência para o e-mail cadastrado, listando os <strong>números de série</strong> das respectivas licenças e monitores para que as renovações sejam providenciadas.
-              </p>
-
-              <form onSubmit={handleSaveAlertSettings} className="flex flex-col sm:flex-row gap-2.5 items-end">
-                <div className="flex-1 w-full">
-                  <label className="block text-[10px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    E-mail Destinatário dos Alertas
-                  </label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                    <input
-                      type="email"
-                      required
-                      placeholder="Ex: suprimentos@fazendaagrostock.com.br"
-                      value={alertEmailInput}
-                      onChange={e => setAlertEmailInput(e.target.value)}
-                      disabled={!isAdminOrTech}
-                      className="w-full pl-9 pr-3 py-2 border border-slate-300 bg-white rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs disabled:opacity-60"
-                    />
-                  </div>
-                </div>
-
-                {isAdminOrTech && (
-                  <button
-                    type="submit"
-                    disabled={isSavingAlertSettings}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 shrink-0 w-full sm:w-auto cursor-pointer"
-                  >
-                    {isSavingAlertSettings ? 'Salvando...' : 'Salvar E-mail'}
-                  </button>
-                )}
-              </form>
-            </div>
-
-            {/* Right side: quick scan status & logs */}
-            <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
-              <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider border-b border-slate-100 pb-2 flex items-center gap-1.5">
-                <Clock className="h-4 w-4 text-slate-400" />
-                Histórico de Envio de Alertas
-              </h4>
-              <div className="space-y-2 text-[11px] text-slate-600">
-                <div className="flex justify-between items-center">
-                  <span>Alerta 60 Dias:</span>
-                  <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
-                    {alertSettings?.lastSent60 ? `Enviado em: ${new Date(alertSettings.lastSent60).toLocaleDateString('pt-BR')}` : 'Nunca disparado'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span>Alerta 30 Dias:</span>
-                  <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
-                    {alertSettings?.lastSent30 ? `Enviado em: ${new Date(alertSettings.lastSent30).toLocaleDateString('pt-BR')}` : 'Nunca disparado'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span>Alerta 15 Dias:</span>
-                  <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
-                    {alertSettings?.lastSent15 ? `Enviado em: ${new Date(alertSettings.lastSent15).toLocaleDateString('pt-BR')}` : 'Nunca disparado'}
-                  </span>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleTriggerManualAlerts}
-                disabled={isSendingAlertManual || !alertEmailInput}
-                className="w-full mt-1.5 py-2.5 bg-slate-800 hover:bg-slate-900 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${isSendingAlertManual ? 'animate-spin' : ''}`} />
-                Varredura Manual e Teste
-              </button>
-            </div>
-          </div>
-
-          {/* Success / Status alerts */}
-          {alertSuccessToast && (
-            <div className="bg-emerald-50 border border-emerald-200 p-3.5 rounded-xl flex items-start gap-2.5 text-emerald-800 text-xs shadow-sm">
-              <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
-              <div className="leading-normal">
-                {alertSuccessToast}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Adding/Editing Form Box */}
       {(isAdding || editingLic) && (
