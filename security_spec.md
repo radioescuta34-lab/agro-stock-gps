@@ -3,7 +3,7 @@
 ## Data Invariants
 1. **User Role Locking**: Users cannot self-escalate or change their roles (`role`) after creation, nor can they create a profile with an invalid role.
 2. **Component Integrity**: A component's `serialNumber` and `brand` are immutable after creation. Only administrators can create or delete components.
-3. **Movements Record**: Movements are audit logs and can only be created. No one (not even administrators) can update or delete a movement log once written, guaranteeing temporal integrity.
+3. **Order of Service Audit**: O.S. lifecycle transitions and pre-execution corrections append an immutable history event. Only open or scheduled orders can be edited; only administrators can delete orders that have not started. Started, completed, and cancelled orders cannot be deleted.
 4. **Machine Fleet Control**: Only administrators can modify the machine fleet registry.
 5. **Field Data Collection**: Weekly field data collection records (`field_data_collections`) can only be created/updated by admins or technicians with a valid shape; deletion is forbidden to preserve the weekly audit trail.
 
@@ -24,8 +24,8 @@ An admin or technician attempts to alter the brand or serial number of an existi
 - **Payload**: `updateDoc(doc(db, 'components', 'comp123'), { brand: 'Topcon' })`
 - **Result**: `PERMISSION_DENIED`
 
-### 4. Direct Movement Alteration (Log Spoofing)
-An attacker attempts to edit a previous movement history log to cover up a component theft.
+### 4. Unauthorized Movement Alteration (Log Spoofing)
+An attacker attempts to edit an executed movement or overwrite its audit history to cover up a component change.
 - **Payload**: `updateDoc(doc(db, 'movements', 'move123'), { machinePrefix: 'Warehouse' })`
 - **Result**: `PERMISSION_DENIED`
 
@@ -71,7 +71,7 @@ A technician attempts to delete machine configurations from the plant registry.
 
 ### 13. Deleting Field Data Collection Records
 A technician attempts to delete a weekly field data collection record to hide a missed collection.
-- **Payload**: `deleteDoc(doc(db, 'field_data_collections', 'T01_2026-W32'))`
+- **Payload**: `deleteDoc(doc(db, 'field_data_collections', '2026-W32_machineId'))`
 - **Result**: `PERMISSION_DENIED`
 
 ---

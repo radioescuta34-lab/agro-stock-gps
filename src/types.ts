@@ -68,16 +68,34 @@ export interface Machine {
 
 export type MovementAction = 'Instalação' | 'Remoção' | 'Manutenção' | 'Calibração';
 
+export type MovementStatus = 'Aberta' | 'Agendada' | 'Em Atendimento' | 'Concluída' | 'Cancelada';
+
+export interface MovementHistoryEntry {
+  timestamp: string; // ISO string
+  actorName: string;
+  action: string; // e.g. "O.S. criada", "Atendimento iniciado", "O.S. concluída"
+  detail?: string;
+}
+
 export interface FieldDataCollection {
-  id: string; // e.g., "coll_T01_2026-W32"
+  id: string; // e.g., "2026-W32_mac1"
   machineId: string;
   machinePrefix: string;
+  machineBrand?: string;
+  machineModel?: string;
+  machineType?: MachineType;
   fleet?: string;
   frente?: string;
   weekId: string; // e.g., "2026-W32"
   status: 'Pendente' | 'Concluído';
   collectedAt?: any; // ISO string or timestamp
   collectedBy?: string;
+  history?: Array<{
+    timestamp: string;
+    actorName: string;
+    action: 'Semana iniciada' | 'Coleta concluída';
+  }>;
+  createdAt?: any;
   notes?: string;
   updatedAt: any;
 }
@@ -87,6 +105,7 @@ export interface MovementLog {
   componentId: string;
   componentSerial: string;
   componentName: string;
+  machineId?: string; // stable relationship to machines/{id}; legacy records fall back to machinePrefix
   machinePrefix: string; // "Almoxarifado" or prefix of machine
   action: MovementAction;
   technicianId: string;
@@ -94,6 +113,13 @@ export interface MovementLog {
   date: any; // Timestamp
   notes: string;
   createdAt: any; // Timestamp
+  osNumber?: number; // sequential OS number, e.g. 128
+  status?: MovementStatus; // OS lifecycle state
+  history?: MovementHistoryEntry[]; // chronological audit trail
+  completedAt?: any;
+  cancelledAt?: any;
+  updatedAt?: any;
+  updatedBy?: string;
 }
 
 // Preset applied when navigating from a dashboard indicator card
@@ -250,5 +276,3 @@ export interface MaintenanceProvider {
   updatedAt: any;
   updatedBy: string;
 }
-
-

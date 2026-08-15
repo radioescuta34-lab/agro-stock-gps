@@ -15,7 +15,8 @@ import {
   getDoc,
   query,
   where,
-  getDocs
+  getDocs,
+  writeBatch
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { 
@@ -38,7 +39,9 @@ import {
   LoanAlertSettings,
   MaintenanceAlertSettings,
   IdleAlertSettings,
-  AlertHistoryEntry
+  AlertHistoryEntry,
+  MovementStatus,
+  MovementHistoryEntry
 } from './types';
 import AuthScreen from './components/AuthScreen';
 import { useNotifications } from './components/NotificationProvider';
@@ -93,6 +96,24 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   address: 'Av. das Nações Unidas, 1000 - São Paulo, SP',
   updatedAt: new Date().toISOString(),
   updatedBy: 'Sistema'
+};
+
+const getComponentPlacementAfterOS = (
+  movement: Pick<MovementLog, 'action' | 'machinePrefix'>,
+  currentStatus: ComponentStatus,
+  currentMachine: string
+): { status: ComponentStatus; currentMachine: string } => {
+  switch (movement.action) {
+    case 'Instalação':
+      return { status: 'Em Uso', currentMachine: movement.machinePrefix };
+    case 'Remoção':
+      return { status: 'Disponível', currentMachine: '' };
+    case 'Manutenção':
+      return { status: 'Manutenção', currentMachine: '' };
+    case 'Calibração':
+    default:
+      return { status: currentStatus, currentMachine };
+  }
 };
 
 export default function App() {
@@ -571,13 +592,21 @@ export default function App() {
             componentId: data.componentId || '',
             componentSerial: data.componentSerial || '',
             componentName: data.componentName || '',
+            machineId: data.machineId || undefined,
             machinePrefix: data.machinePrefix || '',
             action: data.action || 'Instalação',
             technicianId: data.technicianId || '',
             technicianName: data.technicianName || '',
             date: data.date,
             notes: data.notes || '',
-            createdAt: data.createdAt
+            createdAt: data.createdAt,
+            osNumber: data.osNumber,
+            status: data.status,
+            history: data.history,
+            completedAt: data.completedAt,
+            cancelledAt: data.cancelledAt,
+            updatedAt: data.updatedAt,
+            updatedBy: data.updatedBy
           });
         });
         setMovements(list);
@@ -598,12 +627,17 @@ export default function App() {
             id: d.id,
             machineId: data.machineId || '',
             machinePrefix: data.machinePrefix || '',
+            machineBrand: data.machineBrand || '',
+            machineModel: data.machineModel || '',
+            machineType: data.machineType || undefined,
             fleet: data.fleet || data.frente || '',
             frente: data.frente || data.fleet || '',
             weekId: data.weekId || '',
             status: data.status || 'Pendente',
             collectedAt: data.collectedAt || undefined,
             collectedBy: data.collectedBy || undefined,
+            history: data.history || [],
+            createdAt: data.createdAt || undefined,
             notes: data.notes || '',
             updatedAt: data.updatedAt || new Date().toISOString()
           });
@@ -1009,9 +1043,9 @@ export default function App() {
     ];
 
     const initialMovements: MovementLog[] = [
-      { id: 'move1', componentId: 'comp1', componentSerial: 'TR-750-9981', componentName: 'Trimble GFX-750 Monitor', machinePrefix: 'T01', action: 'Instalação', technicianId: 'tech_1', technicianName: 'Felipe Neves', date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), notes: 'Instalado com chicote original no console superior do trator T01.', createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString() },
-      { id: 'move2', componentId: 'comp2', componentSerial: 'TR-372-4011', componentName: 'Trimble AG-372 Receptor', machinePrefix: 'T01', action: 'Instalação', technicianId: 'tech_1', technicianName: 'Felipe Neves', date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), notes: 'Instalada no teto do trator T01 e calibrada com sinal RangePoint RTX.', createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString() },
-      { id: 'move3', componentId: 'comp6', componentSerial: 'TR-372-8821', componentName: 'Trimble AG-372 Receptor', machinePrefix: 'Almoxarifado', action: 'Manutenção', technicianId: 'tech_2', technicianName: 'Rodrigo Antunes', date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), notes: 'Aparelho perdendo conexão RTK de forma intermitente. Enviado para reparo.', createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString() },
+      { id: 'move1', componentId: 'comp1', componentSerial: 'TR-750-9981', componentName: 'Trimble GFX-750 Monitor', machineId: 'mac1', machinePrefix: 'T01', action: 'Instalação', technicianId: 'tech_1', technicianName: 'Felipe Neves', date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), notes: 'Instalado com chicote original no console superior do trator T01.', createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), osNumber: 1, status: 'Concluída', history: [{ timestamp: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), actorName: 'Felipe Neves', action: 'O.S. criada' }, { timestamp: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), actorName: 'Felipe Neves', action: 'O.S. concluída' }], completedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), updatedAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), updatedBy: 'Felipe Neves' },
+      { id: 'move2', componentId: 'comp2', componentSerial: 'TR-372-4011', componentName: 'Trimble AG-372 Receptor', machineId: 'mac1', machinePrefix: 'T01', action: 'Instalação', technicianId: 'tech_1', technicianName: 'Felipe Neves', date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), notes: 'Instalada no teto do trator T01 e calibrada com sinal RangePoint RTX.', createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), osNumber: 2, status: 'Em Atendimento', history: [{ timestamp: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), actorName: 'Felipe Neves', action: 'O.S. criada' }, { timestamp: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), actorName: 'Felipe Neves', action: 'Atendimento iniciado' }], updatedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), updatedBy: 'Felipe Neves' },
+      { id: 'move3', componentId: 'comp6', componentSerial: 'TR-372-8821', componentName: 'Trimble AG-372 Receptor', machinePrefix: 'Almoxarifado', action: 'Manutenção', technicianId: 'tech_2', technicianName: 'Rodrigo Antunes', date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), notes: 'Aparelho perdendo conexão RTK de forma intermitente. Enviado para reparo.', createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), osNumber: 3, status: 'Cancelada', history: [{ timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), actorName: 'Rodrigo Antunes', action: 'O.S. criada' }, { timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), actorName: 'Rodrigo Antunes', action: 'O.S. cancelada' }], cancelledAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), updatedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), updatedBy: 'Rodrigo Antunes' },
     ];
 
     const initialLicenses: License[] = [
@@ -1358,25 +1392,26 @@ export default function App() {
   // Add Movement & Auto-Update Component State (Seamless integration)
   const handleAddMovement = async (log: Omit<MovementLog, 'id' | 'technicianId' | 'technicianName' | 'createdAt'>) => {
     const timestampStr = new Date().toISOString();
+    const actorName = user?.name || 'Técnico';
     
     // Find target component
     const comp = components.find(c => c.id === log.componentId);
     if (!comp) throw new Error('Equipamento GPS correspondente não foi localizado.');
+    const hasActiveOrder = movements.some(movement =>
+      movement.componentId === log.componentId &&
+      !['Concluída', 'Cancelada'].includes(movement.status || 'Aberta')
+    );
+    if (hasActiveOrder) throw new Error('Este equipamento já possui uma O.S. em aberto ou em atendimento.');
 
-    // Determine target component new status and machine placement
-    let nextStatus = comp.status;
-    let nextMachine = comp.currentMachine || '';
-
-    if (log.action === 'Instalação') {
-      nextStatus = 'Em Uso';
-      nextMachine = log.machinePrefix;
-    } else if (log.action === 'Remoção') {
-      nextStatus = 'Disponível';
-      nextMachine = '';
-    } else if (log.action === 'Manutenção') {
-      nextStatus = 'Manutenção';
-      nextMachine = '';
-    }
+    // Compute next OS number (sequential)
+    const maxOs = movements.reduce((max, m) => Math.max(max, m.osNumber || 0), 0);
+    const osNumber = maxOs + 1;
+    const history: MovementHistoryEntry[] = [{
+      timestamp: timestampStr,
+      actorName,
+      action: 'O.S. criada',
+      detail: `Tipo: ${log.action} · Equipamento: ${log.componentName} (S/N ${log.componentSerial})`
+    }];
 
     if (isDemoMode) {
       // 1. Create movement
@@ -1385,111 +1420,312 @@ export default function App() {
         id: 'demo_move_' + Math.random().toString(36).substr(2, 9),
         technicianId: user?.uid || 'demo_tech',
         technicianName: user?.name || 'Técnico Demo',
-        createdAt: timestampStr
+        createdAt: timestampStr,
+        osNumber,
+        status: 'Aberta',
+        history,
+        updatedAt: timestampStr,
+        updatedBy: actorName
       };
 
       const updatedMovements = [...movements, newMove];
       setMovements(updatedMovements);
       saveDemoData('movements', updatedMovements);
 
-      // 2. Update component
-      const updatedComponents = components.map(c => {
-        if (c.id === log.componentId) {
-          return {
-            ...c,
-            status: nextStatus,
-            currentMachine: nextMachine,
-            updatedAt: timestampStr,
-            updatedBy: user?.name || 'Técnico Demo'
-          };
-        }
-        return c;
-      });
-      setComponents(updatedComponents);
-      saveDemoData('components', updatedComponents);
-
     } else {
       try {
-        // Use an atomic sequential execution (equivalent of a database transaction / batch)
-        // 1. Write the movement log
         const moveRef = doc(collection(db, 'movements'));
         await setDoc(moveRef, {
           ...log,
           id: moveRef.id,
           technicianId: user?.uid || 'system',
           technicianName: user?.name || 'Técnico',
-          createdAt: serverTimestamp()
-        });
-
-        // 2. Update the component status
-        const compRef = doc(db, 'components', log.componentId);
-        await updateDoc(compRef, {
-          status: nextStatus,
-          currentMachine: nextMachine,
+          createdAt: serverTimestamp(),
+          osNumber,
+          status: 'Aberta',
+          history,
           updatedAt: serverTimestamp(),
-          updatedBy: user?.name || user?.email || 'Técnico'
+          updatedBy: actorName
         });
 
       } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, 'movements_and_components');
+        handleFirestoreError(err, OperationType.WRITE, 'movements');
+        throw err;
       }
     }
   };
 
-  // Toggle or Set Machine Collection Status (Field Data Kanban)
-  const handleToggleCollectionStatus = async (
-    targetMachine: Machine,
-    targetWeekId: string,
-    currentStatus: 'Pendente' | 'Concluído'
-  ) => {
-    const newStatus = currentStatus === 'Pendente' ? 'Concluído' : 'Pendente';
-    const docId = `${targetMachine.prefix}_${targetWeekId}`;
+  // Transition an Order of Service lifecycle status (append history, preserve audit trail)
+  const handleTransitionOSStatus = async (movement: MovementLog, nextStatus: MovementStatus, actionLabel: string, detail?: string) => {
+    const timestampStr = new Date().toISOString();
+    const actorName = user?.name || user?.email || 'Técnico';
 
-    const payload: Partial<FieldDataCollection> = {
-      machineId: targetMachine.id,
-      machinePrefix: targetMachine.prefix,
-      frente: targetMachine.fleet || 'Sem Frente',
-      weekId: targetWeekId,
-      status: newStatus,
-      updatedAt: new Date().toISOString()
+    const history = movement.history || [];
+    const entry: MovementHistoryEntry = {
+      timestamp: timestampStr,
+      actorName,
+      action: actionLabel,
+      detail
     };
 
-    if (newStatus === 'Concluído') {
-      payload.collectedAt = new Date().toISOString();
-      payload.collectedBy = user?.name || 'Técnico';
+    const currentStatus = movement.status || 'Aberta';
+    const allowedTransitions: Record<MovementStatus, MovementStatus[]> = {
+      'Aberta': ['Agendada', 'Em Atendimento', 'Cancelada'],
+      'Agendada': ['Aberta', 'Em Atendimento', 'Cancelada'],
+      'Em Atendimento': ['Agendada', 'Concluída', 'Cancelada'],
+      'Concluída': [],
+      'Cancelada': []
+    };
+    if (!allowedTransitions[currentStatus].includes(nextStatus)) {
+      throw new Error(`Não é possível alterar uma O.S. de ${currentStatus} para ${nextStatus}.`);
+    }
+
+    const payload: Record<string, any> = {
+      status: nextStatus,
+      history: [...history, entry],
+      updatedAt: timestampStr,
+      updatedBy: actorName
+    };
+
+    if (nextStatus === 'Concluída') payload.completedAt = timestampStr;
+    if (nextStatus === 'Cancelada') payload.cancelledAt = timestampStr;
+
+    if (isDemoMode) {
+      const updated = movements.map(m => m.id === movement.id ? { ...m, ...payload } : m);
+      setMovements(updated);
+      saveDemoData('movements', updated);
+
+      if (nextStatus === 'Concluída') {
+        const updatedComponents = components.map(component => {
+          if (component.id !== movement.componentId) return component;
+          const placement = getComponentPlacementAfterOS(movement, component.status, component.currentMachine || '');
+          return { ...component, ...placement, updatedAt: timestampStr, updatedBy: actorName };
+        });
+        setComponents(updatedComponents);
+        saveDemoData('components', updatedComponents);
+      }
+      return;
+    }
+
+    try {
+      const ref = doc(db, 'movements', movement.id);
+      const batch = writeBatch(db);
+      batch.update(ref, { ...payload, updatedAt: serverTimestamp() });
+
+      if (nextStatus === 'Concluída') {
+        const component = components.find(item => item.id === movement.componentId);
+        if (!component) throw new Error('O equipamento vinculado à O.S. não foi encontrado.');
+        const placement = getComponentPlacementAfterOS(movement, component.status, component.currentMachine || '');
+        batch.update(doc(db, 'components', movement.componentId), {
+          ...placement,
+          updatedAt: serverTimestamp(),
+          updatedBy: actorName
+        });
+      }
+
+      await batch.commit();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `movements/${movement.id}`);
+      throw err;
+    }
+  };
+
+  const handleUpdateMovement = async (movement: MovementLog, updates: Partial<MovementLog>) => {
+    const status = movement.status || 'Aberta';
+    if (!['Aberta', 'Agendada'].includes(status)) {
+      throw new Error('Somente O.S. abertas ou agendadas podem ser editadas.');
+    }
+    if (!updates.componentId || !components.some(component => component.id === updates.componentId)) {
+      throw new Error('Selecione um equipamento válido para a O.S.');
+    }
+    const hasConflictingOrder = movements.some(item =>
+      item.id !== movement.id &&
+      item.componentId === updates.componentId &&
+      !['Concluída', 'Cancelada'].includes(item.status || 'Aberta')
+    );
+    if (hasConflictingOrder) throw new Error('O equipamento selecionado já possui outra O.S. ativa.');
+    if (updates.action === 'Instalação' && (!updates.machineId || !updates.machinePrefix)) {
+      throw new Error('Selecione o veículo de destino da instalação.');
+    }
+
+    const timestampStr = new Date().toISOString();
+    const actorName = user?.name || user?.email || 'Técnico';
+    const payload: Partial<MovementLog> = {
+      ...updates,
+      status: status as MovementStatus,
+      history: [...(movement.history || []), {
+        timestamp: timestampStr,
+        actorName,
+        action: 'Dados da O.S. atualizados'
+      }],
+      updatedAt: timestampStr,
+      updatedBy: actorName
+    };
+
+    if (isDemoMode) {
+      const updatedMovements = movements.map(item => item.id === movement.id ? { ...item, ...payload } : item);
+      setMovements(updatedMovements);
+      saveDemoData('movements', updatedMovements);
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'movements', movement.id), { ...payload, updatedAt: serverTimestamp() });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `movements/${movement.id}`);
+      throw err;
+    }
+  };
+
+  const handleDeleteMovement = async (movement: MovementLog) => {
+    const status = movement.status || 'Aberta';
+    const isAdmin = user?.role === 'administrador' || user?.role === 'ADMINISTRADOR';
+    if (!isAdmin) throw new Error('Somente administradores podem excluir ordens de serviço.');
+    if (!['Aberta', 'Agendada'].includes(status)) {
+      throw new Error('Somente O.S. abertas ou agendadas podem ser excluídas. Use o cancelamento para preservar o histórico operacional.');
     }
 
     if (isDemoMode) {
+      const updatedMovements = movements.filter(item => item.id !== movement.id);
+      setMovements(updatedMovements);
+      saveDemoData('movements', updatedMovements);
+      return;
+    }
+
+    try {
+      await deleteDoc(doc(db, 'movements', movement.id));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `movements/${movement.id}`);
+      throw err;
+    }
+  };
+
+  // Materialize a weekly snapshot so pending machines remain auditable after the week ends.
+  const handleEnsureFieldDataWeek = async (weekMachines: Machine[], targetWeekId: string) => {
+    const existingMachineIds = new Set(
+      fieldDataCollections
+        .filter(item => item.weekId === targetWeekId)
+        .map(item => item.machineId)
+    );
+    const missingMachines = weekMachines.filter(machine => !existingMachineIds.has(machine.id));
+    if (missingMachines.length === 0) return;
+
+    const timestamp = new Date().toISOString();
+    const actorName = user?.name || user?.email || 'Sistema';
+    const createSnapshot = (machine: Machine): FieldDataCollection => ({
+      id: `${targetWeekId}_${machine.id}`,
+      machineId: machine.id,
+      machinePrefix: machine.prefix,
+      machineBrand: machine.brand,
+      machineModel: machine.model,
+      machineType: machine.type,
+      fleet: machine.fleet || 'Sem Frente',
+      frente: machine.fleet || 'Sem Frente',
+      weekId: targetWeekId,
+      status: 'Pendente',
+      history: [{ timestamp, actorName, action: 'Semana iniciada' }],
+      createdAt: timestamp,
+      updatedAt: timestamp
+    });
+
+    if (isDemoMode) {
       setFieldDataCollections(prev => {
-        const idx = prev.findIndex(item => item.id === docId);
-        let updatedList: FieldDataCollection[];
-        if (idx >= 0) {
-          updatedList = [...prev];
-          updatedList[idx] = { ...updatedList[idx], ...payload, id: docId } as FieldDataCollection;
-        } else {
-          updatedList = [...prev, { id: docId, ...payload } as FieldDataCollection];
-        }
-        saveDemoData('field_data_collections', updatedList);
-        return updatedList;
+        const known = new Set(prev.filter(item => item.weekId === targetWeekId).map(item => item.machineId));
+        const snapshots = missingMachines.filter(machine => !known.has(machine.id)).map(createSnapshot);
+        const updated = [...prev, ...snapshots];
+        saveDemoData('field_data_collections', updated);
+        return updated;
       });
       return;
     }
 
     try {
-      const ref = doc(db, 'field_data_collections', docId);
-      await setDoc(ref, {
+      await Promise.all(missingMachines.map(async machine => {
+        const snapshot = createSnapshot(machine);
+        await setDoc(doc(db, 'field_data_collections', snapshot.id), {
+          ...snapshot,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      }));
+    } catch (error) {
+      handleFirestoreError(error as any, OperationType.WRITE, 'field_data_collections_week_snapshot');
+      throw error;
+    }
+  };
+
+  // Keep the current week materialized even when the user does not open the Kanban tab.
+  useEffect(() => {
+    if (!user || machines.length === 0) return;
+
+    const ensureCurrentWeek = () => {
+      const weekId = getISOWeekId(new Date());
+      const hasMissingRecords = machines.some(machine =>
+        !fieldDataCollections.some(item => item.weekId === weekId && item.machineId === machine.id)
+      );
+      if (hasMissingRecords) {
+        handleEnsureFieldDataWeek(machines, weekId).catch(error =>
+          console.error('Falha ao preparar histórico semanal:', error)
+        );
+      }
+    };
+
+    ensureCurrentWeek();
+    const interval = window.setInterval(ensureCurrentWeek, 60_000);
+    return () => window.clearInterval(interval);
+  }, [user?.uid, isDemoMode, machines, fieldDataCollections]);
+
+  // Complete one machine collection. Completed records are not toggled back by a second tap.
+  const handleCompleteFieldDataCollection = async (targetMachine: Machine, targetWeekId: string) => {
+    const existing = fieldDataCollections.find(item => item.machineId === targetMachine.id && item.weekId === targetWeekId);
+    if (existing?.status === 'Concluído') return;
+
+    const timestamp = new Date().toISOString();
+    const actorName = user?.name || user?.email || 'Técnico';
+    const docId = existing?.id || `${targetWeekId}_${targetMachine.id}`;
+    const history = [
+      ...(existing?.history || [{ timestamp, actorName: 'Sistema', action: 'Semana iniciada' as const }]),
+      { timestamp, actorName, action: 'Coleta concluída' as const }
+    ];
+    const payload: FieldDataCollection = {
+      id: docId,
+      machineId: targetMachine.id,
+      machinePrefix: existing?.machinePrefix || targetMachine.prefix,
+      machineBrand: existing?.machineBrand || targetMachine.brand,
+      machineModel: existing?.machineModel || targetMachine.model,
+      machineType: existing?.machineType || targetMachine.type,
+      fleet: existing?.fleet || targetMachine.fleet || 'Sem Frente',
+      frente: existing?.frente || targetMachine.fleet || 'Sem Frente',
+      weekId: targetWeekId,
+      status: 'Concluído',
+      collectedAt: timestamp,
+      collectedBy: actorName,
+      history,
+      createdAt: existing?.createdAt || timestamp,
+      updatedAt: timestamp
+    };
+
+    if (isDemoMode) {
+      setFieldDataCollections(prev => {
+        const index = prev.findIndex(item => item.id === docId);
+        const updated = index >= 0
+          ? prev.map((item, itemIndex) => itemIndex === index ? payload : item)
+          : [...prev, payload];
+        saveDemoData('field_data_collections', updated);
+        return updated;
+      });
+      return;
+    }
+
+    try {
+      await setDoc(doc(db, 'field_data_collections', docId), {
         ...payload,
+        createdAt: existing?.createdAt || serverTimestamp(),
         updatedAt: serverTimestamp()
       }, { merge: true });
     } catch (error) {
       handleFirestoreError(error as any, OperationType.WRITE, 'field_data_collections');
-    }
-  };
-
-  // Bulk Complete Frente (Field Data Kanban)
-  const handleBulkCompleteFrente = async (frenteMachines: Machine[], targetWeekId: string) => {
-    for (const m of frenteMachines) {
-      await handleToggleCollectionStatus(m, targetWeekId, 'Pendente');
+      throw error;
     }
   };
 
@@ -1919,6 +2155,9 @@ export default function App() {
 
     // 3. Add movement log
     const moveNotes = `Equipamento enviado para manutenção externa na empresa ${maint.providerName}. Motivo: ${maint.issueDescription}`;
+    const maxOs = movements.reduce((max, m) => Math.max(max, m.osNumber || 0), 0);
+    const moveOsNumber = maxOs + 1;
+    const moveActor = user?.name || user?.email || 'Sistema';
     if (isDemoMode) {
       const newMove: MovementLog = {
         id: 'demo_move_' + Math.random().toString(36).substr(2, 9),
@@ -1931,7 +2170,13 @@ export default function App() {
         technicianName: user?.name || 'Sistema',
         date: timestampStr,
         notes: moveNotes,
-        createdAt: timestampStr
+        createdAt: timestampStr,
+        osNumber: moveOsNumber,
+        status: 'Concluída',
+        history: [{ timestamp: timestampStr, actorName: moveActor, action: 'O.S. concluída', detail: 'Manutenção registrada pelo fluxo de manutenções.' }],
+        completedAt: timestampStr,
+        updatedAt: timestampStr,
+        updatedBy: moveActor
       };
       const updatedMoves = [...movements, newMove];
       setMovements(updatedMoves);
@@ -1950,7 +2195,13 @@ export default function App() {
           technicianName: user?.name || user?.email || 'Sistema',
           date: serverTimestamp(),
           notes: moveNotes,
-          createdAt: serverTimestamp()
+          createdAt: serverTimestamp(),
+          osNumber: moveOsNumber,
+          status: 'Concluída',
+          history: [{ timestamp: timestampStr, actorName: moveActor, action: 'O.S. concluída', detail: 'Manutenção registrada pelo fluxo de manutenções.' }],
+          completedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          updatedBy: moveActor
         });
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, 'movements');
@@ -2012,6 +2263,9 @@ export default function App() {
     const moveNotes = returnData.status === 'Concluído' 
       ? `Retorno de manutenção concluído (${maintRecord.providerName}). Serviços: ${returnData.servicesPerformed || 'Nenhum'}. Peças trocadas: ${returnData.replacedParts || 'Nenhuma'}.`
       : `Equipamento retornado de manutenção SEM CONSERTO (${maintRecord.providerName}). Classificado como Descartado.`;
+    const maxOs = movements.reduce((max, m) => Math.max(max, m.osNumber || 0), 0);
+    const moveOsNumber = maxOs + 1;
+    const moveActor = user?.name || user?.email || 'Sistema';
 
     if (isDemoMode) {
       const newMove: MovementLog = {
@@ -2025,7 +2279,13 @@ export default function App() {
         technicianName: user?.name || 'Sistema',
         date: timestampStr,
         notes: moveNotes,
-        createdAt: timestampStr
+        createdAt: timestampStr,
+        osNumber: moveOsNumber,
+        status: 'Concluída',
+        history: [{ timestamp: timestampStr, actorName: moveActor, action: 'O.S. concluída', detail: 'Retorno de manutenção registrado pelo fluxo de manutenções.' }],
+        completedAt: timestampStr,
+        updatedAt: timestampStr,
+        updatedBy: moveActor
       };
       const updatedMoves = [...movements, newMove];
       setMovements(updatedMoves);
@@ -2044,7 +2304,13 @@ export default function App() {
           technicianName: user?.name || user?.email || 'Sistema',
           date: serverTimestamp(),
           notes: moveNotes,
-          createdAt: serverTimestamp()
+          createdAt: serverTimestamp(),
+          osNumber: moveOsNumber,
+          status: 'Concluída',
+          history: [{ timestamp: timestampStr, actorName: moveActor, action: 'O.S. concluída', detail: 'Retorno de manutenção registrado pelo fluxo de manutenções.' }],
+          completedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          updatedBy: moveActor
         });
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, 'movements');
@@ -2672,8 +2938,6 @@ export default function App() {
             companyProfile={companyProfile}
             onNavigate={navigateToTab}
             onSeedData={isDemoMode ? seedDemoInitialData : handleSeedRealDatabase}
-            onToggleCollectionStatus={handleToggleCollectionStatus}
-            onBulkCompleteFrente={handleBulkCompleteFrente}
           />
         )}
 
@@ -2712,6 +2976,8 @@ export default function App() {
         {currentTab === 'machines' && (
           <MachinesTab
             machines={machines}
+            movements={movements}
+            fieldDataCollections={fieldDataCollections}
             role={user.role}
             initialTypeFilter={machinePresetFilter?.machineType}
             onAddMachine={handleAddMachine}
@@ -2730,8 +2996,11 @@ export default function App() {
             currentUserId={user.uid}
             currentUserName={user.name}
             onAddMovement={handleAddMovement}
-            onToggleCollectionStatus={handleToggleCollectionStatus}
-            onBulkCompleteFrente={handleBulkCompleteFrente}
+            onUpdateMovement={handleUpdateMovement}
+            onDeleteMovement={handleDeleteMovement}
+            onCompleteCollection={handleCompleteFieldDataCollection}
+            onEnsureWeekRecords={handleEnsureFieldDataWeek}
+            onTransitionOSStatus={handleTransitionOSStatus}
             initialSubTab={movementsSubTab}
             initialKanbanStatus={kanbanPresetFilter?.kanbanStatus}
           />

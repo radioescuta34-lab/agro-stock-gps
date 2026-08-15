@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, AlertTriangle, XCircle, Info, X, AlertOctagon } from 'lucide-react';
 
@@ -39,7 +39,6 @@ interface ModalState {
   cancelLabel?: string;
   onCancel?: () => void;
   danger?: boolean;
-  resolve?: (value: boolean) => void;
 }
 
 interface NotificationContextValue {
@@ -113,9 +112,45 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     window.setTimeout(() => dismissToast(id), TOAST_DURATION);
   }, [dismissToast]);
 
-  const closeModal = useCallback(() => {
+  const cancelModal = useCallback(() => {
+    modal?.onCancel?.();
     setModal(null);
-  }, []);
+  }, [modal]);
+
+  const acceptModal = useCallback(() => {
+    modal?.onOk?.();
+    setModal(null);
+  }, [modal]);
+
+  useEffect(() => {
+    if (!modal) return;
+
+    const scrollY = window.scrollY;
+    const previousStyles = {
+      position: document.body.style.position,
+      top: document.body.style.top,
+      width: document.body.style.width,
+      overflow: document.body.style.overflow
+    };
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.width = '100%';
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') cancelModal();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.position = previousStyles.position;
+      document.body.style.top = previousStyles.top;
+      document.body.style.width = previousStyles.width;
+      document.body.style.overflow = previousStyles.overflow;
+      window.scrollTo(0, scrollY);
+    };
+  }, [modal, cancelModal]);
 
   const showDialog = useCallback((options: DialogOptions) => {
     setModal({ kind: 'dialog', ...options });
@@ -173,49 +208,49 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
       {/* Modal Dialog / Confirm */}
       {modal && createPortal(
-        <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" role="dialog" aria-modal="true">
-          <div className="bg-white rounded-3xl border border-slate-100 shadow-2xl max-w-md w-full overflow-hidden animate-slide-up">
-            <div className={`p-6 border-b border-slate-100 flex items-start gap-4 ${modal.kind === 'confirm' && modal.danger ? 'bg-rose-50/50' : 'bg-slate-50/50'}`}>
-              <div className={`h-10 w-10 rounded-full flex items-center justify-center shrink-0 ${DIALOG_ICONS[modal.icon || (modal.danger ? 'error' : 'info')].box}`}>
+        <div className="fixed inset-0 z-[110] flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="notification-modal-title" aria-describedby={modal.message ? 'notification-modal-message' : undefined}>
+          <button
+            type="button"
+            aria-label="Cancelar e fechar"
+            className="absolute inset-0 cursor-default bg-slate-950/60 backdrop-blur-[2px] animate-fade-in"
+            onClick={cancelModal}
+          />
+          <div className="relative flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-slate-100 bg-white shadow-2xl animate-slide-up sm:max-w-md sm:rounded-3xl">
+            <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-slate-200 sm:hidden" aria-hidden="true" />
+            <div className={`flex items-start gap-3 border-b border-slate-100 px-5 py-4 sm:gap-4 sm:p-6 ${modal.kind === 'confirm' && modal.danger ? 'bg-rose-50/50' : 'bg-slate-50/50'}`}>
+              <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${DIALOG_ICONS[modal.icon || (modal.danger ? 'error' : 'info')].box}`}>
                 {DIALOG_ICONS[modal.icon || (modal.danger ? 'error' : 'info')].icon}
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className="text-base font-bold text-slate-900 leading-snug">{modal.title}</h3>
+                <h3 id="notification-modal-title" className="text-base font-bold leading-snug text-slate-900">{modal.title}</h3>
                 {modal.message && (
-                  <div className="text-xs text-slate-500 mt-1.5 leading-relaxed break-words whitespace-pre-line">{modal.message}</div>
+                  <div id="notification-modal-message" className="mt-1.5 break-words whitespace-pre-line text-[13px] leading-relaxed text-slate-500 sm:text-xs">{modal.message}</div>
                 )}
               </div>
               <button
-                onClick={closeModal}
-                className="text-slate-400 hover:text-slate-600 transition-colors shrink-0"
+                onClick={cancelModal}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-white/70 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
                 aria-label="Fechar"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="bg-slate-50 px-6 py-4 flex justify-end gap-3 flex-wrap">
+            <div className="ios-safe-action-bar grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 bg-white px-4 pt-3 sm:flex sm:justify-end sm:gap-3 sm:px-6 sm:py-4">
               {modal.cancelLabel && (
                 <button
                   type="button"
-                  onClick={() => {
-                    if (modal.kind === 'confirm') modal.resolve?.(false);
-                    modal.onCancel?.();
-                    closeModal();
-                  }}
-                  className="px-4 py-2 hover:bg-slate-100 border border-slate-200 text-slate-600 font-bold text-xs rounded-xl transition-all"
+                  autoFocus={modal.kind === 'confirm' && modal.danger}
+                  onClick={cancelModal}
+                  className="min-h-11 rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 sm:min-w-28"
                 >
                   {modal.cancelLabel}
                 </button>
               )}
               <button
                 type="button"
-                onClick={() => {
-                  if (modal.kind === 'confirm') modal.resolve?.(true);
-                  modal.onOk?.();
-                  closeModal();
-                }}
-                className={`px-5 py-2 text-white font-bold text-xs rounded-xl transition-all shadow-sm ${modal.kind === 'confirm' && modal.danger ? 'bg-rose-600 hover:bg-rose-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}
+                onClick={acceptModal}
+                className={`min-h-11 rounded-xl px-5 py-2 text-xs font-bold text-white shadow-sm transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 sm:min-w-28 ${!modal.cancelLabel ? 'col-span-2' : ''} ${modal.kind === 'confirm' && modal.danger ? 'bg-rose-600 hover:bg-rose-700 focus-visible:ring-rose-500' : 'bg-emerald-600 hover:bg-emerald-700 focus-visible:ring-emerald-500'}`}
               >
                 {modal.okLabel || (modal.kind === 'confirm' ? 'Confirmar' : 'Ok')}
               </button>

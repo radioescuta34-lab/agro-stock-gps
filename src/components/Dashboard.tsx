@@ -38,8 +38,6 @@ interface DashboardProps {
   companyProfile: CompanyProfile;
   onNavigate: (tab: string, subtab?: string, preset?: DashboardNavPreset) => void;
   onSeedData?: () => void;
-  onToggleCollectionStatus?: (machine: Machine, targetWeekId: string, currentStatus: 'Pendente' | 'Concluído') => Promise<void>;
-  onBulkCompleteFrente?: (frenteMachines: Machine[], targetWeekId: string) => Promise<void>;
 }
 
 export default function Dashboard({ 

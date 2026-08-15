@@ -118,23 +118,53 @@ service cloud.firestore {
       allow delete: if (isAdmin() || isTechnician());
     }
 
-    // Validate Movement
+    // Validate Movement (Order of Service)
     function isValidMovement(move) {
       return move.id is string && move.id.size() <= 128
         && move.componentId is string && move.componentId.size() <= 128
         && move.componentSerial is string && move.componentSerial.size() <= 128
         && move.componentName is string && move.componentName.size() <= 128
+        && (!('machineId' in move) || (move.machineId is string && move.machineId.size() <= 128))
         && move.machinePrefix is string && move.machinePrefix.size() <= 128
         && (move.action == 'Instalação' || move.action == 'Remoção' || move.action == 'Manutenção' || move.action == 'Calibração')
         && move.technicianId is string && move.technicianId.size() <= 128
-        && move.technicianName is string && move.technicianName.size() <= 128;
+        && move.technicianName is string && move.technicianName.size() <= 128
+        && (!('osNumber' in move) || move.osNumber is number)
+        && (!('status' in move) || (move.status == 'Aberta' || move.status == 'Agendada' || move.status == 'Em Atendimento' || move.status == 'Concluída' || move.status == 'Cancelada'))
+        && (!('history' in move) || move.history is list)
+        && (!('completedAt' in move) || move.completedAt is string || move.completedAt is timestamp)
+        && (!('cancelledAt' in move) || move.cancelledAt is string || move.cancelledAt is timestamp)
+        && (!('updatedAt' in move) || move.updatedAt == request.time)
+        && (!('updatedBy' in move) || (move.updatedBy is string && move.updatedBy.size() <= 128));
+    }
+
+    function isValidStatusTransition(previousStatus, nextStatus) {
+      return (previousStatus == 'Aberta' && (nextStatus == 'Agendada' || nextStatus == 'Em Atendimento' || nextStatus == 'Cancelada'))
+        || (previousStatus == 'Agendada' && (nextStatus == 'Aberta' || nextStatus == 'Em Atendimento' || nextStatus == 'Cancelada'))
+        || (previousStatus == 'Em Atendimento' && (nextStatus == 'Agendada' || nextStatus == 'Concluída' || nextStatus == 'Cancelada'));
+    }
+
+    // Allows audited lifecycle transitions and corrections before execution begins.
+    function isValidMovementUpdate() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let validHistoryAppend = request.resource.data.history is list
+        && (!('history' in resource.data) || request.resource.data.history.size() == resource.data.history.size() + 1);
+      let lifecycleUpdate = changed.hasOnly(['status', 'history', 'completedAt', 'cancelledAt', 'updatedAt', 'updatedBy'])
+        && isValidStatusTransition(('status' in resource.data) ? resource.data.status : 'Aberta', request.resource.data.status);
+      let editableUpdate = (!('status' in resource.data) || resource.data.status == 'Aberta' || resource.data.status == 'Agendada')
+        && request.resource.data.status == (('status' in resource.data) ? resource.data.status : 'Aberta')
+        && changed.hasOnly(['componentId', 'componentSerial', 'componentName', 'machineId', 'machinePrefix', 'action', 'date', 'notes', 'status', 'history', 'updatedAt', 'updatedBy']);
+      return isValidMovement(request.resource.data)
+        && validHistoryAppend
+        && (lifecycleUpdate || editableUpdate);
     }
 
     match /movements/{movementId} {
       allow get, list: if isSignedIn();
       allow create: if isSignedIn() && isValidId(movementId) && isValidMovement(request.resource.data) && request.resource.data.createdAt == request.time;
-      // No updates or deletions allowed to secure audit trail
-      allow update, delete: if false;
+      allow update: if (isAdmin() || isTechnician()) && isValidMovementUpdate();
+      // Only orders that have not started may be physically deleted. Executed orders remain auditable.
+      allow delete: if isAdmin() && (!('status' in resource.data) || resource.data.status == 'Aberta' || resource.data.status == 'Agendada');
     }
 
     // Validate FieldDataCollection (weekly field data collection kanban)
@@ -142,10 +172,14 @@ service cloud.firestore {
       return fdc.id is string && fdc.id.size() <= 128
         && fdc.machineId is string && fdc.machineId.size() <= 128
         && fdc.machinePrefix is string && fdc.machinePrefix.size() <= 128
+        && (!('machineBrand' in fdc) || (fdc.machineBrand is string && fdc.machineBrand.size() <= 128))
+        && (!('machineModel' in fdc) || (fdc.machineModel is string && fdc.machineModel.size() <= 128))
+        && (!('machineType' in fdc) || (fdc.machineType is string && fdc.machineType.size() <= 64))
         && fdc.weekId is string && fdc.weekId.matches('^[0-9]{4}-W[0-9]{2}$')
         && (fdc.status == 'Pendente' || fdc.status == 'Concluído')
         && (!('collectedAt' in fdc) || fdc.collectedAt is string)
         && (!('collectedBy' in fdc) || (fdc.collectedBy is string && fdc.collectedBy.size() <= 128))
+        && (!('history' in fdc) || fdc.history is list)
         && (!('frente' in fdc) || (fdc.frente is string && fdc.frente.size() <= 128));
     }
 

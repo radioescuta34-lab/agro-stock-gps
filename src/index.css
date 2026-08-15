@@ -40,3 +40,14 @@
 .animate-slide-in-down {
   animation: slide-in-down 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
+
+/* Keeps bottom-sheet actions clear of the iOS home gesture area. */
+.ios-safe-action-bar {
+  padding-bottom: max(2rem, calc(0.75rem + env(safe-area-inset-bottom, 0px)));
+}
+
+@media (min-width: 640px) {
+  .ios-safe-action-bar {
+    padding-bottom: 0.75rem;
+  }
+}
