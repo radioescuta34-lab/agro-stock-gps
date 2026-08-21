@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 import {
   buildLicenseAlertEmail,
   buildLoansAlertEmail,
@@ -48,8 +48,9 @@ const TRELLO_API_BASE = "https://api.trello.com/1";
 const SUPPORT_ALLOWED_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"];
 const SUPPORT_MAX_ATTACHMENTS = 4;
 const SUPPORT_MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024;
+const HAS_FIRESTORE_CREDS = !!process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
 
-function generateTicketId(): string {
+function generateFallbackTicketId(): string {
   const year = new Date().getFullYear();
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let suffix = "";
@@ -57,6 +58,184 @@ function generateTicketId(): string {
     suffix += chars[Math.floor(Math.random() * chars.length)];
   }
   return `SUP-${year}-${suffix}`;
+}
+
+// Allocates a readable sequential ticket id (e.g. SUP-2026-0001) via a Firestore
+// transaction so concurrent creations never receive the same number. The counter
+// resets automatically when the year changes.
+async function allocateSequentialTicketId(): Promise<string> {
+  if (!HAS_FIRESTORE_CREDS) return generateFallbackTicketId();
+  const db = getFirestore();
+  const counterRef = db.collection("counters").doc("support_ticket");
+  const year = new Date().getFullYear();
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(counterRef);
+    let next = 1;
+    if (snap.exists) {
+      const data = snap.data() as any;
+      if (data?.year === year && typeof data.next === "number" && data.next >= 1) {
+        next = data.next;
+      }
+    }
+    tx.set(counterRef, { next: next + 1, year, updatedAt: FieldValue.serverTimestamp() });
+    return `SUP-${year}-${String(next).padStart(4, "0")}`;
+  });
+}
+
+// Maps a Trello list name to a user-facing status by keyword. Unknown lists keep
+// the previously stored status.
+const SUPPORT_STATUS_KEYWORDS: Array<[string, string]> = [
+  ["conclu", "Concluído"],
+  ["andamento", "Em Andamento"],
+  ["estudo", "Em Estudo"],
+  ["novo", "Novo"]
+];
+
+function mapTrelloListNameToStatus(name: string): string {
+  const n = (name || "").toLowerCase();
+  for (const [keyword, status] of SUPPORT_STATUS_KEYWORDS) {
+    if (n.includes(keyword)) return status;
+  }
+  return "";
+}
+
+let trelloBoardIdCache: { id: string; fetchedAt: number } | null = null;
+async function resolveTrelloBoardId(apiKey: string, apiToken: string, listId: string): Promise<string> {
+  if (process.env.TRELLO_BOARD_ID) return process.env.TRELLO_BOARD_ID;
+  if (trelloBoardIdCache && Date.now() - trelloBoardIdCache.fetchedAt < 10 * 60 * 1000) {
+    return trelloBoardIdCache.id;
+  }
+  const res = await trelloFetch(`/lists/${listId}?key=${apiKey}&token=${apiToken}&fields=idBoard`);
+  if (!res.ok) return "";
+  const data = await res.json().catch(() => null);
+  const boardId = typeof data?.idBoard === "string" ? data.idBoard : "";
+  if (boardId) trelloBoardIdCache = { id: boardId, fetchedAt: Date.now() };
+  return boardId;
+}
+
+// Cached map of Trello list id -> status label for all lists of the board.
+let trelloListStatusCache: { map: Map<string, string>; fetchedAt: number } | null = null;
+async function getTrelloListStatusMap(apiKey: string, apiToken: string, listId: string): Promise<Map<string, string>> {
+  if (trelloListStatusCache && Date.now() - trelloListStatusCache.fetchedAt < 5 * 60 * 1000) {
+    return trelloListStatusCache.map;
+  }
+  const map = new Map<string, string>();
+  try {
+    const boardId = await resolveTrelloBoardId(apiKey, apiToken, listId);
+    if (!boardId) return map;
+    const res = await trelloFetch(`/boards/${boardId}/lists?key=${apiKey}&token=${apiToken}&fields=id,name`);
+    if (!res.ok) return map;
+    const lists = await res.json();
+    if (Array.isArray(lists)) {
+      for (const list of lists) {
+        const status = mapTrelloListNameToStatus(list?.name || "");
+        if (status && typeof list.id === "string") map.set(list.id, status);
+      }
+    }
+    if (map.size > 0) trelloListStatusCache = { map, fetchedAt: Date.now() };
+  } catch (error: any) {
+    console.error("Erro ao carregar listas do quadro Trello:", error?.message || error);
+  }
+  return map;
+}
+
+const SUPPORT_PRIORITY_LABEL_NAMES: Record<string, string[]> = {
+  baixa: ["baixa", "baixo", "low"],
+  media: ["media", "medium"],
+  alta: ["alta", "high", "urgente"]
+};
+
+const SUPPORT_PRIORITY_LABEL_COLORS: Record<string, string> = {
+  baixa: "green",
+  media: "yellow",
+  alta: "red"
+};
+
+let trelloPriorityLabelCache: { map: Map<string, string>; fetchedAt: number } | null = null;
+
+function normalizeTrelloLabelName(value: string): string {
+  return (value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+async function getTrelloPriorityLabelMap(apiKey: string, apiToken: string, listId: string): Promise<Map<string, string>> {
+  if (trelloPriorityLabelCache && Date.now() - trelloPriorityLabelCache.fetchedAt < 5 * 60 * 1000) {
+    return trelloPriorityLabelCache.map;
+  }
+
+  const map = new Map<string, string>();
+  try {
+    const boardId = await resolveTrelloBoardId(apiKey, apiToken, listId);
+    if (!boardId) return map;
+    const res = await trelloFetch(`/boards/${boardId}/labels?key=${apiKey}&token=${apiToken}&fields=id,name,color&limit=1000`);
+    if (!res.ok) return map;
+    const labels = await res.json();
+    if (!Array.isArray(labels)) return map;
+
+    for (const priority of ["baixa", "media", "alta"]) {
+      const names = SUPPORT_PRIORITY_LABEL_NAMES[priority];
+      const byName = labels.find((label: any) => names.includes(normalizeTrelloLabelName(label?.name || "")));
+      const byColor = labels.find((label: any) => label?.color === SUPPORT_PRIORITY_LABEL_COLORS[priority]);
+      const match = byName || byColor;
+      if (typeof match?.id === "string") map.set(priority, match.id);
+    }
+
+    trelloPriorityLabelCache = { map, fetchedAt: Date.now() };
+  } catch (error: any) {
+    console.error("Erro ao carregar etiquetas de prioridade do Trello:", error?.message || error);
+  }
+  return map;
+}
+
+interface SupportRequester {
+  uid: string;
+  email: string;
+  name: string;
+  verified: boolean;
+  invalidToken: boolean;
+}
+
+// Resolves the requester identity for support routes. A valid Firebase ID token
+// (real mode) takes precedence; otherwise falls back to the client-provided uid
+// used by demo mode. An invalid token is rejected instead of falling back.
+async function resolveSupportRequester(req: any): Promise<SupportRequester> {
+  const header = typeof req.headers?.authorization === "string" ? req.headers.authorization : "";
+  if (header.startsWith("Bearer ")) {
+    const token = header.slice(7).trim();
+    try {
+      const decoded = await getAuth().verifyIdToken(token);
+      if (decoded?.uid) {
+        return {
+          uid: decoded.uid,
+          email: typeof decoded.email === "string" ? decoded.email.trim() : "",
+          name: typeof decoded.name === "string" ? decoded.name.trim() : "",
+          verified: true,
+          invalidToken: false
+        };
+      }
+    } catch (error: any) {
+      console.error("Token inválido em rota de suporte:", error?.message || error);
+      return { uid: "", email: "", name: "", verified: false, invalidToken: true };
+    }
+  }
+  const headerUid = typeof req.headers?.["x-client-uid"] === "string" ? (req.headers["x-client-uid"] as string).trim() : "";
+  const headerEmail = typeof req.headers?.["x-client-email"] === "string" ? (req.headers["x-client-email"] as string).trim() : "";
+  const headerName = typeof req.headers?.["x-client-name"] === "string" ? (req.headers["x-client-name"] as string).trim() : "";
+  const bodyUid = typeof req.body?.autorUid === "string" ? req.body.autorUid.trim() : "";
+  const bodyEmail = typeof req.body?.autorEmail === "string" ? req.body.autorEmail.trim() : "";
+  const bodyName = typeof req.body?.autorNome === "string" ? req.body.autorNome.trim() : "";
+  const queryUid = typeof req.query?.uid === "string" ? (req.query.uid as string).trim() : "";
+  const uid = [headerUid, bodyUid, queryUid].find((v) => v && v.length <= 128) || "";
+  return {
+    uid,
+    email: (headerEmail || bodyEmail).slice(0, 254),
+    name: (headerName || bodyName).slice(0, 160),
+    verified: false,
+    invalidToken: false
+  };
 }
 
 async function trelloFetch(path: string, init?: RequestInit): Promise<Response> {
@@ -67,6 +246,194 @@ async function trelloFetch(path: string, init?: RequestInit): Promise<Response> 
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function normalizeSupportIdentity(value: string): string {
+  return (value || "").trim().toLocaleLowerCase("pt-BR");
+}
+
+function parseTrelloCardCreatedAt(cardId: string): string | null {
+  if (!/^[0-9a-f]{8}/i.test(cardId || "")) return null;
+  const seconds = Number.parseInt(cardId.slice(0, 8), 16);
+  if (!Number.isFinite(seconds)) return null;
+  const date = new Date(seconds * 1000);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function parseSupportCardMetadata(description: string): { uid: string; email: string; name: string; prioridade: string } | null {
+  const match = (description || "").match(/<!--\s*AGRO_STOCK_SUPPORT:([A-Za-z0-9_-]+)\s*-->/);
+  if (!match) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(match[1], "base64url").toString("utf8"));
+    return {
+      uid: typeof decoded?.uid === "string" ? decoded.uid : "",
+      email: typeof decoded?.email === "string" ? decoded.email : "",
+      name: typeof decoded?.name === "string" ? decoded.name : "",
+      prioridade: ["baixa", "media", "alta"].includes(decoded?.prioridade) ? decoded.prioridade : "media"
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseLegacySupportAuthor(description: string): { email: string; name: string } {
+  const line = (description || "").match(/(?:\*\*)?Aberto por:(?:\*\*)?\s*([^\r\n]+)/i)?.[1]?.trim() || "";
+  const email = line.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]?.trim() || "";
+  const identityMarkerIndex = [line.indexOf("("), line.indexOf("[")]
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b)[0];
+  const name = typeof identityMarkerIndex === "number" ? line.slice(0, identityMarkerIndex).trim() : line.trim();
+  return { email, name };
+}
+
+function parseLegacySupportPriority(description: string): string {
+  const label = (description || "").match(/(?:\*\*)?Prioridade:(?:\*\*)?[^\r\n]*(Baixa|M[eé]dia|Alta)/i)?.[1]?.toLocaleLowerCase("pt-BR") || "";
+  if (label === "alta") return "alta";
+  if (label === "baixa") return "baixa";
+  return "media";
+}
+
+function supportCardBelongsToRequester(
+  metadata: ReturnType<typeof parseSupportCardMetadata>,
+  legacyAuthor: ReturnType<typeof parseLegacySupportAuthor>,
+  requester: SupportRequester
+): boolean {
+  const requesterUid = normalizeSupportIdentity(requester.uid);
+  const requesterEmail = normalizeSupportIdentity(requester.email);
+  const requesterName = normalizeSupportIdentity(requester.name);
+  const metadataUid = normalizeSupportIdentity(metadata?.uid || "");
+  const metadataEmail = normalizeSupportIdentity(metadata?.email || "");
+  const legacyEmail = normalizeSupportIdentity(legacyAuthor.email);
+  const legacyName = normalizeSupportIdentity(legacyAuthor.name);
+
+  if (requesterUid && metadataUid && requesterUid === metadataUid) return true;
+  if (requesterEmail && metadataEmail && requesterEmail === metadataEmail) return true;
+  if (requesterEmail && legacyEmail && requesterEmail === legacyEmail) return true;
+  return Boolean(requesterName && legacyName && requesterName === legacyName);
+}
+
+type SupportComment = {
+  id: string;
+  text: string;
+  createdAt: string | null;
+  authorName: string;
+  source: "app" | "trello";
+};
+
+const SUPPORT_APP_COMMENT_HEADER = "Resposta do cliente via Agro Stock GPS";
+
+function parseSupportComment(action: any): SupportComment | null {
+  const rawText = typeof action?.data?.text === "string" ? action.data.text.trim() : "";
+  if (!rawText || typeof action?.id !== "string") return null;
+
+  const isAppComment = rawText.includes(SUPPORT_APP_COMMENT_HEADER);
+  const appAuthor = isAppComment
+    ? rawText.match(/\*\*Nome:\*\*\s*([^\r\n]+)/i)?.[1]?.trim() || "Cliente"
+    : "";
+  const appBody = isAppComment
+    ? rawText.split(/\r?\n\s*\r?\n/).slice(1).join("\n\n").trim()
+    : rawText;
+  const trelloAuthor = typeof action?.memberCreator?.fullName === "string" && action.memberCreator.fullName.trim()
+    ? action.memberCreator.fullName.trim()
+    : typeof action?.memberCreator?.username === "string" && action.memberCreator.username.trim()
+      ? action.memberCreator.username.trim()
+      : "Equipe de suporte";
+
+  return {
+    id: action.id,
+    text: appBody || rawText,
+    createdAt: typeof action?.date === "string" ? action.date : null,
+    authorName: isAppComment ? appAuthor : trelloAuthor,
+    source: isAppComment ? "app" : "trello"
+  };
+}
+
+async function loadTrelloCommentMap(
+  apiKey: string,
+  apiToken: string,
+  boardId: string
+): Promise<Map<string, SupportComment[]>> {
+  const query = new URLSearchParams({
+    key: apiKey,
+    token: apiToken,
+    filter: "commentCard",
+    limit: "1000",
+    fields: "id,date,data",
+    memberCreator: "true",
+    memberCreator_fields: "fullName,username"
+  });
+  const actionsRes = await trelloFetch(`/boards/${boardId}/actions?${query.toString()}`);
+  if (!actionsRes.ok) {
+    throw new Error(`Não foi possível consultar os comentários no Trello (${actionsRes.status}).`);
+  }
+
+  const actions = await actionsRes.json();
+  const commentsByCard = new Map<string, SupportComment[]>();
+  if (!Array.isArray(actions)) return commentsByCard;
+
+  for (const action of actions) {
+    const cardId = typeof action?.data?.card?.id === "string" ? action.data.card.id : "";
+    const comment = parseSupportComment(action);
+    if (!cardId || !comment) continue;
+    const comments = commentsByCard.get(cardId) || [];
+    comments.push(comment);
+    commentsByCard.set(cardId, comments);
+  }
+  for (const comments of commentsByCard.values()) {
+    comments.sort((a, b) => {
+      const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return aTime - bTime;
+    });
+  }
+  return commentsByCard;
+}
+
+async function loadTrelloTicketsForRequester(
+  apiKey: string,
+  apiToken: string,
+  listId: string,
+  requester: SupportRequester
+): Promise<any[]> {
+  const boardId = await resolveTrelloBoardId(apiKey, apiToken, listId);
+  if (!boardId) throw new Error("Não foi possível identificar o quadro de suporte no Trello.");
+
+  const statusMap = await getTrelloListStatusMap(apiKey, apiToken, listId);
+  const cardsRes = await trelloFetch(`/boards/${boardId}/cards?key=${apiKey}&token=${apiToken}&fields=id,idList,name,desc,dateLastActivity,badges`);
+  if (!cardsRes.ok) throw new Error(`Não foi possível consultar os chamados no Trello (${cardsRes.status}).`);
+  const cards = await cardsRes.json();
+  if (!Array.isArray(cards)) return [];
+
+  let commentsByCard = new Map<string, SupportComment[]>();
+  try {
+    commentsByCard = await loadTrelloCommentMap(apiKey, apiToken, boardId);
+  } catch (error: any) {
+    // Comments are best-effort so a temporary Trello failure does not hide tickets.
+    console.error("Erro ao carregar comentários dos chamados:", error?.message || error);
+  }
+
+  return cards.flatMap((card: any) => {
+    const titleMatch = typeof card?.name === "string" ? card.name.match(/^\[([^\]]+)]\s*(.+)$/) : null;
+    if (!titleMatch || typeof card?.id !== "string") return [];
+    const description = typeof card.desc === "string" ? card.desc : "";
+    const metadata = parseSupportCardMetadata(description);
+    const legacyAuthor = parseLegacySupportAuthor(description);
+    if (!supportCardBelongsToRequester(metadata, legacyAuthor, requester)) return [];
+
+    return [{
+      id: titleMatch[1],
+      titulo: titleMatch[2],
+      descricao: description.replace(/<!--\s*AGRO_STOCK_SUPPORT:[A-Za-z0-9_-]+\s*-->/, "").split(/\r?\n---\r?\n/).slice(1).join("\n---\n").trim(),
+      prioridade: metadata?.prioridade || parseLegacySupportPriority(description),
+      status: statusMap.get(card.idList) || "Novo",
+      autorNome: metadata?.name || legacyAuthor.name,
+      comments: commentsByCard.get(card.id) || [],
+      anexosEnviados: typeof card?.badges?.attachments === "number" ? card.badges.attachments : 0,
+      trelloCardId: card.id,
+      createdAt: parseTrelloCardCreatedAt(card.id),
+      updatedAt: typeof card.dateLastActivity === "string" ? card.dateLastActivity : null
+    }];
+  });
 }
 
 export async function createApp() {
@@ -885,11 +1252,19 @@ ${extractedText}`;
         return res.status(503).json({ error: "O suporte por ticket não está configurado neste servidor. Contate o administrador do sistema." });
       }
 
+      const requester = await resolveSupportRequester(req);
+      if (requester.invalidToken) {
+        return res.status(401).json({ error: "Sessão expirada. Recarregue a página e tente novamente." });
+      }
+
       const titulo = typeof req.body?.titulo === "string" ? req.body.titulo.trim() : "";
       const descricao = typeof req.body?.descricao === "string" ? req.body.descricao.trim() : "";
       const prioridade = ["baixa", "media", "alta"].includes(req.body?.prioridade) ? req.body.prioridade : "media";
-      const autorNome = typeof req.body?.autorNome === "string" && req.body.autorNome.trim() ? req.body.autorNome.trim() : "Desconhecido";
-      const autorEmail = typeof req.body?.autorEmail === "string" ? req.body.autorEmail.trim() : "";
+      const requestedName = typeof req.body?.autorNome === "string" && req.body.autorNome.trim() ? req.body.autorNome.trim() : "Desconhecido";
+      const requestedEmail = typeof req.body?.autorEmail === "string" ? req.body.autorEmail.trim() : "";
+      const autorNome = requester.verified && requester.name ? requester.name : requestedName;
+      const autorEmail = requester.verified && requester.email ? requester.email : requestedEmail;
+      const autorUid = requester.uid;
 
       if (!titulo) return res.status(400).json({ error: "O título do ticket é obrigatório." });
       if (titulo.length > 150) return res.status(400).json({ error: "O título deve ter no máximo 150 caracteres." });
@@ -920,7 +1295,13 @@ ${extractedText}`;
         anexos.push({ filename, mimeType, buffer });
       }
 
-      const ticketId = generateTicketId();
+      let ticketId = "";
+      try {
+        ticketId = await allocateSequentialTicketId();
+      } catch (error: any) {
+        console.error("Erro ao alocar número sequencial do ticket:", error?.message || error);
+        ticketId = generateFallbackTicketId();
+      }
       const dataAbertura = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
       const prioridadeLabel = prioridade === "alta" ? "🔴 Alta" : prioridade === "media" ? "🟡 Média" : "🟢 Baixa";
 
@@ -935,13 +1316,22 @@ ${extractedText}`;
         descricao
       ].join("\n");
 
-      const cardQuery = new URLSearchParams({
+      let priorityLabelId = "";
+      try {
+        priorityLabelId = (await getTrelloPriorityLabelMap(apiKey, apiToken, listId)).get(prioridade) || "";
+      } catch (error: any) {
+        console.error("Erro ao localizar etiqueta de prioridade no Trello:", error?.message || error);
+      }
+
+      const cardParams: Record<string, string> = {
         key: apiKey,
         token: apiToken,
         idList: listId,
         name: `[${ticketId}] ${titulo}`.slice(0, 256),
         desc: cardDesc
-      });
+      };
+      if (priorityLabelId) cardParams.idLabels = priorityLabelId;
+      const cardQuery = new URLSearchParams(cardParams);
 
       let card: any;
       try {
@@ -978,15 +1368,251 @@ ${extractedText}`;
 
       console.log(`Ticket de suporte criado: ${ticketId} -> card Trello ${card.id} (${anexos.length - attachmentsFailed.length}/${anexos.length} anexos)`);
 
+      // Persist the ticket so the author can track it inside the app. The Trello
+      // card remains the source of truth for the status (synced on demand).
+      if (HAS_FIRESTORE_CREDS) {
+        try {
+          const db = getFirestore();
+          await db.collection("supportTickets").doc(ticketId).set({
+            id: ticketId,
+            titulo,
+            descricao,
+            prioridade,
+            autorUid,
+            autorNome,
+            autorEmail,
+            status: "Novo",
+            trelloCardId: card.id,
+            trelloShortUrl: card.shortUrl || card.url || "",
+            anexosEnviados: anexos.length - attachmentsFailed.length,
+            anexosFalhos: attachmentsFailed,
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp()
+          });
+        } catch (error: any) {
+          console.error(`Erro ao persistir ticket ${ticketId} no Firestore:`, error?.message || error);
+        }
+      }
+
       return res.json({
         success: true,
         ticketId,
-        cardUrl: card.shortUrl || card.url || "",
+        priorityLabelApplied: Boolean(priorityLabelId),
         attachmentsFailed
       });
     } catch (error: any) {
       console.error("Erro ao processar ticket de suporte:", error);
       return res.status(500).json({ error: error.message || "Erro interno ao criar o ticket de suporte." });
+    }
+  });
+
+  // Lists the authenticated user's support tickets with statuses synced from Trello.
+  app.get("/api/support/tickets", async (req, res) => {
+    try {
+      const requester = await resolveSupportRequester(req);
+      if (requester.invalidToken) {
+        return res.status(401).json({ error: "Sessão expirada. Recarregue a página e tente novamente." });
+      }
+      if (!requester.uid) {
+        return res.status(401).json({ error: "Autenticação necessária para consultar os chamados." });
+      }
+
+      const apiKey = process.env.TRELLO_API_KEY;
+      const apiToken = process.env.TRELLO_TOKEN;
+      const listId = process.env.TRELLO_LIST_ID;
+
+      if (!HAS_FIRESTORE_CREDS) {
+        if (!apiKey || !apiToken || !listId) {
+          return res.status(503).json({ error: "A consulta de chamados não está configurada neste servidor." });
+        }
+        const tickets = await loadTrelloTicketsForRequester(apiKey, apiToken, listId, requester);
+        tickets.sort((a, b) => {
+          const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return tb - ta;
+        });
+        return res.json({ success: true, tickets });
+      }
+
+      const db = getFirestore();
+      const snap = await db.collection("supportTickets")
+        .where("autorUid", "==", requester.uid)
+        .limit(200)
+        .get();
+
+      const tickets: any[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          titulo: data.titulo || "",
+          descricao: data.descricao || "",
+          prioridade: data.prioridade || "media",
+          status: data.status || "Novo",
+          autorNome: data.autorNome || "",
+          anexosEnviados: typeof data.anexosEnviados === "number" ? data.anexosEnviados : 0,
+          trelloCardId: data.trelloCardId || "",
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : null,
+          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : null
+        };
+      });
+
+      // On-demand status sync: one request lists every open card of the board.
+      if (apiKey && apiToken && listId && tickets.some((t) => t.trelloCardId)) {
+        try {
+          const statusMap = await getTrelloListStatusMap(apiKey, apiToken, listId);
+          if (statusMap.size > 0) {
+            const boardId = await resolveTrelloBoardId(apiKey, apiToken, listId);
+            if (boardId) {
+              const cardsRes = await trelloFetch(`/boards/${boardId}/cards?key=${apiKey}&token=${apiToken}&fields=id,idList`);
+              if (cardsRes.ok) {
+                const cards = await cardsRes.json();
+                const cardToList = new Map<string, string>();
+                if (Array.isArray(cards)) {
+                  for (const c of cards) {
+                    if (typeof c?.id === "string" && typeof c?.idList === "string") {
+                      cardToList.set(c.id, c.idList);
+                    }
+                  }
+                }
+
+                const batch = db.batch();
+                let pendingChanges = 0;
+                for (const ticket of tickets) {
+                  const currentList = cardToList.get(ticket.trelloCardId);
+                  const newStatus = currentList ? statusMap.get(currentList) || "" : "";
+                  if (newStatus && newStatus !== ticket.status) {
+                    ticket.status = newStatus;
+                    batch.update(db.collection("supportTickets").doc(ticket.id), {
+                      status: newStatus,
+                      updatedAt: FieldValue.serverTimestamp()
+                    });
+                    pendingChanges++;
+                  }
+                }
+                if (pendingChanges > 0) {
+                  await batch.commit();
+                  console.log(`Status de ${pendingChanges} ticket(s) sincronizado(s) com o Trello.`);
+                }
+              } else {
+                console.error(`Erro ao listar cards do quadro Trello (${cardsRes.status}).`);
+              }
+            }
+          }
+        } catch (error: any) {
+          // Status sync is best-effort: stored statuses are returned as fallback.
+          console.error("Erro na sincronização de status com o Trello:", error?.message || error);
+        }
+      }
+
+      if (apiKey && apiToken && listId && tickets.some((t) => t.trelloCardId)) {
+        try {
+          const boardId = await resolveTrelloBoardId(apiKey, apiToken, listId);
+          if (boardId) {
+            const commentsByCard = await loadTrelloCommentMap(apiKey, apiToken, boardId);
+            for (const ticket of tickets) {
+              ticket.comments = commentsByCard.get(ticket.trelloCardId) || [];
+            }
+          }
+        } catch (error: any) {
+          // Keep the ticket list available even if Trello comments fail temporarily.
+          console.error("Erro ao sincronizar comentários com o Trello:", error?.message || error);
+        }
+      }
+
+      tickets.sort((a, b) => {
+        const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return tb - ta;
+      });
+
+      return res.json({ success: true, tickets });
+    } catch (error: any) {
+      console.error("Erro ao listar tickets de suporte:", error);
+      return res.status(500).json({ error: error.message || "Erro interno ao consultar os chamados." });
+    }
+  });
+
+  // Adds a customer reply to the same Trello card after confirming ticket ownership.
+  app.post("/api/support/tickets/:ticketId/comments", async (req, res) => {
+    try {
+      const requester = await resolveSupportRequester(req);
+      if (requester.invalidToken) {
+        return res.status(401).json({ error: "Sessão expirada. Recarregue a página e tente novamente." });
+      }
+      if (!requester.uid) {
+        return res.status(401).json({ error: "Autenticação necessária para responder ao chamado." });
+      }
+
+      const apiKey = process.env.TRELLO_API_KEY;
+      const apiToken = process.env.TRELLO_TOKEN;
+      const listId = process.env.TRELLO_LIST_ID;
+      if (!apiKey || !apiToken || !listId) {
+        return res.status(503).json({ error: "A conversa do suporte não está configurada neste servidor." });
+      }
+
+      const ticketId = typeof req.params.ticketId === "string" ? req.params.ticketId.trim() : "";
+      const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+      if (!ticketId) return res.status(400).json({ error: "Chamado não informado." });
+      if (!message) return res.status(400).json({ error: "Digite uma mensagem antes de enviar." });
+      if (message.length > 2000) return res.status(400).json({ error: "A mensagem deve ter no máximo 2000 caracteres." });
+
+      let trelloCardId = "";
+      if (HAS_FIRESTORE_CREDS) {
+        const ticketDoc = await getFirestore().collection("supportTickets").doc(ticketId).get();
+        const ticket = ticketDoc.exists ? ticketDoc.data() as any : null;
+        if (!ticket || ticket.autorUid !== requester.uid) {
+          return res.status(404).json({ error: "Chamado não encontrado." });
+        }
+        trelloCardId = typeof ticket.trelloCardId === "string" ? ticket.trelloCardId : "";
+      } else {
+        const tickets = await loadTrelloTicketsForRequester(apiKey, apiToken, listId, requester);
+        const ticket = tickets.find((item) => item.id === ticketId);
+        trelloCardId = typeof ticket?.trelloCardId === "string" ? ticket.trelloCardId : "";
+      }
+      if (!trelloCardId) {
+        return res.status(404).json({ error: "Chamado não encontrado ou sem vínculo com o atendimento." });
+      }
+
+      const authorName = (requester.name || "Cliente").replace(/[\r\n]+/g, " ").trim().slice(0, 160) || "Cliente";
+      const trelloText = [
+        `💬 **${SUPPORT_APP_COMMENT_HEADER}**`,
+        `**Nome:** ${authorName}`,
+        "",
+        message
+      ].join("\n");
+      const commentQuery = new URLSearchParams({ key: apiKey, token: apiToken, text: trelloText });
+      const commentRes = await trelloFetch(`/cards/${encodeURIComponent(trelloCardId)}/actions/comments?${commentQuery.toString()}`, {
+        method: "POST"
+      });
+      if (!commentRes.ok) {
+        console.error(`Erro ao adicionar comentário ao chamado (${commentRes.status}).`);
+        return res.status(502).json({ error: "Não foi possível enviar sua mensagem agora. Tente novamente em instantes." });
+      }
+      const action = await commentRes.json();
+
+      if (HAS_FIRESTORE_CREDS) {
+        try {
+          await getFirestore().collection("supportTickets").doc(ticketId).update({
+            updatedAt: FieldValue.serverTimestamp()
+          });
+        } catch (error: any) {
+          console.error(`Erro ao atualizar data do ticket ${ticketId}:`, error?.message || error);
+        }
+      }
+
+      return res.json({
+        success: true,
+        comment: {
+          id: typeof action?.id === "string" ? action.id : `app-${Date.now()}`,
+          text: message,
+          createdAt: typeof action?.date === "string" ? action.date : new Date().toISOString(),
+          authorName,
+          source: "app"
+        }
+      });
+    } catch (error: any) {
+      console.error("Erro ao responder chamado de suporte:", error);
+      return res.status(500).json({ error: error.message || "Erro interno ao responder ao chamado." });
     }
   });
 
