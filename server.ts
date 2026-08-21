@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { createWorker } from "tesseract.js";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
@@ -321,6 +322,116 @@ type SupportComment = {
 };
 
 const SUPPORT_APP_COMMENT_HEADER = "Resposta do cliente via Agro Stock GPS";
+const SUPPORT_WAITING_LABELS = {
+  client: { name: "Aguardando cliente", color: "yellow", aliases: ["aguardando cliente", "aguardando usuario"] },
+  support: { name: "Aguardando suporte", color: "sky", aliases: ["aguardando suporte", "aguardando equipe"] }
+} as const;
+
+type SupportWaitingSide = keyof typeof SUPPORT_WAITING_LABELS;
+
+let trelloWaitingLabelCache: { map: Map<SupportWaitingSide, string>; fetchedAt: number } | null = null;
+let trelloWaitingLabelPromise: Promise<Map<SupportWaitingSide, string>> | null = null;
+
+async function getTrelloWaitingLabelMap(
+  apiKey: string,
+  apiToken: string,
+  listId: string
+): Promise<Map<SupportWaitingSide, string>> {
+  if (trelloWaitingLabelCache && Date.now() - trelloWaitingLabelCache.fetchedAt < 5 * 60 * 1000) {
+    return trelloWaitingLabelCache.map;
+  }
+  if (trelloWaitingLabelPromise) return trelloWaitingLabelPromise;
+
+  trelloWaitingLabelPromise = (async () => {
+    const map = new Map<SupportWaitingSide, string>();
+    const boardId = await resolveTrelloBoardId(apiKey, apiToken, listId);
+    if (!boardId) return map;
+
+    const query = new URLSearchParams({ key: apiKey, token: apiToken, fields: "id,name,color", limit: "1000" });
+    const labelsRes = await trelloFetch(`/boards/${encodeURIComponent(boardId)}/labels?${query.toString()}`);
+    if (!labelsRes.ok) throw new Error(`Não foi possível consultar as etiquetas do Trello (${labelsRes.status}).`);
+    const labels = await labelsRes.json();
+    const available = Array.isArray(labels) ? labels : [];
+
+    for (const side of Object.keys(SUPPORT_WAITING_LABELS) as SupportWaitingSide[]) {
+      const definition = SUPPORT_WAITING_LABELS[side];
+      const match = available.find((label: any) =>
+        definition.aliases.some((alias) => normalizeTrelloLabelName(label?.name || "") === alias)
+      );
+      if (typeof match?.id === "string") {
+        map.set(side, match.id);
+        continue;
+      }
+
+      const createQuery = new URLSearchParams({
+        key: apiKey,
+        token: apiToken,
+        idBoard: boardId,
+        name: definition.name,
+        color: definition.color
+      });
+      const createRes = await trelloFetch(`/labels?${createQuery.toString()}`, { method: "POST" });
+      if (!createRes.ok) {
+        console.error(`Não foi possível criar a etiqueta "${definition.name}" no Trello (${createRes.status}).`);
+        continue;
+      }
+      const created = await createRes.json();
+      if (typeof created?.id === "string") map.set(side, created.id);
+    }
+
+    trelloWaitingLabelCache = { map, fetchedAt: Date.now() };
+    return map;
+  })();
+
+  try {
+    return await trelloWaitingLabelPromise;
+  } finally {
+    trelloWaitingLabelPromise = null;
+  }
+}
+
+async function setTrelloWaitingState(
+  apiKey: string,
+  apiToken: string,
+  listId: string,
+  cardId: string,
+  target: SupportWaitingSide | null
+): Promise<void> {
+  const labelMap = await getTrelloWaitingLabelMap(apiKey, apiToken, listId);
+  const cardQuery = new URLSearchParams({ key: apiKey, token: apiToken, fields: "idLabels" });
+  const cardRes = await trelloFetch(`/cards/${encodeURIComponent(cardId)}?${cardQuery.toString()}`);
+  if (!cardRes.ok) throw new Error(`Não foi possível consultar o card do Trello (${cardRes.status}).`);
+  const card = await cardRes.json();
+  const current = new Set<string>(Array.isArray(card?.idLabels) ? card.idLabels : []);
+
+  for (const side of Object.keys(SUPPORT_WAITING_LABELS) as SupportWaitingSide[]) {
+    const labelId = labelMap.get(side);
+    if (!labelId) continue;
+    const shouldExist = target === side;
+    if (shouldExist && !current.has(labelId)) {
+      const addQuery = new URLSearchParams({ key: apiKey, token: apiToken, value: labelId });
+      const addRes = await trelloFetch(`/cards/${encodeURIComponent(cardId)}/idLabels?${addQuery.toString()}`, { method: "POST" });
+      if (!addRes.ok) throw new Error(`Não foi possível aplicar a etiqueta "${SUPPORT_WAITING_LABELS[side].name}" (${addRes.status}).`);
+    } else if (!shouldExist && current.has(labelId)) {
+      const removeQuery = new URLSearchParams({ key: apiKey, token: apiToken });
+      const removeRes = await trelloFetch(
+        `/cards/${encodeURIComponent(cardId)}/idLabels/${encodeURIComponent(labelId)}?${removeQuery.toString()}`,
+        { method: "DELETE" }
+      );
+      if (!removeRes.ok) throw new Error(`Não foi possível remover a etiqueta "${SUPPORT_WAITING_LABELS[side].name}" (${removeRes.status}).`);
+    }
+  }
+}
+
+function isValidTrelloWebhookSignature(rawBody: Buffer, receivedSignature: string): boolean {
+  const secret = process.env.TRELLO_API_SECRET || "";
+  const callbackUrl = process.env.TRELLO_WEBHOOK_CALLBACK_URL || "";
+  if (!secret || !callbackUrl || !receivedSignature) return false;
+  const expected = createHmac("sha1", secret).update(Buffer.concat([rawBody, Buffer.from(callbackUrl)])).digest("base64");
+  const expectedBuffer = Buffer.from(expected);
+  const receivedBuffer = Buffer.from(receivedSignature);
+  return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer);
+}
 
 function parseSupportComment(action: any): SupportComment | null {
   const rawText = typeof action?.data?.text === "string" ? action.data.text.trim() : "";
@@ -460,8 +571,62 @@ export async function createApp() {
   }
 
   // Crucial: Increase body size limit for base64 image uploads
-  app.use(express.json({ limit: "15mb" }));
+  app.use(express.json({
+    limit: "15mb",
+    verify: (req: any, _res, buffer) => {
+      req.rawBody = Buffer.from(buffer);
+    }
+  }));
   app.use(express.urlencoded({ limit: "15mb", extended: true }));
+
+  // Trello validates the callback with HEAD before creating a webhook.
+  app.head("/api/support/trello/webhook", (_req, res) => res.sendStatus(200));
+
+  // Receives Trello events even when no user has the Agro Stock app open.
+  app.post("/api/support/trello/webhook", async (req: any, res) => {
+    const apiKey = process.env.TRELLO_API_KEY;
+    const apiToken = process.env.TRELLO_TOKEN;
+    const listId = process.env.TRELLO_LIST_ID;
+    const signature = typeof req.headers?.["x-trello-webhook"] === "string" ? req.headers["x-trello-webhook"] : "";
+    const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.alloc(0);
+
+    if (!apiKey || !apiToken || !listId || !process.env.TRELLO_API_SECRET || !process.env.TRELLO_WEBHOOK_CALLBACK_URL) {
+      return res.status(503).json({ error: "Webhook do Trello não configurado." });
+    }
+    if (!isValidTrelloWebhookSignature(rawBody, signature)) {
+      return res.status(401).json({ error: "Assinatura do webhook inválida." });
+    }
+
+    // Acknowledge only after processing so failed executions are visible in Trello's webhook diagnostics.
+    try {
+      const action = req.body?.action;
+      const actionType = typeof action?.type === "string" ? action.type : "";
+      const cardId = typeof action?.data?.card?.id === "string" ? action.data.card.id : "";
+      if (!cardId) return res.sendStatus(200);
+
+      if (actionType === "commentCard") {
+        const text = typeof action?.data?.text === "string" ? action.data.text : "";
+        await setTrelloWaitingState(apiKey, apiToken, listId, cardId, text.includes(SUPPORT_APP_COMMENT_HEADER) ? "support" : "client");
+      } else if (actionType === "updateCard" && typeof action?.data?.listAfter?.id === "string") {
+        const statusMap = await getTrelloListStatusMap(apiKey, apiToken, listId);
+        const status = statusMap.get(action.data.listAfter.id) || "";
+        if (status === "Concluído") await setTrelloWaitingState(apiKey, apiToken, listId, cardId, null);
+
+        if (HAS_FIRESTORE_CREDS && status) {
+          const db = getFirestore();
+          const snapshot = await db.collection("supportTickets").where("trelloCardId", "==", cardId).limit(1).get();
+          if (!snapshot.empty) {
+            await snapshot.docs[0].ref.update({ status, updatedAt: FieldValue.serverTimestamp() });
+          }
+        }
+      }
+
+      return res.sendStatus(200);
+    } catch (error: any) {
+      console.error("Erro ao processar webhook do Trello:", error?.message || error);
+      return res.status(500).json({ error: "Falha ao processar evento do Trello." });
+    }
+  });
 
   function getDefaultModel(provider: string): string {
     switch (provider) {
@@ -1317,10 +1482,16 @@ ${extractedText}`;
       ].join("\n");
 
       let priorityLabelId = "";
+      let waitingSupportLabelId = "";
       try {
         priorityLabelId = (await getTrelloPriorityLabelMap(apiKey, apiToken, listId)).get(prioridade) || "";
       } catch (error: any) {
         console.error("Erro ao localizar etiqueta de prioridade no Trello:", error?.message || error);
+      }
+      try {
+        waitingSupportLabelId = (await getTrelloWaitingLabelMap(apiKey, apiToken, listId)).get("support") || "";
+      } catch (error: any) {
+        console.error("Erro ao localizar etiqueta de espera no Trello:", error?.message || error);
       }
 
       const cardParams: Record<string, string> = {
@@ -1330,7 +1501,8 @@ ${extractedText}`;
         name: `[${ticketId}] ${titulo}`.slice(0, 256),
         desc: cardDesc
       };
-      if (priorityLabelId) cardParams.idLabels = priorityLabelId;
+      const initialLabelIds = [priorityLabelId, waitingSupportLabelId].filter(Boolean);
+      if (initialLabelIds.length > 0) cardParams.idLabels = initialLabelIds.join(",");
       const cardQuery = new URLSearchParams(cardParams);
 
       let card: any;
@@ -1552,6 +1724,7 @@ ${extractedText}`;
 
       const ticketId = typeof req.params.ticketId === "string" ? req.params.ticketId.trim() : "";
       const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+      const requestedAuthorName = typeof req.body?.authorName === "string" ? req.body.authorName.trim() : "";
       if (!ticketId) return res.status(400).json({ error: "Chamado não informado." });
       if (!message) return res.status(400).json({ error: "Digite uma mensagem antes de enviar." });
       if (message.length > 2000) return res.status(400).json({ error: "A mensagem deve ter no máximo 2000 caracteres." });
@@ -1573,7 +1746,7 @@ ${extractedText}`;
         return res.status(404).json({ error: "Chamado não encontrado ou sem vínculo com o atendimento." });
       }
 
-      const authorName = (requester.name || "Cliente").replace(/[\r\n]+/g, " ").trim().slice(0, 160) || "Cliente";
+      const authorName = (requester.name || requestedAuthorName || "Cliente").replace(/[\r\n]+/g, " ").trim().slice(0, 160) || "Cliente";
       const trelloText = [
         `💬 **${SUPPORT_APP_COMMENT_HEADER}**`,
         `**Nome:** ${authorName}`,
@@ -1589,6 +1762,13 @@ ${extractedText}`;
         return res.status(502).json({ error: "Não foi possível enviar sua mensagem agora. Tente novamente em instantes." });
       }
       const action = await commentRes.json();
+
+      try {
+        await setTrelloWaitingState(apiKey, apiToken, listId, trelloCardId, "support");
+      } catch (error: any) {
+        // The reply is already safely posted; label synchronization is best-effort.
+        console.error(`Erro ao marcar o ticket ${ticketId} como aguardando suporte:`, error?.message || error);
+      }
 
       if (HAS_FIRESTORE_CREDS) {
         try {

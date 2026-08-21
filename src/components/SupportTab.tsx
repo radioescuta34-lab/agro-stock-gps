@@ -106,6 +106,28 @@ function formatTicketDate(iso: string | null): string {
   }
 }
 
+function formatRelativeDate(iso: string | null): string {
+  if (!iso) return '';
+  const timestamp = new Date(iso).getTime();
+  if (!Number.isFinite(timestamp)) return '';
+  const elapsed = Date.now() - timestamp;
+  if (elapsed < 60_000) return 'agora';
+  if (elapsed < 3_600_000) return `há ${Math.max(1, Math.floor(elapsed / 60_000))} min`;
+  if (elapsed < 86_400_000) return `há ${Math.max(1, Math.floor(elapsed / 3_600_000))} h`;
+  if (elapsed < 172_800_000) return 'ontem';
+  return formatTicketDate(iso);
+}
+
+function clampPreview(text: string, maxLength = 150): string {
+  const normalized = (text || '').replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength).trimEnd()}…`;
+}
+
+function normalizeSupportDisplayName(value: string): string {
+  return (value || '').trim().toLocaleLowerCase('pt-BR');
+}
+
 function statusBadgeClasses(status: string): string {
   return STATUS_META[status]?.badge || 'bg-slate-100 text-slate-600 border-slate-200';
 }
@@ -181,10 +203,13 @@ function MeusChamados({ user }: { user: UserProfile }) {
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [replyingTicket, setReplyingTicket] = useState<string | null>(null);
   const [replyErrors, setReplyErrors] = useState<Record<string, string>>({});
+  const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
 
-  const loadTickets = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const loadTickets = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const headers = await buildHeaders(user);
       const res = await fetch('/api/support/tickets', { headers });
@@ -193,16 +218,26 @@ function MeusChamados({ user }: { user: UserProfile }) {
         throw new Error(data?.error || 'Erro ao carregar seus chamados.');
       }
       setTickets(Array.isArray(data.tickets) ? data.tickets : []);
+      setLastLoadedAt(new Date().toISOString());
     } catch (err: any) {
-      setError(err?.message || 'Erro ao carregar seus chamados.');
-      setTickets([]);
+      if (!silent) {
+        setError(err?.message || 'Erro ao carregar seus chamados.');
+        setTickets([]);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [user.uid, user.email, user.name]);
 
   useEffect(() => {
-    loadTickets();
+    loadTickets(false);
+  }, [loadTickets]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') loadTickets(true);
+    }, 60_000);
+    return () => window.clearInterval(interval);
   }, [loadTickets]);
 
   const visibleTickets = (tickets || []).filter((ticket) => {
@@ -229,7 +264,7 @@ function MeusChamados({ user }: { user: UserProfile }) {
       const res = await fetch(`/api/support/tickets/${encodeURIComponent(ticketId)}/comments`, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message })
+        body: JSON.stringify({ message, authorName: user.name })
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.success || !data?.comment) {
@@ -256,8 +291,14 @@ function MeusChamados({ user }: { user: UserProfile }) {
   const renderTicket = (t: TrackedTicket) => {
     const prio = PRIORIDADES.find((p) => p.value === t.prioridade);
     const status = STATUS_META[t.status];
+    const currentStep = status?.step || 1;
     const isExpanded = expandedTicket === t.id;
     const messageCount = (t.comments?.length || 0) + (t.descricao ? 1 : 0);
+    const lastComment = t.comments?.[t.comments.length - 1];
+    const latestText = lastComment?.text || t.descricao || '';
+    const latestActivityAt = lastComment?.createdAt || t.updatedAt || t.createdAt;
+    const waitingForCustomer = t.status !== 'Concluído' && lastComment?.source === 'trello';
+    const responsibilityLabel = waitingForCustomer ? 'Aguardando você' : 'Aguardando suporte';
     return (
       <article key={t.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-[border-color,box-shadow] hover:border-slate-300 hover:shadow-md">
         <button
@@ -267,15 +308,20 @@ function MeusChamados({ user }: { user: UserProfile }) {
           aria-expanded={isExpanded}
           aria-controls={`ticket-${t.id}`}
         >
-          <div className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ring-4 sm:mt-0 ${status?.dot || 'bg-slate-400'} ${status?.ring || 'ring-slate-400/10'}`} />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-              <span className="truncate text-sm font-bold text-slate-900">{t.titulo}</span>
+              <span className="min-w-0 truncate text-sm font-extrabold text-slate-900 sm:text-[15px]">{t.titulo}</span>
               <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${statusBadgeClasses(t.status)}`}>
                 {status?.label || t.status}
               </span>
+              {t.status !== 'Concluído' && (
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${waitingForCustomer ? 'bg-amber-50 text-amber-700' : 'bg-sky-50 text-sky-700'}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${waitingForCustomer ? 'bg-amber-500' : 'bg-sky-500'}`} />
+                  {responsibilityLabel}
+                </span>
+              )}
             </div>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
               <span className="font-mono font-semibold text-slate-600 notranslate">{t.id}</span>
               <span aria-hidden="true" className="text-slate-300">•</span>
               <span>{formatTicketDate(t.createdAt)}</span>
@@ -286,23 +332,53 @@ function MeusChamados({ user }: { user: UserProfile }) {
                 </>
               )}
             </div>
+            {!isExpanded && latestText && (
+              <div className="mt-2 flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <p className="truncate text-xs leading-relaxed text-slate-600">{clampPreview(latestText)}</p>
+                <div className="flex shrink-0 items-center gap-2 text-[11px] text-slate-400">
+                  <span>{t.comments?.length || 0} {(t.comments?.length || 0) === 1 ? 'resposta' : 'respostas'}</span>
+                  <span aria-hidden="true">•</span>
+                  <span>Atualizado {formatRelativeDate(latestActivityAt)}</span>
+                </div>
+              </div>
+            )}
           </div>
           <ChevronDown className={`mt-1 h-4 w-4 shrink-0 text-slate-400 transition-transform sm:mt-0 ${isExpanded ? 'rotate-180' : ''}`} />
         </button>
 
         {isExpanded && (
           <div id={`ticket-${t.id}`} className="border-t border-slate-100 bg-slate-50/70 px-4 py-4 sm:px-5">
-            <div className="grid grid-cols-4 gap-1" aria-label={`Andamento: ${status?.label || t.status}`}>
+            <div className="relative px-1 pb-1" aria-label={`Andamento: ${status?.label || t.status}`}>
+              <div className="absolute left-[12.5%] right-[12.5%] top-3.5 h-0.5 overflow-hidden rounded-full bg-slate-200" aria-hidden="true">
+                <span
+                  className="block h-full rounded-full bg-emerald-500 transition-[width] duration-300"
+                  style={{ width: `${((currentStep - 1) / Math.max(TICKET_STEPS.length - 1, 1)) * 100}%` }}
+                />
+              </div>
+              <div className="relative grid grid-cols-4 gap-1">
               {TICKET_STEPS.map((step, index) => {
-                const completed = index < (status?.step || 1);
-                const current = index === (status?.step || 1) - 1;
+                const current = index === currentStep - 1;
+                const completed = index < currentStep - 1 || (t.status === 'Concluído' && current);
                 return (
-                  <div key={step} className="min-w-0">
-                    <div className={`mb-2 h-1 rounded-full ${completed ? 'bg-emerald-500' : 'bg-slate-200'}`} />
-                    <p className={`text-[9px] font-semibold leading-tight sm:text-[10px] ${current ? 'text-emerald-700' : completed ? 'text-slate-600' : 'text-slate-400'}`}>{step}</p>
+                  <div
+                    key={step}
+                    className="flex min-w-0 flex-col items-center text-center"
+                    aria-current={current ? 'step' : undefined}
+                  >
+                    <div className={`relative z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 transition-colors ${completed ? 'border-emerald-500 bg-emerald-500 text-white' : current ? 'border-emerald-500 bg-white text-emerald-600 ring-4 ring-emerald-500/10' : 'border-slate-200 bg-slate-50 text-slate-400'}`}>
+                      {completed ? (
+                        <Check className="h-3.5 w-3.5 stroke-[3]" />
+                      ) : current ? (
+                        <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                      ) : (
+                        <span className="text-[9px] font-extrabold">{index + 1}</span>
+                      )}
+                    </div>
+                    <p className={`mt-2 text-[9px] font-bold leading-tight sm:text-[10px] ${current ? 'text-emerald-700' : completed ? 'text-slate-600' : 'text-slate-400'}`}>{step}</p>
                   </div>
                 );
               })}
+              </div>
             </div>
 
             <section className="mt-5 border-t border-slate-200 pt-4" aria-label="Conversa do chamado">
@@ -311,34 +387,43 @@ function MeusChamados({ user }: { user: UserProfile }) {
                   <MessageSquareText className="h-4 w-4 text-emerald-600" />
                   <h3 className="text-xs font-extrabold text-slate-800">Conversa</h3>
                 </div>
-                <span className="text-[10px] text-slate-400">{messageCount} {messageCount === 1 ? 'mensagem' : 'mensagens'}</span>
+                <div className="text-right text-[11px] text-slate-400">
+                  <span>{messageCount} {messageCount === 1 ? 'mensagem' : 'mensagens'}</span>
+                  {latestActivityAt && <span className="ml-1.5">· Atualizado {formatRelativeDate(latestActivityAt)}</span>}
+                </div>
               </div>
 
               <div className="space-y-3">
                 {t.descricao && (
-                  <div className="ml-auto max-w-[92%] rounded-2xl rounded-tr-md border border-emerald-100 bg-emerald-50/80 px-3.5 py-3 sm:max-w-[78%]">
-                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px]">
-                      <span className="font-extrabold text-emerald-800">{t.autorNome || 'Você'}</span>
-                      <span className="text-emerald-600">via Agro Stock</span>
-                      <span aria-hidden="true" className="text-emerald-300">•</span>
-                      <span className="text-emerald-600">{formatTicketDate(t.createdAt)}</span>
+                  <div className="w-full rounded-2xl border border-emerald-100 border-l-4 border-l-emerald-500 bg-white px-4 py-4 shadow-sm">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                      <span className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-emerald-700">Solicitação original</span>
+                      <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-500">
+                        <span className="font-bold text-slate-700">{t.autorNome || 'Você'}</span>
+                        <span>via Agro Stock</span>
+                        <span aria-hidden="true" className="text-slate-300">•</span>
+                        <span>{formatTicketDate(t.createdAt)}</span>
+                      </div>
                     </div>
-                    <p className="mt-1.5 whitespace-pre-line break-words text-xs leading-relaxed text-slate-700">{t.descricao}</p>
-                    <span className="mt-2 inline-flex rounded-full bg-white/80 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700">Abertura do chamado</span>
+                    <p className="mt-3 whitespace-pre-line break-words text-sm leading-relaxed text-slate-700">{t.descricao}</p>
                   </div>
                 )}
 
                 {(t.comments || []).map((comment) => {
                   const fromApp = comment.source === 'app';
+                  const isGenericCustomerName = normalizeSupportDisplayName(comment.authorName) === 'cliente';
+                  const displayAuthorName = fromApp && isGenericCustomerName
+                    ? (t.autorNome || user.name || 'Cliente')
+                    : (comment.authorName || (fromApp ? t.autorNome || user.name || 'Cliente' : 'Equipe de suporte'));
                   return (
-                    <div key={comment.id} className={`${fromApp ? 'ml-auto rounded-tr-md border-emerald-100 bg-emerald-50/80 sm:max-w-[78%]' : 'mr-auto rounded-tl-md border-slate-200 bg-white sm:max-w-[78%]'} max-w-[92%] rounded-2xl border px-3.5 py-3 shadow-sm`}>
-                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px]">
-                        <span className={`font-extrabold ${fromApp ? 'text-emerald-800' : 'text-slate-700'}`}>{comment.authorName || (fromApp ? 'Cliente' : 'Equipe de suporte')}</span>
+                    <div key={comment.id} className={`${fromApp ? 'ml-auto rounded-tr-md border-emerald-100 bg-emerald-50/80 sm:max-w-[78%]' : 'mr-auto rounded-tl-md border-slate-200 bg-white sm:max-w-[78%]'} max-w-[92%] rounded-2xl border px-4 py-3.5 shadow-sm`}>
+                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
+                        <span className={`font-extrabold ${fromApp ? 'text-emerald-800' : 'text-slate-700'}`}>{displayAuthorName}</span>
                         <span className={fromApp ? 'text-emerald-600' : 'text-slate-500'}>{fromApp ? 'via Agro Stock' : '· Suporte'}</span>
                         <span aria-hidden="true" className="text-slate-300">•</span>
                         <span className={fromApp ? 'text-emerald-600' : 'text-slate-400'}>{formatTicketDate(comment.createdAt)}</span>
                       </div>
-                      <p className="mt-1.5 whitespace-pre-line break-words text-xs leading-relaxed text-slate-700">{comment.text}</p>
+                      <p className="mt-1.5 whitespace-pre-line break-words text-sm leading-relaxed text-slate-700">{comment.text}</p>
                     </div>
                   );
                 })}
@@ -354,9 +439,9 @@ function MeusChamados({ user }: { user: UserProfile }) {
                   id={`reply-${t.id}`}
                   value={replyDrafts[t.id] || ''}
                   onChange={(event) => setReplyDrafts((current) => ({ ...current, [t.id]: event.target.value.slice(0, 2000) }))}
-                  rows={3}
+                  rows={2}
                   placeholder="Escreva uma resposta para a equipe de suporte..."
-                  className="w-full resize-y border-0 bg-transparent px-2 py-1.5 text-xs leading-relaxed text-slate-700 outline-none placeholder:text-slate-400"
+                  className="max-h-40 min-h-16 w-full resize-y border-0 bg-transparent px-2 py-1.5 text-sm leading-relaxed text-slate-700 outline-none placeholder:text-slate-400"
                 />
                 <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-1 pt-2">
                   <span className="text-[9px] text-slate-400">{(replyDrafts[t.id] || '').length}/2000</span>
@@ -374,12 +459,11 @@ function MeusChamados({ user }: { user: UserProfile }) {
               {replyErrors[t.id] && <p className="mt-2 text-[11px] font-medium text-rose-600" role="alert">{replyErrors[t.id]}</p>}
             </section>
 
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 text-[10px] text-slate-500">
-              <span>{t.updatedAt ? `Última atualização: ${formatTicketDate(t.updatedAt)}` : 'Aguardando atualização da equipe'}</span>
-              {typeof t.anexosEnviados === 'number' && t.anexosEnviados > 0 && (
+            {typeof t.anexosEnviados === 'number' && t.anexosEnviados > 0 && (
+              <div className="mt-4 flex justify-end border-t border-slate-200 pt-3 text-[11px] text-slate-500">
                 <span className="inline-flex items-center gap-1"><Paperclip className="h-3 w-3" />{t.anexosEnviados} {t.anexosEnviados === 1 ? 'anexo' : 'anexos'}</span>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
       </article>
@@ -402,7 +486,7 @@ function MeusChamados({ user }: { user: UserProfile }) {
           <AlertTriangle className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
           <div className="flex-1">
             <p className="text-xs text-rose-700">{error}</p>
-            <button onClick={loadTickets} className="text-xs font-bold text-rose-600 underline mt-1">
+            <button onClick={() => loadTickets(false)} className="text-xs font-bold text-rose-600 underline mt-1">
               Tentar novamente
             </button>
           </div>
@@ -445,15 +529,19 @@ function MeusChamados({ user }: { user: UserProfile }) {
             })}
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <label className="relative min-w-0 flex-1">
               <span className="sr-only">Buscar chamados</span>
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por assunto ou protocolo" className="min-h-11 w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-xs text-slate-700 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/15" />
             </label>
-            <button type="button" onClick={loadTickets} disabled={loading} aria-label="Atualizar chamados" title="Atualizar chamados" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-emerald-200 hover:text-emerald-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50">
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            </button>
+            <div className="flex min-h-9 shrink-0 items-center justify-end gap-2 text-[11px] text-slate-400">
+              {lastLoadedAt && <span>Atualizado {formatRelativeDate(lastLoadedAt)}</span>}
+              <button type="button" onClick={() => loadTickets(false)} disabled={loading} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 font-bold text-slate-500 transition hover:bg-white hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50">
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                {loading ? 'Atualizando' : 'Atualizar'}
+              </button>
+            </div>
           </div>
 
           <div className="space-y-2.5">
@@ -694,11 +782,14 @@ export default function SupportTab({ user, onBackToDashboard }: SupportTabProps)
           Dashboard
         </button>
       )}
-      <header className="relative overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 px-5 py-5 text-white shadow-sm sm:px-7 sm:py-6">
-        <div className="absolute -right-14 -top-20 h-48 w-48 rounded-full border border-emerald-400/20" aria-hidden="true" />
-        <div className="absolute -right-4 -top-12 h-32 w-32 rounded-full border border-emerald-400/15" aria-hidden="true" />
+      <header className="relative overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 px-5 py-4 text-white shadow-sm sm:px-6 sm:py-5">
+        <div
+          className="pointer-events-none absolute inset-y-0 right-0 w-2/5 opacity-30"
+          style={{ backgroundImage: 'repeating-linear-gradient(118deg, transparent 0, transparent 22px, rgba(52, 211, 153, 0.16) 23px, transparent 24px)' }}
+          aria-hidden="true"
+        />
         <div className="relative flex items-start gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-400/15 text-emerald-300 ring-1 ring-inset ring-emerald-300/20">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-400/15 text-emerald-300 ring-1 ring-inset ring-emerald-300/20">
             <LifeBuoy className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
@@ -707,7 +798,7 @@ export default function SupportTab({ user, onBackToDashboard }: SupportTabProps)
             <p className="mt-1 max-w-xl text-xs leading-relaxed text-slate-300 sm:text-sm">{view === 'chamados' ? 'Acompanhe o andamento das solicitações ou abra um novo chamado.' : 'Conte o que aconteceu para direcionarmos o atendimento.'}</p>
           </div>
         </div>
-        <div className="relative mt-5 flex items-center border-t border-white/10 pt-4 sm:max-w-xl" aria-label="Fluxo do atendimento">
+        <div className="relative mt-4 flex items-center border-t border-white/10 pt-3" aria-label="Fluxo do atendimento">
           {[
             { icon: Send, label: 'Você envia' },
             { icon: MessageSquareText, label: 'Nós analisamos' },
