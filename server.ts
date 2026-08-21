@@ -22,9 +22,11 @@ import {
   getOverdueMaintenances,
   getCompletedMaintenances,
   getIdleComponents
-} from "./alertEmailTemplates";
+} from "./alertEmailTemplates.js";
 
 dotenv.config();
+// Local dev convention (Vercel CLI): .env.local overrides .env when present
+dotenv.config({ path: path.resolve(process.cwd(), ".env.local"), override: true });
 
 // Accepts recipients as alertEmails (array) or legacy alertEmail (string, comma/semicolon separated)
 function resolveEmails(body: any): string[] {
@@ -40,6 +42,31 @@ function resolveEmails(body: any): string[] {
     return [...new Set(list)];
   }
   return [];
+}
+
+const TRELLO_API_BASE = "https://api.trello.com/1";
+const SUPPORT_ALLOWED_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"];
+const SUPPORT_MAX_ATTACHMENTS = 4;
+const SUPPORT_MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024;
+
+function generateTicketId(): string {
+  const year = new Date().getFullYear();
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let suffix = "";
+  for (let i = 0; i < 5; i++) {
+    suffix += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return `SUP-${year}-${suffix}`;
+}
+
+async function trelloFetch(path: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    return await fetch(`${TRELLO_API_BASE}${path}`, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function createApp() {
@@ -844,6 +871,122 @@ ${extractedText}`;
         return res.json({ success: true, warning: "Usuário não existia no Firebase Auth." });
       }
       return res.status(500).json({ error: error.message || "Erro ao deletar usuário no Firebase Auth." });
+    }
+  });
+
+  // API Route for support tickets: creates a card in the configured Trello list
+  app.post("/api/support/tickets", async (req, res) => {
+    try {
+      const apiKey = process.env.TRELLO_API_KEY;
+      const apiToken = process.env.TRELLO_TOKEN;
+      const listId = process.env.TRELLO_LIST_ID;
+
+      if (!apiKey || !apiToken || !listId) {
+        return res.status(503).json({ error: "O suporte por ticket não está configurado neste servidor. Contate o administrador do sistema." });
+      }
+
+      const titulo = typeof req.body?.titulo === "string" ? req.body.titulo.trim() : "";
+      const descricao = typeof req.body?.descricao === "string" ? req.body.descricao.trim() : "";
+      const prioridade = ["baixa", "media", "alta"].includes(req.body?.prioridade) ? req.body.prioridade : "media";
+      const autorNome = typeof req.body?.autorNome === "string" && req.body.autorNome.trim() ? req.body.autorNome.trim() : "Desconhecido";
+      const autorEmail = typeof req.body?.autorEmail === "string" ? req.body.autorEmail.trim() : "";
+
+      if (!titulo) return res.status(400).json({ error: "O título do ticket é obrigatório." });
+      if (titulo.length > 150) return res.status(400).json({ error: "O título deve ter no máximo 150 caracteres." });
+      if (!descricao) return res.status(400).json({ error: "A descrição do problema é obrigatória." });
+      if (descricao.length > 5000) return res.status(400).json({ error: "A descrição deve ter no máximo 5000 caracteres." });
+
+      const rawAnexos: any[] = Array.isArray(req.body?.anexos) ? req.body.anexos : [];
+      if (rawAnexos.length > SUPPORT_MAX_ATTACHMENTS) {
+        return res.status(400).json({ error: `No máximo ${SUPPORT_MAX_ATTACHMENTS} anexos são permitidos por ticket.` });
+      }
+
+      const anexos: Array<{ filename: string; mimeType: string; buffer: Buffer }> = [];
+      for (const raw of rawAnexos) {
+        const base64 = typeof raw?.base64 === "string" ? raw.base64 : "";
+        if (!base64) continue;
+        const filename = typeof raw?.filename === "string" && raw.filename.trim() ? raw.filename.trim().slice(0, 120) : "anexo";
+        const mimeType = typeof raw?.mimeType === "string" ? raw.mimeType : "";
+        if (!SUPPORT_ALLOWED_MIME_TYPES.includes(mimeType)) {
+          return res.status(400).json({ error: `Tipo de arquivo não permitido (${filename}). Use imagens PNG, JPG, WEBP, GIF ou PDF.` });
+        }
+        const buffer = Buffer.from(base64, "base64");
+        if (buffer.length === 0) {
+          return res.status(400).json({ error: `Anexo inválido ou vazio: ${filename}.` });
+        }
+        if (buffer.length > SUPPORT_MAX_ATTACHMENT_BYTES) {
+          return res.status(400).json({ error: `O arquivo ${filename} excede o limite de 6MB.` });
+        }
+        anexos.push({ filename, mimeType, buffer });
+      }
+
+      const ticketId = generateTicketId();
+      const dataAbertura = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+      const prioridadeLabel = prioridade === "alta" ? "🔴 Alta" : prioridade === "media" ? "🟡 Média" : "🟢 Baixa";
+
+      const cardDesc = [
+        `**Prioridade:** ${prioridadeLabel}`,
+        `**Aberto por:** ${autorNome}${autorEmail ? ` (${autorEmail})` : ""}`,
+        `**Data:** ${dataAbertura}`,
+        `**Origem:** App Agro Stock GPS`,
+        "",
+        "---",
+        "",
+        descricao
+      ].join("\n");
+
+      const cardQuery = new URLSearchParams({
+        key: apiKey,
+        token: apiToken,
+        idList: listId,
+        name: `[${ticketId}] ${titulo}`.slice(0, 256),
+        desc: cardDesc
+      });
+
+      let card: any;
+      try {
+        const cardRes = await trelloFetch(`/cards?${cardQuery.toString()}`, { method: "POST" });
+        if (!cardRes.ok) {
+          const detail = await cardRes.text().catch(() => "");
+          console.error(`Erro ao criar card no Trello (${cardRes.status}):`, detail);
+          return res.status(502).json({ error: "Não foi possível registrar seu ticket no momento. Tente novamente em instantes." });
+        }
+        card = await cardRes.json();
+      } catch (error: any) {
+        console.error("Erro de conexão com o Trello:", error?.message || error);
+        return res.status(502).json({ error: "Falha de conexão com o serviço de tickets. Tente novamente em instantes." });
+      }
+
+      const attachmentsFailed: string[] = [];
+      for (const anexo of anexos) {
+        try {
+          const form = new FormData();
+          form.append("key", apiKey);
+          form.append("token", apiToken);
+          form.append("name", anexo.filename);
+          form.append("file", new Blob([new Uint8Array(anexo.buffer)], { type: anexo.mimeType }), anexo.filename);
+          const attachRes = await trelloFetch(`/cards/${card.id}/attachments`, { method: "POST", body: form });
+          if (!attachRes.ok) {
+            attachmentsFailed.push(anexo.filename);
+            console.error(`Falha ao anexar ${anexo.filename} ao card ${card.id} (${attachRes.status})`);
+          }
+        } catch (error: any) {
+          attachmentsFailed.push(anexo.filename);
+          console.error(`Falha ao anexar ${anexo.filename}:`, error?.message || error);
+        }
+      }
+
+      console.log(`Ticket de suporte criado: ${ticketId} -> card Trello ${card.id} (${anexos.length - attachmentsFailed.length}/${anexos.length} anexos)`);
+
+      return res.json({
+        success: true,
+        ticketId,
+        cardUrl: card.shortUrl || card.url || "",
+        attachmentsFailed
+      });
+    } catch (error: any) {
+      console.error("Erro ao processar ticket de suporte:", error);
+      return res.status(500).json({ error: error.message || "Erro interno ao criar o ticket de suporte." });
     }
   });
 

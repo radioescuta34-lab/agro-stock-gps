@@ -53,6 +53,7 @@ import MovementsTab from './components/MovementsTab';
 import LicensesTab from './components/LicensesTab';
 import LoansTab from './components/LoansTab';
 import ProfileTab from './components/ProfileTab';
+import SupportTab from './components/SupportTab';
 import SettingsTab from './components/SettingsTab';
 import { useLicenseAlertSettings } from './hooks/useLicenseAlertSettings';
 import { useCampoAlertSettings } from './hooks/useCampoAlertSettings';
@@ -82,7 +83,8 @@ import {
   Key,
   Handshake,
   User,
-  Settings
+  Settings,
+  LifeBuoy
 } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'agro_stock_gps_';
@@ -2749,6 +2751,15 @@ export default function App() {
                 Frota
               </button>
 
+              <button
+                onClick={() => navigateToTab('support')}
+                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'support' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
+                id="nav-support"
+              >
+                <LifeBuoy className="h-4 w-4" />
+                Suporte
+              </button>
+
               {(user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
                 <button
                   onClick={() => navigateToTab('settings')}
@@ -2899,6 +2910,14 @@ export default function App() {
               Frota
             </button>
 
+            <button
+              onClick={() => navigateToTab('support')}
+              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'support' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
+            >
+              <LifeBuoy className="h-4 w-4" />
+              Suporte
+            </button>
+
             {(user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
               <button
                 onClick={() => navigateToTab('settings')}
@@ -3022,6 +3041,10 @@ export default function App() {
             onPartialReturnLoan={handlePartialReturnLoan}
             onDeleteLoan={handleDeleteLoan}
           />
+        )}
+
+        {currentTab === 'support' && (
+          <SupportTab user={user} />
         )}
 
         {currentTab === 'profile' && (
