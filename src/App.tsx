@@ -2639,6 +2639,7 @@ export default function App() {
     setMachinePresetFilter(preset?.machineType ? preset : null);
     setKanbanPresetFilter(preset?.kanbanStatus ? preset : null);
     setIsMobileMenuOpen(false);
+    setIsUserMenuOpen(false);
   };
 
   if (loadingApp) {
@@ -2664,7 +2665,7 @@ export default function App() {
       {/* Top Banner / Navigation */}
       <nav className="bg-slate-900 text-white sticky top-0 z-50 shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
+          <div className="flex h-16 items-center gap-3">
             
             {/* Logo and Brand */}
             <div className="flex items-center gap-3">
@@ -2696,7 +2697,7 @@ export default function App() {
             </div>
 
             {/* Desktop Nav Items */}
-            <div className="hidden md:flex items-center gap-2">
+            <div className="ml-auto hidden items-center gap-2 md:flex">
               <button
                 onClick={() => navigateToTab('dashboard')}
                 className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'dashboard' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
@@ -2751,35 +2752,21 @@ export default function App() {
                 Frota
               </button>
 
-              <button
-                onClick={() => navigateToTab('support')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'support' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
-                id="nav-support"
-              >
-                <LifeBuoy className="h-4 w-4" />
-                Suporte
-              </button>
-
-              {(user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
-                <button
-                  onClick={() => navigateToTab('settings')}
-                  className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'settings' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
-                  id="nav-settings"
-                >
-                  <Settings className="h-4 w-4" />
-                  Configurações
-                </button>
-              )}
-
             </div>
 
             {/* User Profile / Logout Area */}
-            <div className="hidden md:flex items-center gap-4">
+            <div className="ml-2 hidden items-center md:flex">
               <div className="relative">
                 <button
-                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                  className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity focus:outline-none"
+                  onClick={() => {
+                    setIsMobileMenuOpen(false);
+                    setIsUserMenuOpen(!isUserMenuOpen);
+                  }}
+                  className={`flex items-center gap-3 rounded-xl p-1 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${isUserMenuOpen || ['profile', 'support', 'settings'].includes(currentTab) ? 'bg-slate-800' : 'hover:bg-slate-800/70'}`}
                   id="user-menu-button"
+                  aria-haspopup="menu"
+                  aria-expanded={isUserMenuOpen}
+                  aria-label="Abrir menu do usuário"
                 >
                   <div className="w-8 h-8 rounded-full overflow-hidden bg-emerald-500/20 flex items-center justify-center shrink-0 ring-1 ring-emerald-500/30">
                     {user.photoURL ? (
@@ -2790,7 +2777,7 @@ export default function App() {
                       </span>
                     )}
                   </div>
-                  <div className="text-left">
+                  <div className="hidden text-left md:block">
                     <span className="block text-xs font-bold text-white">{user.name.split(' ')[0]}</span>
                     <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase bg-emerald-500/15 text-emerald-400/80 px-2 py-0.5 rounded-full border border-emerald-500/20">
                       {user.role === 'administrador' || user.role === 'ADMINISTRADOR' ? (
@@ -2811,21 +2798,42 @@ export default function App() {
                 {isUserMenuOpen && (
                   <div
                     id="user-menu-dropdown"
-                    className="absolute right-0 mt-2 w-40 bg-slate-800 border border-slate-600 rounded-xl shadow-lg z-50 py-1"
+                    role="menu"
+                    className="absolute right-0 z-50 mt-2 w-60 overflow-hidden rounded-2xl border border-slate-700 bg-slate-800 p-1.5 shadow-2xl shadow-slate-950/30"
                   >
                     <button
-                      onClick={() => { setIsUserMenuOpen(false); setCurrentTab('profile'); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-700/50 rounded-lg transition-colors"
+                      onClick={() => navigateToTab('profile')}
+                      role="menuitem"
+                      className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-colors ${currentTab === 'profile' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-200 hover:bg-slate-700/60 hover:text-white'}`}
                     >
-                      <User className="h-3.5 w-3.5" />
+                      <User className="h-4 w-4" />
                       Meu Perfil
                     </button>
-                    <div className="border-t border-slate-700 my-0.5" />
+                    <button
+                      onClick={() => navigateToTab('support')}
+                      role="menuitem"
+                      className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-colors ${currentTab === 'support' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-200 hover:bg-slate-700/60 hover:text-white'}`}
+                    >
+                      <LifeBuoy className="h-4 w-4" />
+                      Suporte
+                    </button>
+                    {(user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
+                      <button
+                        onClick={() => navigateToTab('settings')}
+                        role="menuitem"
+                        className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-colors ${currentTab === 'settings' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-200 hover:bg-slate-700/60 hover:text-white'}`}
+                      >
+                        <Settings className="h-4 w-4" />
+                        Configurações
+                      </button>
+                    )}
+                    <div className="my-1 border-t border-slate-700" />
                     <button
                       onClick={handleLogout}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/10 rounded-lg transition-colors"
+                      role="menuitem"
+                      className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold text-rose-300 transition-colors hover:bg-rose-500/10"
                     >
-                      <LogOut className="h-3.5 w-3.5" />
+                      <LogOut className="h-4 w-4" />
                       Sair
                     </button>
                   </div>
@@ -2834,9 +2842,12 @@ export default function App() {
             </div>
 
             {/* Mobile menu button */}
-            <div className="flex md:hidden items-center">
+            <div className="ml-auto flex items-center md:hidden">
               <button
-                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  setIsMobileMenuOpen(!isMobileMenuOpen);
+                }}
                 className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 focus:outline-none"
                 id="mobile-menu-toggle"
               >
@@ -2851,17 +2862,6 @@ export default function App() {
         {isMobileMenuOpen && (
           <div className="md:hidden bg-slate-800 border-t border-slate-700 px-4 pt-2 pb-4 space-y-2 animate-fade-in" id="mobile-menu-dropdown">
             
-            {/* User card in mobile menu */}
-            <div className="pb-3 border-b border-slate-700/60 mb-2 pt-1 flex items-center justify-between">
-              <div>
-                <span className="block text-xs font-bold text-white">{user.name}</span>
-                <span className="block text-[10px] text-slate-400 mt-0.5">{user.email}</span>
-              </div>
-              <span className="bg-emerald-500/20 text-emerald-300 text-[9px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border border-emerald-500/20">
-                {user.role === 'administrador' || user.role === 'ADMINISTRADOR' ? 'Admin' : 'Técnico'}
-              </span>
-            </div>
-
             <button
               onClick={() => navigateToTab('dashboard')}
               className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'dashboard' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
@@ -2910,23 +2910,32 @@ export default function App() {
               Frota
             </button>
 
-            <button
-              onClick={() => navigateToTab('support')}
-              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'support' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
-            >
-              <LifeBuoy className="h-4 w-4" />
-              Suporte
-            </button>
-
-            {(user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
+            <div className="mt-3 border-t border-slate-700/60 pt-3">
+              <p className="mb-1 px-3 text-[9px] font-extrabold uppercase tracking-[0.14em] text-slate-500">Conta e sistema</p>
               <button
-                onClick={() => navigateToTab('settings')}
-                className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'settings' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
+                onClick={() => navigateToTab('profile')}
+                className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-all ${currentTab === 'profile' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
               >
-                <Settings className="h-4 w-4" />
-                Configurações
+                <User className="h-4 w-4" />
+                Meu Perfil
               </button>
-            )}
+              <button
+                onClick={() => navigateToTab('support')}
+                className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-all ${currentTab === 'support' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
+              >
+                <LifeBuoy className="h-4 w-4" />
+                Suporte
+              </button>
+              {(user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
+                <button
+                  onClick={() => navigateToTab('settings')}
+                  className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-all ${currentTab === 'settings' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
+                >
+                  <Settings className="h-4 w-4" />
+                  Configurações
+                </button>
+              )}
+            </div>
 
             <div className="pt-3 border-t border-slate-700/60 mt-3">
               <button
@@ -3044,7 +3053,7 @@ export default function App() {
         )}
 
         {currentTab === 'support' && (
-          <SupportTab user={user} />
+          <SupportTab user={user} onBackToDashboard={() => navigateToTab('dashboard')} />
         )}
 
         {currentTab === 'profile' && (

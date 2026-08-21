@@ -61,6 +61,7 @@ interface SupportComment {
 
 interface SupportTabProps {
   user: UserProfile;
+  onBackToDashboard?: () => void;
 }
 
 const MAX_FILES = 4;
@@ -175,7 +176,7 @@ function MeusChamados({ user }: { user: UserProfile }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('todos');
+  const [statusFilter, setStatusFilter] = useState<'todos' | 'abertos' | 'concluidos'>('todos');
   const [expandedTicket, setExpandedTicket] = useState<string | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [replyingTicket, setReplyingTicket] = useState<string | null>(null);
@@ -421,28 +422,38 @@ function MeusChamados({ user }: { user: UserProfile }) {
 
       {!loading && !error && tickets && tickets.length > 0 && (
         <div className="space-y-4">
-          <div className="grid grid-cols-3 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="px-3 py-3 sm:px-5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Todos</p><p className="mt-0.5 text-lg font-extrabold text-slate-900">{tickets.length}</p></div>
-            <div className="border-x border-slate-100 px-3 py-3 sm:px-5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Em aberto</p><p className="mt-0.5 text-lg font-extrabold text-amber-600">{openCount}</p></div>
-            <div className="px-3 py-3 sm:px-5"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Resolvidos</p><p className="mt-0.5 text-lg font-extrabold text-emerald-600">{closedCount}</p></div>
+          <div className="grid grid-cols-3 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="Filtrar chamados por status">
+            {[
+              { value: 'todos' as const, label: 'Todos', count: tickets.length, countClass: 'text-slate-900' },
+              { value: 'abertos' as const, label: 'Em aberto', count: openCount, countClass: 'text-amber-600' },
+              { value: 'concluidos' as const, label: 'Resolvidos', count: closedCount, countClass: 'text-emerald-600' }
+            ].map((item, index) => {
+              const active = statusFilter === item.value;
+              return (
+                <button
+                  key={item.value}
+                  type="button"
+                  onClick={() => setStatusFilter(item.value)}
+                  aria-pressed={active}
+                  className={`relative min-h-[68px] px-3 py-3 text-left transition-colors focus:outline-none focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500 sm:px-5 ${index > 0 ? 'border-l border-slate-100' : ''} ${active ? 'bg-emerald-50/70' : 'hover:bg-slate-50'}`}
+                >
+                  <p className={`text-[10px] font-bold uppercase tracking-wider ${active ? 'text-emerald-700' : 'text-slate-400'}`}>{item.label}</p>
+                  <p className={`mt-0.5 text-lg font-extrabold ${active ? 'text-emerald-700' : item.countClass}`}>{item.count}</p>
+                  {active && <span className="absolute inset-x-4 bottom-0 h-0.5 rounded-full bg-emerald-500" aria-hidden="true" />}
+                </button>
+              );
+            })}
           </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="flex gap-2">
             <label className="relative min-w-0 flex-1">
               <span className="sr-only">Buscar chamados</span>
               <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por assunto ou protocolo" className="min-h-11 w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-3 text-xs text-slate-700 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/15" />
             </label>
-            <div className="flex gap-2">
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="min-h-11 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/15 sm:flex-none">
-                <option value="todos">Todos os status</option>
-                <option value="abertos">Em aberto</option>
-                <option value="concluidos">Resolvidos</option>
-              </select>
-              <button type="button" onClick={loadTickets} disabled={loading} aria-label="Atualizar chamados" title="Atualizar chamados" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-emerald-200 hover:text-emerald-600 disabled:opacity-50">
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              </button>
-            </div>
+            <button type="button" onClick={loadTickets} disabled={loading} aria-label="Atualizar chamados" title="Atualizar chamados" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-emerald-200 hover:text-emerald-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50">
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
           </div>
 
           <div className="space-y-2.5">
@@ -453,7 +464,7 @@ function MeusChamados({ user }: { user: UserProfile }) {
             <div className="rounded-2xl border border-dashed border-slate-300 px-5 py-10 text-center">
               <Search className="mx-auto h-6 w-6 text-slate-300" />
               <p className="mt-3 text-sm font-bold text-slate-700">Nenhum chamado encontrado</p>
-              <p className="mt-1 text-xs text-slate-500">Tente outro termo ou ajuste o filtro de status.</p>
+              <p className="mt-1 text-xs text-slate-500">Tente outro termo ou selecione outro resumo.</p>
               <button type="button" onClick={() => { setQuery(''); setStatusFilter('todos'); }} className="mt-3 text-xs font-bold text-emerald-700 hover:text-emerald-800">Limpar filtros</button>
             </div>
           )}
@@ -463,7 +474,7 @@ function MeusChamados({ user }: { user: UserProfile }) {
   );
 }
 
-export default function SupportTab({ user }: SupportTabProps) {
+export default function SupportTab({ user, onBackToDashboard }: SupportTabProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [view, setView] = useState<'form' | 'chamados'>('chamados');
   const [titulo, setTitulo] = useState('');
@@ -670,6 +681,19 @@ export default function SupportTab({ user }: SupportTabProps) {
 
   return (
     <div className="mx-auto max-w-5xl">
+      {onBackToDashboard && (
+        <button
+          type="button"
+          onClick={onBackToDashboard}
+          className="mb-3 inline-flex min-h-11 items-center gap-2 rounded-xl px-1 text-xs font-bold text-slate-600 transition-colors hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:hidden"
+          aria-label="Voltar ao dashboard"
+        >
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white shadow-sm">
+            <ArrowLeft className="h-4 w-4" />
+          </span>
+          Dashboard
+        </button>
+      )}
       <header className="relative overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 px-5 py-5 text-white shadow-sm sm:px-7 sm:py-6">
         <div className="absolute -right-14 -top-20 h-48 w-48 rounded-full border border-emerald-400/20" aria-hidden="true" />
         <div className="absolute -right-4 -top-12 h-32 w-32 rounded-full border border-emerald-400/15" aria-hidden="true" />
@@ -683,16 +707,19 @@ export default function SupportTab({ user }: SupportTabProps) {
             <p className="mt-1 max-w-xl text-xs leading-relaxed text-slate-300 sm:text-sm">{view === 'chamados' ? 'Acompanhe o andamento das solicitações ou abra um novo chamado.' : 'Conte o que aconteceu para direcionarmos o atendimento.'}</p>
           </div>
         </div>
-        <div className="relative mt-5 grid grid-cols-3 gap-1.5 border-t border-white/10 pt-4 sm:max-w-xl">
+        <div className="relative mt-5 flex items-center border-t border-white/10 pt-4 sm:max-w-xl" aria-label="Fluxo do atendimento">
           {[
             { icon: Send, label: 'Você envia' },
             { icon: MessageSquareText, label: 'Nós analisamos' },
             { icon: CircleCheckBig, label: 'Você acompanha' }
           ].map((item, index) => (
-            <div key={item.label} className="flex min-w-0 items-center gap-2">
-              <div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${(view === 'form' && index === 0) || (view === 'chamados' && index === 2) ? 'bg-emerald-400 text-slate-950' : 'bg-white/10 text-slate-300'}`}><item.icon className="h-3.5 w-3.5" /></div>
-              <span className="truncate text-[9px] font-semibold text-slate-300 sm:text-[10px]">{item.label}</span>
-            </div>
+            <React.Fragment key={item.label}>
+              {index > 0 && <span className="mx-2 h-px min-w-2 flex-1 bg-white/15" aria-hidden="true" />}
+              <div className="flex min-w-0 shrink-0 items-center gap-1.5 text-slate-300">
+                <item.icon className="h-3.5 w-3.5 text-emerald-300" />
+                <span className="whitespace-nowrap text-[9px] font-semibold sm:text-[10px]">{item.label}</span>
+              </div>
+            </React.Fragment>
           ))}
         </div>
       </header>
