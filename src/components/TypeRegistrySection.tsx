@@ -33,11 +33,11 @@ const TABS: { key: RegistryTab; label: string }[] = [
   { key: 'service', label: 'Tipos de Serviço' },
 ];
 
-const CATEGORY_META: Record<RegisteredTypeCategory, { title: string; description: string; icon: ReactNode; accent: string }> = {
-  partner: { title: 'Tipos de Parceiro', description: 'Classificação usada no cadastro de parceiros.', icon: <Briefcase className="h-5 w-5" />, accent: 'bg-emerald-100 text-emerald-700' },
-  equipment_component: { title: 'Componentes GPS', description: 'Tipos de equipamentos GPS do estoque.', icon: <Cpu className="h-5 w-5" />, accent: 'bg-blue-100 text-blue-700' },
-  equipment_machine: { title: 'Máquinas / Frota', description: 'Tipos de máquinas da frota.', icon: <Tractor className="h-5 w-5" />, accent: 'bg-amber-100 text-amber-700' },
-  service: { title: 'Tipos de Serviço', description: 'Ações das Ordens de Serviço e serviços de manutenção.', icon: <Wrench className="h-5 w-5" />, accent: 'bg-violet-100 text-violet-700' },
+const CATEGORY_META: Record<RegisteredTypeCategory, { title: string; description: string; icon: ReactNode; accent: string; example: string }> = {
+  partner: { title: 'Tipos de Parceiro', description: 'Classificação usada no cadastro de parceiros.', icon: <Briefcase className="h-5 w-5" />, accent: 'bg-emerald-100 text-emerald-700', example: 'Ex.: Assistência Técnica Autorizada' },
+  equipment_component: { title: 'Componentes GPS', description: 'Tipos de equipamentos GPS do estoque.', icon: <Cpu className="h-5 w-5" />, accent: 'bg-blue-100 text-blue-700', example: 'Ex.: Sensor de Ângulo' },
+  equipment_machine: { title: 'Máquinas / Frota', description: 'Tipos de máquinas da frota.', icon: <Tractor className="h-5 w-5" />, accent: 'bg-amber-100 text-amber-700', example: 'Ex.: Trator Agrícola' },
+  service: { title: 'Tipos de Serviço', description: 'Ações das Ordens de Serviço e serviços de manutenção.', icon: <Wrench className="h-5 w-5" />, accent: 'bg-violet-100 text-violet-700', example: 'Ex.: Calibração de Offset' },
 };
 
 export default function TypeRegistrySection({
@@ -425,7 +425,7 @@ export default function TypeRegistrySection({
                   value={typeName}
                   maxLength={64}
                   onChange={(e) => { setTypeName(e.target.value); setError(null); }}
-                  placeholder="Ex.: Sensor de Umidade"
+                  placeholder={CATEGORY_META[formCategory].example}
                   className="mt-1.5 min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-medium normal-case text-slate-800 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 />
               </label>
