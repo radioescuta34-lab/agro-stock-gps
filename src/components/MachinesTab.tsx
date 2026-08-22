@@ -26,6 +26,7 @@ interface MachinesTabProps {
   fieldDataCollections?: FieldDataCollection[];
   role: UserRole;
   initialTypeFilter?: MachineType;
+  machineTypes?: MachineType[];
   onAddMachine: (mac: Omit<Machine, 'id' | 'updatedAt'>) => Promise<void>;
   onEditMachine: (id: string, updates: Partial<Machine>) => Promise<void>;
   onDeleteMachine: (id: string) => Promise<void>;
@@ -37,6 +38,7 @@ export default function MachinesTab({
   fieldDataCollections = [],
   role,
   initialTypeFilter,
+  machineTypes = ['Trator', 'Colhedora', 'Pulverizador', 'Outro'],
   onAddMachine,
   onEditMachine,
   onDeleteMachine
@@ -413,10 +415,7 @@ export default function MachinesTab({
               aria-label="Filtrar veículos por tipo"
             >
               <option value="all">Todos os veículos</option>
-              <option value="Trator">Tratores</option>
-              <option value="Colhedora">Colhedoras</option>
-              <option value="Pulverizador">Pulverizadores</option>
-              <option value="Outro">Outros</option>
+              {machineTypes.map(t => <option key={t} value={t}>{t}s</option>)}
             </select>
           </div>
         )}
@@ -488,10 +487,7 @@ export default function MachinesTab({
                 className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs bg-white"
                 id="select-machine-type"
               >
-                <option value="Trator">Trator</option>
-                <option value="Colhedora">Colhedora (Cana/Grãos)</option>
-                <option value="Pulverizador">Pulverizador Autopropelido</option>
-                <option value="Outro">Outro/Utilitário</option>
+                {machineTypes.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
 
@@ -601,10 +597,7 @@ export default function MachinesTab({
                 className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-indigo-500 focus:border-indigo-500 text-xs bg-white"
                 id="edit-machine-type"
               >
-                <option value="Trator">Trator</option>
-                <option value="Colhedora">Colhedora (Cana/Grãos)</option>
-                <option value="Pulverizador">Pulverizador Autopropelido</option>
-                <option value="Outro">Outro/Utilitário</option>
+                {machineTypes.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
 
@@ -697,10 +690,7 @@ export default function MachinesTab({
             id="filter-machine-type-select"
           >
             <option value="all">Todos os Veículos</option>
-            <option value="Trator">Tratores</option>
-            <option value="Colhedora">Colhedoras</option>
-            <option value="Pulverizador">Pulverizadores</option>
-            <option value="Outro">Outros</option>
+            {machineTypes.map(t => <option key={t} value={t}>{t}s</option>)}
           </select>
         </div>
       </div>

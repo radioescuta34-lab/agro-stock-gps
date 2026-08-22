@@ -35,6 +35,7 @@ interface MovementsTabProps {
   role: UserRole;
   currentUserId: string;
   currentUserName: string;
+  extraServiceActions?: string[];
   onAddMovement: (log: Omit<MovementLog, 'id' | 'technicianId' | 'technicianName' | 'createdAt'>) => Promise<void>;
   onUpdateMovement?: (movement: MovementLog, updates: Partial<MovementLog>) => Promise<void>;
   onDeleteMovement?: (movement: MovementLog) => Promise<void>;
@@ -68,6 +69,7 @@ export default function MovementsTab({
   role,
   currentUserId,
   currentUserName,
+  extraServiceActions = [],
   onAddMovement,
   onUpdateMovement,
   onDeleteMovement,
@@ -612,6 +614,7 @@ export default function MovementsTab({
                 <option value="Remoção">Remoção</option>
                 <option value="Manutenção">Manutenção</option>
                 <option value="Calibração">Calibração</option>
+                {extraServiceActions.map(a => <option key={a} value={a}>{a}</option>)}
               </select>
 
               <select
@@ -717,6 +720,7 @@ export default function MovementsTab({
                       <option value="Remoção">Remoção (Retirar GPS de máquina para o estoque)</option>
                       <option value="Manutenção">Enviar para Manutenção/Conserto</option>
                       <option value="Calibração">Calibração de Offset / Ajustes periódicos</option>
+                      {extraServiceActions.map(a => <option key={a} value={a}>{a}</option>)}
                     </select>
                   </div>
 
@@ -899,7 +903,7 @@ export default function MovementsTab({
                   </div>
 
                   <div className="mt-2.5 block w-full text-left">
-                    <span className="block text-[11px] font-semibold text-slate-600">{ACTION_LABELS[move.action]}</span>
+                    <span className="block text-[11px] font-semibold text-slate-600">{ACTION_LABELS[move.action] ?? move.action}</span>
                     <span className="mt-1 block text-xs font-semibold text-slate-800">{move.componentName}</span>
                     <span className="mt-0.5 block font-mono text-[10px] text-slate-400">S/N {move.componentSerial}</span>
                     <span className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-500">
@@ -954,7 +958,7 @@ export default function MovementsTab({
                           {formatDate(move.date)}
                         </td>
                         <td className="py-3 px-4 font-semibold text-slate-700 whitespace-nowrap">
-                          {ACTION_LABELS[move.action]}
+                          {ACTION_LABELS[move.action] ?? move.action}
                         </td>
                         <td className="py-3 px-4">
                           <span className="font-medium text-slate-800">{move.componentName}</span>
@@ -1012,7 +1016,7 @@ export default function MovementsTab({
                     {renderStatusBadge(selectedMove)}
                   </div>
                   <p className="text-slate-500 text-xs mt-1">
-                    {ACTION_LABELS[selectedMove.action]} · {selectedMove.machinePrefix === 'Almoxarifado' ? 'Almoxarifado' : `Veículo ${selectedMove.machinePrefix}`}
+                    {ACTION_LABELS[selectedMove.action] ?? selectedMove.action} · {selectedMove.machinePrefix === 'Almoxarifado' ? 'Almoxarifado' : `Veículo ${selectedMove.machinePrefix}`}
                   </p>
                 </div>
                 <div ref={detailMenuRef} className="relative flex shrink-0 items-center gap-1">

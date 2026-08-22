@@ -36,6 +36,8 @@ interface ComponentsTabProps {
   role: UserRole;
   initialStatusFilter?: ComponentStatus;
   initialBrandFilter?: string;
+  componentTypes?: string[];
+  serviceTypes?: string[];
   onAddComponent: (comp: Omit<AutopilotComponent, 'id' | 'updatedAt' | 'updatedBy'>) => Promise<void>;
   onEditComponent: (id: string, updates: Partial<AutopilotComponent>) => Promise<void>;
   onDeleteComponent: (id: string) => Promise<void>;
@@ -58,6 +60,8 @@ export default function ComponentsTab({
   role,
   initialStatusFilter,
   initialBrandFilter,
+  componentTypes: configuredComponentTypes = [],
+  serviceTypes = [],
   onAddComponent,
   onEditComponent,
   onDeleteComponent,
@@ -121,6 +125,7 @@ export default function ComponentsTab({
   const [maintComponentSearch, setMaintComponentSearch] = useState('');
   const [maintComponentPickerOpen, setMaintComponentPickerOpen] = useState(false);
   const [maintProviderName, setMaintProviderName] = useState('');
+  const [maintServiceType, setMaintServiceType] = useState('');
   const [maintIssueDescription, setMaintIssueDescription] = useState('');
   const [maintSentDate, setMaintSentDate] = useState(new Date().toISOString().split('T')[0]);
 
@@ -204,6 +209,7 @@ export default function ComponentsTab({
           sentDate: new Date(maintSentDate).toISOString(),
           providerId: providers.find(provider => provider.name.trim().toLocaleLowerCase('pt-BR') === maintProviderName.trim().toLocaleLowerCase('pt-BR'))?.id || '',
           providerName: maintProviderName,
+          serviceType: maintServiceType || undefined,
           issueDescription: maintIssueDescription,
           status: 'Em Manutenção'
         });
@@ -213,6 +219,7 @@ export default function ComponentsTab({
       setMaintComponentSearch('');
       setMaintComponentPickerOpen(false);
       setMaintProviderName('');
+      setMaintServiceType('');
       setMaintIssueDescription('');
       setMaintSentDate(new Date().toISOString().split('T')[0]);
     } catch (err: any) {
@@ -374,7 +381,7 @@ export default function ComponentsTab({
     return matchesSearch && matchesBrand && matchesStatus && matchesType;
   });
 
-  const componentTypes = [
+  const componentTypes = configuredComponentTypes.length > 0 ? configuredComponentTypes : [
     'Antena/Receptor',
     'Monitor/Display',
     'Controladora',
@@ -610,8 +617,21 @@ export default function ComponentsTab({
                   className="min-h-28 w-full resize-y rounded-xl border border-slate-300 px-3 py-2.5 text-xs leading-relaxed text-slate-900 focus:border-amber-500 focus:ring-amber-500"
                   placeholder="Descreva os sintomas, quando o problema começou e o que já foi verificado..."
                 />
-                <p className="mt-1 text-[10px] text-slate-400">Inclua detalhes que ajudem a assistência a reproduzir o defeito.</p>
+                 <p className="mt-1 text-[10px] text-slate-400">Inclua detalhes que ajudem a assistência a reproduzir o defeito.</p>
               </div>
+                </div>
+
+                <div className="mt-4 sm:max-w-xs">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Tipo de serviço</label>
+                  <select
+                    value={maintServiceType}
+                    onChange={(e) => setMaintServiceType(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-amber-500 focus:border-amber-500 text-xs bg-white"
+                  >
+                    <option value="">Não especificado</option>
+                    {serviceTypes.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <p className="mt-1 text-[10px] text-slate-400">Tipos gerenciados em Configurações &gt; Cadastro &gt; Tipos de Serviço.</p>
                 </div>
               </section>
 
@@ -837,6 +857,11 @@ export default function ComponentsTab({
                     <p className="text-slate-600">
                       <span className="text-slate-400 font-medium">Assistência:</span> {m.providerName}
                     </p>
+                    {m.serviceType && (
+                      <p className="text-slate-600">
+                        <span className="text-slate-400 font-medium">Tipo de serviço:</span> {m.serviceType}
+                      </p>
+                    )}
                     <p className="text-slate-600">
                       <span className="text-slate-400 font-medium">Enviado em:</span>{' '}
                       {new Date(m.sentDate).toLocaleDateString('pt-BR')}

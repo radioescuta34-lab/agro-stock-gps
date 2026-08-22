@@ -165,6 +165,20 @@
       },
       "required": ["name", "cnpj", "updatedAt", "updatedBy"]
     },
+    "RegisteredType": {
+      "title": "Registered Type",
+      "description": "Dynamically managed type registry (collection: type_registry) used by Settings > Cadastro for partner, equipment and service types.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string", "enum": ["partner", "equipment_component", "equipment_machine", "service"] },
+        "name": { "type": "string" },
+        "active": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["id", "category", "name", "active", "updatedAt", "updatedBy"]
+    },
     "LicenseAlertSettings": {
       "title": "License Alert Settings",
       "description": "Email alert settings for license expirations (doc: settings/licenses).",

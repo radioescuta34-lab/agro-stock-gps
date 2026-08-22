@@ -90,7 +90,7 @@ service cloud.firestore {
     function isValidMachine(mac) {
       return mac.id is string && mac.id.size() <= 128
         && mac.prefix is string && mac.prefix.size() <= 128
-        && (mac.type == 'Trator' || mac.type == 'Colhedora' || mac.type == 'Pulverizador' || mac.type == 'Outro')
+        && mac.type is string && mac.type.size() <= 64
         && mac.model is string && mac.model.size() <= 128
         && mac.brand is string && mac.brand.size() <= 128
         && (!('fleet' in mac) || (mac.fleet is string && mac.fleet.size() <= 128));
@@ -126,7 +126,7 @@ service cloud.firestore {
         && move.componentName is string && move.componentName.size() <= 128
         && (!('machineId' in move) || (move.machineId is string && move.machineId.size() <= 128))
         && move.machinePrefix is string && move.machinePrefix.size() <= 128
-        && (move.action == 'Instalação' || move.action == 'Remoção' || move.action == 'Manutenção' || move.action == 'Calibração')
+        && move.action is string && move.action.size() <= 64
         && move.technicianId is string && move.technicianId.size() <= 128
         && move.technicianName is string && move.technicianName.size() <= 128
         && (!('osNumber' in move) || move.osNumber is number)
@@ -266,6 +266,20 @@ service cloud.firestore {
       allow get, list: if isSignedIn();
       allow create, update: if (isAdmin() || isTechnician()) && isValidId(partnerId) && isValidPartner(request.resource.data);
       allow delete: if false;
+    }
+
+    // Validate RegisteredType (Settings > Cadastro > Tipos)
+    function isValidRegisteredType(t) {
+      return t.id is string && t.id.size() <= 128
+        && (t.category == 'partner' || t.category == 'equipment_component' || t.category == 'equipment_machine' || t.category == 'service')
+        && t.name is string && t.name.size() <= 64
+        && t.active is bool;
+    }
+
+    match /type_registry/{typeId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isAdmin() && isValidId(typeId) && isValidRegisteredType(request.resource.data) && request.resource.data.updatedAt == request.time;
+      allow delete: if isAdmin();
     }
   }
 }

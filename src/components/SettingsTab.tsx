@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CompanyProfile, UserRole, UserProfile, License, Machine, FieldDataCollection, ComponentLoan, AutopilotComponent, MovementLog, ComponentMaintenance } from '../types';
+import { CompanyProfile, UserRole, UserProfile, License, Machine, FieldDataCollection, ComponentLoan, AutopilotComponent, MovementLog, ComponentMaintenance, RegisteredType, RegisteredTypeCategory } from '../types';
 import {
   Settings,
   Brain,
@@ -16,11 +16,13 @@ import {
   PlugZap,
   ShieldCheck,
   AlertTriangle,
-  ExternalLink
+  ExternalLink,
+  ClipboardList
 } from 'lucide-react';
 import CompanyProfileSection from './CompanyProfileSection';
 import UserManagementSection from './UserManagementSection';
 import AlertSettingsSection from './AlertSettingsSection';
+import TypeRegistrySection from './TypeRegistrySection';
 
 const PROVIDERS = {
   openai: { label: 'OpenAI', placeholder: 'sk-...', docsUrl: 'https://platform.openai.com/api-keys', docsLabel: 'platform.openai.com', defaultModel: 'gpt-4o-mini' },
@@ -98,6 +100,11 @@ interface SettingsTabProps {
   maintenances?: ComponentMaintenance[];
   currentUser?: UserProfile | null;
   isDemoMode: boolean;
+  typeRegistry?: RegisteredType[];
+  onAddType?: (category: RegisteredTypeCategory, name: string) => Promise<void>;
+  onUpdateType?: (id: string, updates: Partial<Omit<RegisteredType, 'id' | 'updatedAt' | 'updatedBy'>>) => Promise<void>;
+  onDeleteType?: (id: string) => Promise<void>;
+  getTypeUsageCount?: (category: RegisteredTypeCategory, name: string) => number;
   onUpdateCompany: (updates: Omit<CompanyProfile, 'updatedAt' | 'updatedBy'>) => Promise<void>;
   onAddUser?: (newUser: Omit<UserProfile, 'createdAt'>, password?: string) => Promise<void>;
   onEditUser?: (uid: string, updates: Partial<Omit<UserProfile, 'uid' | 'createdAt'>>, password?: string) => Promise<any>;
@@ -118,6 +125,11 @@ export default function SettingsTab({
   maintenances = [],
   currentUser,
   isDemoMode,
+  typeRegistry = [],
+  onAddType,
+  onUpdateType,
+  onDeleteType,
+  getTypeUsageCount,
   onUpdateCompany,
   onAddUser,
   onEditUser,
@@ -489,6 +501,29 @@ export default function SettingsTab({
             </div>
           </div>
         </div>
+        )}
+      </div>
+
+      {/* Cadastro Section */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+        <SettingsSectionToggle
+          icon={<ClipboardList className="h-4 w-4" />}
+          title="Cadastro"
+          description="Tipos de parceiro, equipamento e serviço"
+          open={openSection === 'cadastro'}
+          onClick={() => setOpenSection(openSection === 'cadastro' ? null : 'cadastro')}
+        />
+
+        {openSection === 'cadastro' && (
+          <div className="p-4 sm:p-5">
+            <TypeRegistrySection
+              typeRegistry={typeRegistry}
+              onAddType={onAddType}
+              onUpdateType={onUpdateType}
+              onDeleteType={onDeleteType}
+              getTypeUsageCount={getTypeUsageCount}
+            />
+          </div>
         )}
       </div>
 

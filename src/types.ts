@@ -257,6 +257,7 @@ export interface ComponentMaintenance {
   returnDate?: string; // ISO string or empty
   providerId?: string; // Related partner/provider
   providerName: string; // Maintenance company
+  serviceType?: string; // Registered service type (Settings > Cadastro > Tipos de Serviço)
   issueDescription: string; // Description of the problem
   replacedParts?: string; // Parts replaced during maintenance
   servicesPerformed?: string; // Services performed
@@ -274,6 +275,18 @@ export interface MaintenanceProvider {
   address?: string;
   contactPerson?: string;
   createdAt: any;
+  updatedAt: any;
+  updatedBy: string;
+}
+
+// Dynamic type registry (managed in Settings > Cadastro)
+export type RegisteredTypeCategory = 'partner' | 'equipment_component' | 'equipment_machine' | 'service';
+
+export interface RegisteredType {
+  id: string;
+  category: RegisteredTypeCategory;
+  name: string;
+  active: boolean;
   updatedAt: any;
   updatedBy: string;
 }

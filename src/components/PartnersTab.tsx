@@ -26,18 +26,20 @@ interface PartnersTabProps {
   role: UserRole;
   maintenances?: ComponentMaintenance[];
   loans?: ComponentLoan[];
+  partnerTypes?: PartnerType[];
   onAddPartner: (partner: Omit<Partner, 'id' | 'createdAt' | 'updatedAt' | 'updatedBy'>) => Promise<void>;
   onEditPartner: (id: string, updates: Partial<Partner>) => Promise<void>;
   onDeactivatePartner: (id: string) => Promise<void>;
 }
 
-const partnerTypes: PartnerType[] = ['Assistência técnica', 'Prestador de serviço', 'Recebedor de empréstimo'];
+const defaultPartnerTypes: PartnerType[] = ['Assistência técnica', 'Prestador de serviço', 'Recebedor de empréstimo'];
 
 export default function PartnersTab({
   partners,
   role,
   maintenances = [],
   loans = [],
+  partnerTypes = defaultPartnerTypes,
   onAddPartner,
   onEditPartner,
   onDeactivatePartner
