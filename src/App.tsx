@@ -158,6 +158,7 @@ export default function App() {
   const [componentPresetFilter, setComponentPresetFilter] = useState<DashboardNavPreset | null>(null);
   const [machinePresetFilter, setMachinePresetFilter] = useState<DashboardNavPreset | null>(null);
   const [kanbanPresetFilter, setKanbanPresetFilter] = useState<DashboardNavPreset | null>(null);
+  const [focusTarget, setFocusTarget] = useState<{ tab: string; itemId: string } | null>(null);
 
   const [loadingApp, setLoadingApp] = useState(true);
   const legacyPartnersMigrationStarted = useRef(false);
@@ -173,8 +174,15 @@ export default function App() {
     if (!user) return;
     const params = new URLSearchParams(window.location.search);
     const target = params.get('open');
+    const focusParamMap: Record<string, string> = { support: 'ticket', licenses: 'license', components: 'component', loans: 'loan' };
     if (target && ['support', 'licenses', 'components', 'loans', 'movements'].includes(target)) {
       setCurrentTab(target);
+      const focusParam = focusParamMap[target];
+      const focusId = focusParam ? params.get(focusParam) : null;
+      if (focusParam && focusId) {
+        setFocusTarget({ tab: target, itemId: focusId });
+        params.delete(focusParam);
+      }
       params.delete('open');
       const cleanQuery = params.toString();
       window.history.replaceState({}, '', `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ''}${window.location.hash}`);
@@ -3222,8 +3230,11 @@ export default function App() {
                 maintenances={maintenances}
                 loans={loans}
                 maintenanceOverdueDays={maintenanceSettings?.overdueDays || 7}
-                onNavigate={(tab) => navigateToTab(tab)}
-              />
+    onNavigate={(tab, itemId) => {
+      navigateToTab(tab);
+      setFocusTarget(itemId ? { tab, itemId } : null);
+    }}
+  />
             </div>
 
             {/* User Profile / Logout Area */}
@@ -3443,6 +3454,8 @@ export default function App() {
             role={user.role}
             initialStatusFilter={componentPresetFilter?.componentStatus}
             initialBrandFilter={componentPresetFilter?.componentBrand}
+            focusComponentId={focusTarget?.tab === 'components' ? focusTarget.itemId : null}
+            onFocusConsumed={() => setFocusTarget(null)}
             componentTypes={getActiveTypes('equipment_component')}
             serviceTypes={getActiveTypes('service')}
             onAddComponent={handleAddComponent}
@@ -3493,6 +3506,8 @@ export default function App() {
             currentUser={user}
             isDemoMode={isDemoMode}
             initialFilter={licensePresetFilter}
+            focusLicenseId={focusTarget?.tab === 'licenses' ? focusTarget.itemId : null}
+            onFocusConsumed={() => setFocusTarget(null)}
             onAddLicense={handleAddLicense}
             onEditLicense={handleEditLicense}
             onDeleteLicense={handleDeleteLicense}
@@ -3554,6 +3569,8 @@ export default function App() {
             role={user.role}
             currentUserName={user.name}
             companyProfile={companyProfile}
+            focusLoanId={focusTarget?.tab === 'loans' ? focusTarget.itemId : null}
+            onFocusConsumed={() => setFocusTarget(null)}
             onAddLoan={handleAddLoan}
             onReturnLoan={handleReturnLoan}
             onPartialReturnLoan={handlePartialReturnLoan}
@@ -3575,7 +3592,12 @@ export default function App() {
         )}
 
         {currentTab === 'support' && (
-          <SupportTab user={user} onBackToDashboard={() => navigateToTab('dashboard')} />
+          <SupportTab
+            user={user}
+            onBackToDashboard={() => navigateToTab('dashboard')}
+            focusTicketId={focusTarget?.tab === 'support' ? focusTarget.itemId : null}
+            onFocusConsumed={() => setFocusTarget(null)}
+          />
         )}
 
         {currentTab === 'profile' && (

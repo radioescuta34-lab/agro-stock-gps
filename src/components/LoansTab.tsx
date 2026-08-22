@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AutopilotComponent, ThirdParty, ComponentLoan, LoanedItem, UserRole, CompanyProfile } from '../types';
 import { useNotifications } from './NotificationProvider';
 import { 
@@ -37,6 +37,8 @@ interface LoansTabProps {
   role: UserRole;
   currentUserName: string;
   companyProfile?: CompanyProfile;
+  focusLoanId?: string | null;
+  onFocusConsumed?: () => void;
   onAddLoan: (loan: Omit<ComponentLoan, 'id' | 'contractNumber' | 'createdAt' | 'updatedAt' | 'updatedBy'>) => Promise<void>;
   onReturnLoan: (id: string) => Promise<void>;
   onPartialReturnLoan: (id: string, returnedItemIds: string[]) => Promise<void>;
@@ -50,6 +52,8 @@ export default function LoansTab({
   role,
   currentUserName,
   companyProfile,
+  focusLoanId,
+  onFocusConsumed,
   onAddLoan,
   onReturnLoan,
   onPartialReturnLoan,
@@ -89,6 +93,31 @@ export default function LoansTab({
 
   // Overdue calculation
   const todayStr = new Date().toISOString().split('T')[0];
+
+  const [highlightLoanId, setHighlightLoanId] = useState<string | null>(null);
+
+  // Focus a specific loan (e.g. arriving from a notification)
+  useEffect(() => {
+    if (!focusLoanId) return;
+    const target = loans.find(l => l.id === focusLoanId);
+    if (!target) {
+      onFocusConsumed?.();
+      return;
+    }
+    setSubTab('loans');
+    setSearchTerm('');
+    setStatusFilter('all');
+    setHighlightLoanId(focusLoanId);
+    onFocusConsumed?.();
+    const scrollTimer = window.setTimeout(() => {
+      document.getElementById(`loan-card-${focusLoanId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 180);
+    const highlightTimer = window.setTimeout(() => setHighlightLoanId(null), 4000);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(highlightTimer);
+    };
+  }, [focusLoanId, loans, onFocusConsumed]);
 
   const dueSoonLimit = new Date();
   dueSoonLimit.setDate(dueSoonLimit.getDate() + 7);
@@ -708,7 +737,8 @@ export default function LoansTab({
                 return (
                   <div 
                     key={loan.id} 
-                    className={`bg-white border rounded-2xl p-5 shadow-sm transition-all flex flex-col justify-between ${isReturned ? 'border-slate-100 bg-slate-50/50' : 'border-slate-200 hover:border-slate-300'}`}
+                    id={`loan-card-${loan.id}`}
+                    className={`bg-white border rounded-2xl p-5 shadow-sm transition-all flex flex-col justify-between ${highlightLoanId === loan.id ? 'ring-2 ring-emerald-400 border-emerald-300 shadow-md' : isReturned ? 'border-slate-100 bg-slate-50/50' : 'border-slate-200 hover:border-slate-300'}`}
                   >
                     <div>
                       {/* Top status & Contract ID */}

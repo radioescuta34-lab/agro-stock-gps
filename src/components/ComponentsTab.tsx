@@ -36,6 +36,8 @@ interface ComponentsTabProps {
   role: UserRole;
   initialStatusFilter?: ComponentStatus;
   initialBrandFilter?: string;
+  focusComponentId?: string | null;
+  onFocusConsumed?: () => void;
   componentTypes?: string[];
   serviceTypes?: string[];
   onAddComponent: (comp: Omit<AutopilotComponent, 'id' | 'updatedAt' | 'updatedBy'>) => Promise<void>;
@@ -60,6 +62,8 @@ export default function ComponentsTab({
   role,
   initialStatusFilter,
   initialBrandFilter,
+  focusComponentId,
+  onFocusConsumed,
   componentTypes: configuredComponentTypes = [],
   serviceTypes = [],
   onAddComponent,
@@ -86,6 +90,14 @@ export default function ComponentsTab({
   const [selectedComp, setSelectedComp] = useState<AutopilotComponent | null>(null);
   const [componentActionsOpen, setComponentActionsOpen] = useState(false);
   const componentActionsRef = useRef<HTMLDivElement>(null);
+
+  // Focus a specific component (e.g. arriving from a maintenance notification): open its detail modal
+  useEffect(() => {
+    if (!focusComponentId) return;
+    const target = components.find(c => c.id === focusComponentId) || null;
+    setSelectedComp(target);
+    onFocusConsumed?.();
+  }, [focusComponentId, components, onFocusConsumed]);
 
   useEffect(() => {
     if (!componentActionsOpen) return;

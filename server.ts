@@ -781,7 +781,7 @@ export async function createApp() {
             await sendPushToUser(ticket.autorUid, {
               title: "Nova resposta do suporte",
               body: ticket.titulo || "A equipe respondeu ao seu chamado.",
-              url: "/?open=support",
+              url: `/?open=support&ticket=${encodeURIComponent(ticketSnapshot.docs[0].id)}`,
               tag: `support-reply-${ticketSnapshot.docs[0].id}`
             });
           }
@@ -809,7 +809,7 @@ export async function createApp() {
               await sendPushToUser(ticket.autorUid, {
                 title: "Chamado concluído",
                 body: ticket.titulo || "Seu chamado foi marcado como resolvido.",
-                url: "/?open=support",
+                url: `/?open=support&ticket=${encodeURIComponent(snapshot.docs[0].id)}`,
                 tag: `support-complete-${snapshot.docs[0].id}`
               });
             }

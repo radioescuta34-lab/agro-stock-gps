@@ -65,6 +65,8 @@ interface SupportComment {
 interface SupportTabProps {
   user: UserProfile;
   onBackToDashboard?: () => void;
+  focusTicketId?: string | null;
+  onFocusConsumed?: () => void;
 }
 
 const MAX_FILES = 4;
@@ -335,13 +337,14 @@ function SupportAttachmentPreview({ ticketId, attachment, user }: {
   );
 }
 
-function MeusChamados({ user }: { user: UserProfile }) {
+function MeusChamados({ user, focusTicketId, onFocusConsumed }: { user: UserProfile; focusTicketId?: string | null; onFocusConsumed?: () => void }) {
   const [tickets, setTickets] = useState<TrackedTicket[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'todos' | 'abertos' | 'concluidos'>('todos');
+  const [statusFilter, setStatusFilter] = useState<'todos' | 'abertos' | 'concluidos'>('abertos');
   const [expandedTicket, setExpandedTicket] = useState<string | null>(null);
+  const [highlightTicketId, setHighlightTicketId] = useState<string | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [replyAttachments, setReplyAttachments] = useState<Record<string, SupportAttachment[]>>({});
   const [replyingTicket, setReplyingTicket] = useState<string | null>(null);
@@ -382,6 +385,28 @@ function MeusChamados({ user }: { user: UserProfile }) {
     }, 60_000);
     return () => window.clearInterval(interval);
   }, [loadTickets]);
+
+  useEffect(() => {
+    if (!focusTicketId || loading || !tickets) return;
+    const target = tickets.find((ticket) => ticket.id === focusTicketId);
+    if (!target) {
+      onFocusConsumed?.();
+      return;
+    }
+    setStatusFilter(target.status === 'Concluído' ? 'concluidos' : 'abertos');
+    setQuery('');
+    setExpandedTicket(focusTicketId);
+    setHighlightTicketId(focusTicketId);
+    onFocusConsumed?.();
+    const scrollTimer = window.setTimeout(() => {
+      document.getElementById(`ticket-card-${focusTicketId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 180);
+    const highlightTimer = window.setTimeout(() => setHighlightTicketId(null), 4000);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(highlightTimer);
+    };
+  }, [focusTicketId, loading, tickets, onFocusConsumed]);
 
   const visibleTickets = (tickets || []).filter((ticket) => {
     const normalizedQuery = query.trim().toLocaleLowerCase('pt-BR');
@@ -509,7 +534,11 @@ function MeusChamados({ user }: { user: UserProfile }) {
     const waitingForCustomer = t.status !== 'Concluído' && lastComment?.source === 'trello';
     const responsibilityLabel = waitingForCustomer ? 'Aguardando você' : 'Aguardando suporte';
     return (
-      <article key={t.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-[border-color,box-shadow] hover:border-slate-300 hover:shadow-md">
+      <article
+        key={t.id}
+        id={`ticket-card-${t.id}`}
+        className={`overflow-hidden rounded-2xl border bg-white shadow-sm transition-[border-color,box-shadow] hover:shadow-md ${highlightTicketId === t.id ? 'border-emerald-300 ring-2 ring-emerald-400 shadow-md' : 'border-slate-200 hover:border-slate-300 hover:shadow-md'}`}
+      >
         <button
           type="button"
           onClick={() => setExpandedTicket(isExpanded ? null : t.id)}
@@ -785,9 +814,9 @@ function MeusChamados({ user }: { user: UserProfile }) {
         <div className="space-y-4">
           <div className="grid grid-cols-3 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="Filtrar chamados por status">
             {[
-              { value: 'todos' as const, label: 'Todos', count: tickets.length, countClass: 'text-slate-900' },
               { value: 'abertos' as const, label: 'Em aberto', count: openCount, countClass: 'text-amber-600' },
-              { value: 'concluidos' as const, label: 'Resolvidos', count: closedCount, countClass: 'text-emerald-600' }
+              { value: 'concluidos' as const, label: 'Resolvidos', count: closedCount, countClass: 'text-emerald-600' },
+              { value: 'todos' as const, label: 'Todos', count: tickets.length, countClass: 'text-slate-900' }
             ].map((item, index) => {
               const active = statusFilter === item.value;
               return (
@@ -839,9 +868,13 @@ function MeusChamados({ user }: { user: UserProfile }) {
   );
 }
 
-export default function SupportTab({ user, onBackToDashboard }: SupportTabProps) {
+export default function SupportTab({ user, onBackToDashboard, focusTicketId, onFocusConsumed }: SupportTabProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [view, setView] = useState<'form' | 'chamados'>('chamados');
+
+  useEffect(() => {
+    if (focusTicketId) setView('chamados');
+  }, [focusTicketId]);
   const [titulo, setTitulo] = useState('');
   const [prioridade, setPrioridade] = useState<'baixa' | 'media' | 'alta'>('media');
   const [descricao, setDescricao] = useState('');
@@ -1121,7 +1154,7 @@ export default function SupportTab({ user, onBackToDashboard }: SupportTabProps)
       </div>
 
       {view === 'chamados' ? (
-        <MeusChamados user={user} />
+        <MeusChamados user={user} focusTicketId={focusTicketId} onFocusConsumed={onFocusConsumed} />
       ) : (
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_17rem]">
           <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">

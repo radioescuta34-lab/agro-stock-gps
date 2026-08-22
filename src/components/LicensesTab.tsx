@@ -49,6 +49,8 @@ interface LicensesTabProps {
   currentUser?: UserProfile | null;
   isDemoMode: boolean;
   initialFilter?: 'active' | 'expired' | null;
+  focusLicenseId?: string | null;
+  onFocusConsumed?: () => void;
   onAddLicense: (lic: Omit<License, 'id' | 'updatedAt' | 'updatedBy'>) => Promise<void>;
   onEditLicense: (id: string, updates: Partial<License>) => Promise<void>;
   onDeleteLicense: (id: string) => Promise<void>;
@@ -61,6 +63,8 @@ export default function LicensesTab({
   currentUser,
   isDemoMode,
   initialFilter = null,
+  focusLicenseId,
+  onFocusConsumed,
   onAddLicense,
   onEditLicense,
   onDeleteLicense
@@ -105,6 +109,33 @@ export default function LicensesTab({
 
   // Field display state
   const [qrModalLicense, setQrModalLicense] = useState<License | null>(null);
+  const [highlightLicenseId, setHighlightLicenseId] = useState<string | null>(null);
+
+  // Focus a specific license (e.g. arriving from a notification)
+  useEffect(() => {
+    if (!focusLicenseId) return;
+    const target = licenses.find(lic => lic.id === focusLicenseId);
+    if (!target) {
+      onFocusConsumed?.();
+      return;
+    }
+    setSearchTerm('');
+    setBrandFilter('all');
+    setStatusFilter('all');
+    setTypeFilter('all');
+    setExpirationRangeFilter('all');
+    setPresetFilter(null);
+    setHighlightLicenseId(focusLicenseId);
+    onFocusConsumed?.();
+    const scrollTimer = window.setTimeout(() => {
+      document.getElementById(`license-card-${focusLicenseId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 180);
+    const highlightTimer = window.setTimeout(() => setHighlightLicenseId(null), 4000);
+    return () => {
+      window.clearTimeout(scrollTimer);
+      window.clearTimeout(highlightTimer);
+    };
+  }, [focusLicenseId, licenses, onFocusConsumed]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -998,7 +1029,8 @@ export default function LicensesTab({
             return (
               <div 
                 key={lic.id} 
-                className={`bg-white rounded-2xl border ${isNearExpiration ? 'border-amber-400' : isExpired ? 'border-rose-400' : 'border-slate-200'} shadow-sm p-5 hover:shadow-md transition-all flex flex-col justify-between`}
+                id={`license-card-${lic.id}`}
+                className={`bg-white rounded-2xl border ${highlightLicenseId === lic.id ? 'ring-2 ring-emerald-400 shadow-md' : isNearExpiration ? 'border-amber-400' : isExpired ? 'border-rose-400' : 'border-slate-200'} shadow-sm p-5 hover:shadow-md transition-all flex flex-col justify-between`}
               >
                 <div>
                   <div className="flex justify-between items-start gap-2">
@@ -1221,7 +1253,8 @@ export default function LicensesTab({
                   return (
                     <tr 
                       key={lic.id} 
-                      className={`hover:bg-slate-50/50 transition-colors ${isNearExpiration ? 'bg-amber-50/10' : isExpired ? 'bg-rose-50/10' : ''}`}
+                      id={`license-card-${lic.id}`}
+                      className={`hover:bg-slate-50/50 transition-colors ${highlightLicenseId === lic.id ? 'ring-2 ring-emerald-400 bg-emerald-50/20' : isNearExpiration ? 'bg-amber-50/10' : isExpired ? 'bg-rose-50/10' : ''}`}
                     >
                       {/* Marca/Tipo */}
                       <td className="py-3 px-4">

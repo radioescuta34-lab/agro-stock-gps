@@ -27,6 +27,7 @@ interface NotificationItem {
   message: string;
   date: string;
   tab: string;
+  targetId?: string;
   urgent?: boolean;
 }
 
@@ -45,7 +46,7 @@ interface Props {
   maintenances: ComponentMaintenance[];
   loans: ComponentLoan[];
   maintenanceOverdueDays?: number;
-  onNavigate: (tab: string) => void;
+  onNavigate: (tab: string, itemId?: string) => void;
 }
 
 const iconByKind = {
@@ -158,7 +159,8 @@ export default function AppNotificationCenter({
           title: 'Chamado concluído',
           message: ticket.titulo,
           date,
-          tab: 'support'
+          tab: 'support',
+          targetId: ticket.id
         });
       } else if (lastComment?.source === 'trello') {
         result.push({
@@ -168,6 +170,7 @@ export default function AppNotificationCenter({
           message: ticket.titulo,
           date: lastComment.createdAt || ticket.updatedAt || now.toISOString(),
           tab: 'support',
+          targetId: ticket.id,
           urgent: true
         });
       }
@@ -182,6 +185,7 @@ export default function AppNotificationCenter({
         message: `${license.name} venceu em ${new Date(`${license.expirationDate}T12:00:00`).toLocaleDateString('pt-BR')}.`,
         date: new Date(`${license.expirationDate}T12:00:00`).toISOString(),
         tab: 'licenses',
+        targetId: license.id,
         urgent: true
       });
     });
@@ -194,6 +198,7 @@ export default function AppNotificationCenter({
         message: `${maintenance.componentName} · ${maintenance.providerName}`,
         date: new Date(`${maintenance.sentDate}T12:00:00`).toISOString(),
         tab: 'components',
+        targetId: maintenance.componentId,
         urgent: true
       });
     });
@@ -206,6 +211,7 @@ export default function AppNotificationCenter({
         message: `${loan.contractNumber} · ${loan.thirdPartyName}`,
         date: new Date(`${loan.estimatedReturnDate}T12:00:00`).toISOString(),
         tab: 'loans',
+        targetId: loan.id,
         urgent: true
       });
     });
@@ -236,7 +242,7 @@ export default function AppNotificationCenter({
   const openItem = (item: NotificationItem) => {
     markRead(item.id);
     setOpen(false);
-    onNavigate(item.tab);
+    onNavigate(item.tab, item.targetId);
   };
 
   const panel = open && typeof document !== 'undefined' ? createPortal(
