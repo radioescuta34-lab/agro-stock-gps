@@ -399,7 +399,9 @@ function MeusChamados({ user, focusTicketId, onFocusConsumed }: { user: UserProf
     setHighlightTicketId(focusTicketId);
     onFocusConsumed?.();
     const scrollTimer = window.setTimeout(() => {
-      document.getElementById(`ticket-card-${focusTicketId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const scrollTarget = document.getElementById(`ticket-last-update-${focusTicketId}`)
+        || document.getElementById(`ticket-card-${focusTicketId}`);
+      scrollTarget?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 180);
     const highlightTimer = window.setTimeout(() => setHighlightTicketId(null), 4000);
     return () => {
@@ -647,14 +649,19 @@ function MeusChamados({ user, focusTicketId, onFocusConsumed }: { user: UserProf
                   </div>
                 )}
 
-                {(t.comments || []).map((comment) => {
+                {(t.comments || []).map((comment, commentIndex) => {
                   const fromApp = comment.source === 'app';
+                  const isLastComment = commentIndex === (t.comments?.length || 0) - 1;
                   const isGenericCustomerName = normalizeSupportDisplayName(comment.authorName) === 'cliente';
                   const displayAuthorName = fromApp && isGenericCustomerName
                     ? (t.autorNome || user.name || 'Cliente')
                     : (comment.authorName || (fromApp ? t.autorNome || user.name || 'Cliente' : 'Equipe de suporte'));
                   return (
-                    <div key={comment.id} className={`${fromApp ? 'ml-auto rounded-tr-md border-emerald-100 bg-emerald-50/80 sm:max-w-[78%]' : 'mr-auto rounded-tl-md border-slate-200 bg-white sm:max-w-[78%]'} max-w-[92%] rounded-2xl border px-4 py-3.5 shadow-sm`}>
+                    <div
+                      key={comment.id}
+                      id={isLastComment ? `ticket-last-update-${t.id}` : undefined}
+                      className={`${fromApp ? 'ml-auto rounded-tr-md border-emerald-100 bg-emerald-50/80 sm:max-w-[78%]' : 'mr-auto rounded-tl-md border-slate-200 bg-white sm:max-w-[78%]'} max-w-[92%] rounded-2xl border px-4 py-3.5 shadow-sm`}
+                    >
                       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
                         <span className={`font-extrabold ${fromApp ? 'text-emerald-800' : 'text-slate-700'}`}>{displayAuthorName}</span>
                         <span className={fromApp ? 'text-emerald-600' : 'text-slate-500'}>{fromApp ? 'via Agro Stock' : '· Suporte'}</span>
@@ -679,7 +686,7 @@ function MeusChamados({ user, focusTicketId, onFocusConsumed }: { user: UserProf
               </div>
 
               {isClosed ? (
-                <div className="mt-4 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3.5" role="status">
+                <div id={`ticket-last-update-${t.id}`} className="mt-4 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3.5" role="status">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-emerald-600 shadow-sm ring-1 ring-emerald-100">
                     <CircleCheckBig className="h-4 w-4" />
                   </span>
