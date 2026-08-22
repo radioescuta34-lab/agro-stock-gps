@@ -157,7 +157,7 @@ export default function AppNotificationCenter({
           id: `support-complete-${ticket.id}-${date}`,
           kind: 'support',
           title: 'Chamado concluído',
-          message: ticket.titulo,
+          message: `${ticket.id} · ${ticket.titulo || 'Seu chamado foi marcado como resolvido.'}`,
           date,
           tab: 'support',
           targetId: ticket.id
@@ -167,7 +167,7 @@ export default function AppNotificationCenter({
           id: `support-reply-${ticket.id}-${lastComment.id}`,
           kind: 'support',
           title: 'Suporte respondeu seu chamado',
-          message: ticket.titulo,
+          message: `${ticket.id} · ${ticket.titulo || 'A equipe respondeu ao seu chamado.'}`,
           date: lastComment.createdAt || ticket.updatedAt || now.toISOString(),
           tab: 'support',
           targetId: ticket.id,
