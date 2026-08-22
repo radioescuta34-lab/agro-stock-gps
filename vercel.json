@@ -3,6 +3,12 @@
   "installCommand": "npm install",
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "dist",
+  "crons": [
+    {
+      "path": "/api/cron/alerts",
+      "schedule": "0 11 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { UserProfile } from '../types';
 import { auth } from '../firebase';
 import {
@@ -21,7 +22,8 @@ import {
   ShieldCheck,
   Plus,
   Check,
-  ArrowLeft
+  ArrowLeft,
+  Maximize2
 } from 'lucide-react';
 
 interface SupportAttachment {
@@ -203,6 +205,9 @@ function SupportAttachmentPreview({ ticketId, attachment, user }: {
 }) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -231,19 +236,102 @@ function SupportAttachmentPreview({ ticketId, attachment, user }: {
     };
   }, [attachment.id, ticketId, user]);
 
+  useEffect(() => {
+    if (!expanded) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setExpanded(false);
+        window.requestAnimationFrame(() => triggerRef.current?.focus());
+      } else if (event.key === 'Tab') {
+        event.preventDefault();
+        closeButtonRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [expanded]);
+
+  const closePreview = () => {
+    setExpanded(false);
+    window.requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+
   return (
-    <div className="overflow-hidden rounded-xl border border-emerald-100 bg-white">
-      {previewUrl ? (
-        <img src={previewUrl} alt={attachment.filename} className="aspect-video w-full object-cover" />
-      ) : failed ? (
-        <div className="flex aspect-video items-center justify-center gap-1.5 bg-slate-50 px-2 text-[10px] font-medium text-slate-500">
-          <AlertTriangle className="h-3.5 w-3.5" />Prévia indisponível
-        </div>
-      ) : (
-        <div className="flex aspect-video items-center justify-center bg-slate-50"><Loader2 className="h-4 w-4 animate-spin text-emerald-500" /></div>
+    <>
+      <div className="overflow-hidden rounded-xl border border-emerald-100 bg-white">
+        {previewUrl ? (
+          <button
+            ref={triggerRef}
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="group relative block w-full cursor-zoom-in overflow-hidden bg-slate-100 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500"
+            aria-label={`Ampliar imagem ${attachment.filename}`}
+          >
+            <img src={previewUrl} alt={attachment.filename} className="aspect-video w-full object-cover transition-transform duration-200 group-hover:scale-[1.02] motion-reduce:transition-none" />
+            <span className="absolute bottom-2 right-2 flex h-7 w-7 items-center justify-center rounded-lg bg-slate-950/75 text-white opacity-90 shadow-sm backdrop-blur-sm transition group-hover:bg-slate-950 group-focus-visible:bg-slate-950">
+              <Maximize2 className="h-3.5 w-3.5" />
+            </span>
+          </button>
+        ) : failed ? (
+          <div className="flex aspect-video items-center justify-center gap-1.5 bg-slate-50 px-2 text-[10px] font-medium text-slate-500">
+            <AlertTriangle className="h-3.5 w-3.5" />Prévia indisponível
+          </div>
+        ) : (
+          <div className="flex aspect-video items-center justify-center bg-slate-50"><Loader2 className="h-4 w-4 animate-spin text-emerald-500" /></div>
+        )}
+        <span className="block truncate px-2 py-1.5 text-[10px] font-semibold text-slate-600">{attachment.filename}</span>
+      </div>
+
+      {expanded && previewUrl && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex min-h-0 flex-col bg-slate-950/95 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Visualização ampliada de ${attachment.filename}`}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closePreview();
+          }}
+        >
+          <div className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-2 text-white sm:px-6">
+            <div className="min-w-0">
+              <p className="truncate text-xs font-bold sm:text-sm">{attachment.filename}</p>
+              <p className="mt-0.5 text-[10px] text-slate-400">Imagem anexada à conversa</p>
+            </div>
+            <button
+              ref={closeButtonRef}
+              type="button"
+              onClick={closePreview}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-300 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+              aria-label="Fechar imagem ampliada"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <div
+            className="flex min-h-0 flex-1 cursor-zoom-out items-center justify-center overflow-auto p-3 focus:outline-none sm:p-6"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) closePreview();
+            }}
+          >
+            <img
+              src={previewUrl}
+              alt={attachment.filename}
+              className="max-h-full max-w-full select-none object-contain shadow-2xl"
+            />
+          </div>
+          <div className="shrink-0 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 text-center text-[10px] text-slate-400 sm:pb-4">
+            Toque fora da imagem ou pressione Esc para fechar
+          </div>
+        </div>,
+        document.body
       )}
-      <span className="block truncate px-2 py-1.5 text-[10px] font-semibold text-slate-600">{attachment.filename}</span>
-    </div>
+    </>
   );
 }
 
@@ -417,6 +505,7 @@ function MeusChamados({ user }: { user: UserProfile }) {
     const lastComment = t.comments?.[t.comments.length - 1];
     const latestText = lastComment?.text || t.descricao || '';
     const latestActivityAt = lastComment?.createdAt || t.updatedAt || t.createdAt;
+    const isClosed = t.status === 'Concluído';
     const waitingForCustomer = t.status !== 'Concluído' && lastComment?.source === 'trello';
     const responsibilityLabel = waitingForCustomer ? 'Aguardando você' : 'Aguardando suporte';
     return (
@@ -560,6 +649,17 @@ function MeusChamados({ user }: { user: UserProfile }) {
                 )}
               </div>
 
+              {isClosed ? (
+                <div className="mt-4 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3.5" role="status">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-emerald-600 shadow-sm ring-1 ring-emerald-100">
+                    <CircleCheckBig className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0 pt-0.5">
+                    <p className="text-xs font-extrabold text-emerald-900">Conversa encerrada</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-emerald-700">Este chamado foi concluído e permanece disponível somente para consulta. Para uma nova solicitação, abra outro chamado.</p>
+                  </div>
+                </div>
+              ) : (
               <div className="mt-4 rounded-xl border border-slate-200 bg-white p-2 shadow-sm focus-within:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-500/10">
                 {(replyAttachments[t.id] || []).length > 0 && (
                   <div className="mb-2 flex gap-2 overflow-x-auto px-1 pb-1">
@@ -632,7 +732,8 @@ function MeusChamados({ user }: { user: UserProfile }) {
                   </button>
                 </div>
               </div>
-              {replyErrors[t.id] && <p className="mt-2 text-[11px] font-medium text-rose-600" role="alert">{replyErrors[t.id]}</p>}
+              )}
+              {!isClosed && replyErrors[t.id] && <p className="mt-2 text-[11px] font-medium text-rose-600" role="alert">{replyErrors[t.id]}</p>}
             </section>
 
             {typeof t.anexosEnviados === 'number' && t.anexosEnviados > 0 && (

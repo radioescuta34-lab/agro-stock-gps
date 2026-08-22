@@ -1,4 +1,4 @@
-const CACHE_NAME = 'agro-stock-gps-v4';
+const CACHE_NAME = 'agro-stock-gps-v5';
 const STATIC_ASSETS = [
   '/manifest.json',
   '/icon-128.png',
@@ -39,8 +39,41 @@ self.addEventListener('message', (event) => {
   }
 });
 
+// Web Push — exibe alertas mesmo quando a janela do app está fechada.
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch {
+    payload = { title: 'Agro Stock GPS', body: event.data?.text() || 'Você recebeu uma nova notificação.' };
+  }
+  event.waitUntil(self.registration.showNotification(payload.title || 'Agro Stock GPS', {
+    body: payload.body || 'Há uma nova atualização no sistema.',
+    icon: payload.icon || '/icon-192.png',
+    badge: payload.badge || '/icon-128.png',
+    tag: payload.tag || 'agro-stock-notification',
+    renotify: true,
+    data: { url: payload.url || '/' }
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of windows) {
+      if ('focus' in client) {
+        await client.navigate(targetUrl);
+        return client.focus();
+      }
+    }
+    return self.clients.openWindow(targetUrl);
+  })());
+});
+
 // Fetch — estratégia dual
-const SENSITIVE_PATHS = ['/api/licenses/', '/api/admin/', '/api/loans/'];
+const SENSITIVE_PATHS = ['/api/licenses/', '/api/admin/', '/api/loans/', '/api/notifications/'];
 
 self.addEventListener('fetch', (event) => {
   const { request } = event;

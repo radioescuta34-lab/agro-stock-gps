@@ -1,9 +1,10 @@
 import express from "express";
 import path from "path";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createWorker } from "tesseract.js";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
+import webpush from "web-push";
 import { getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { FieldValue, getFirestore } from "firebase-admin/firestore";
@@ -50,6 +51,62 @@ const SUPPORT_ALLOWED_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "im
 const SUPPORT_MAX_ATTACHMENTS = 4;
 const SUPPORT_MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024;
 const HAS_FIRESTORE_CREDS = !!process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+
+type PushPayload = { title: string; body: string; url?: string; tag?: string };
+
+function webPushConfigured(): boolean {
+  return Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+}
+
+async function sendPushToSubscriptions(snapshot: FirebaseFirestore.QuerySnapshot, payload: PushPayload): Promise<void> {
+  if (!webPushConfigured() || snapshot.empty) return;
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || "mailto:suporte@agrostockgps.com",
+    process.env.VAPID_PUBLIC_KEY!,
+    process.env.VAPID_PRIVATE_KEY!
+  );
+  await Promise.all(snapshot.docs.map(async subscriptionDoc => {
+    const subscription = subscriptionDoc.data()?.subscription;
+    if (!subscription?.endpoint) return;
+    try {
+      await webpush.sendNotification(subscription, JSON.stringify({
+        ...payload,
+        icon: "/icon-192.png",
+        badge: "/icon-128.png",
+        url: payload.url || "/"
+      }));
+    } catch (error: any) {
+      if (error?.statusCode === 404 || error?.statusCode === 410) {
+        await subscriptionDoc.ref.delete().catch(() => undefined);
+      } else {
+        console.error("Falha ao entregar Web Push:", error?.message || error);
+      }
+    }
+  }));
+}
+
+async function sendPushToUser(uid: string, payload: PushPayload): Promise<void> {
+  if (!HAS_FIRESTORE_CREDS || !uid || !webPushConfigured()) return;
+  const snapshot = await getFirestore().collection("pushSubscriptions").where("uid", "==", uid).get();
+  await sendPushToSubscriptions(snapshot, payload);
+}
+
+async function sendPushToAll(payload: PushPayload): Promise<void> {
+  if (!HAS_FIRESTORE_CREDS || !webPushConfigured()) return;
+  const snapshot = await getFirestore().collection("pushSubscriptions").get();
+  await sendPushToSubscriptions(snapshot, payload);
+}
+
+async function sendUniqueDailyPush(eventId: string, payload: PushPayload, now: Date): Promise<void> {
+  if (!HAS_FIRESTORE_CREDS || !webPushConfigured()) return;
+  const db = getFirestore();
+  const deliveryId = createHash("sha256").update(`${todayStr(now)}:${eventId}`).digest("hex");
+  const deliveryRef = db.collection("notificationDeliveries").doc(deliveryId);
+  const existing = await deliveryRef.get();
+  if (existing.exists) return;
+  await deliveryRef.set({ eventId, deliveredAt: FieldValue.serverTimestamp() });
+  await sendPushToAll(payload);
+}
 
 function generateFallbackTicketId(): string {
   const year = new Date().getFullYear();
@@ -322,16 +379,20 @@ type SupportComment = {
   attachments?: Array<{ id: string; filename: string; url: string }>;
 };
 
+type SupportCommentAttachment = NonNullable<SupportComment["attachments"]>[number];
+
 const SUPPORT_APP_COMMENT_HEADER = "Resposta do cliente via Agro Stock GPS";
 const SUPPORT_WAITING_LABELS = {
   client: { name: "Aguardando cliente", color: "yellow", aliases: ["aguardando cliente", "aguardando usuario"] },
   support: { name: "Aguardando suporte", color: "sky", aliases: ["aguardando suporte", "aguardando equipe"] }
 } as const;
+const SUPPORT_RESOLVED_LABEL_ALIASES = ["resolvido", "resolvida"];
 
 type SupportWaitingSide = keyof typeof SUPPORT_WAITING_LABELS;
 
 let trelloWaitingLabelCache: { map: Map<SupportWaitingSide, string>; fetchedAt: number } | null = null;
 let trelloWaitingLabelPromise: Promise<Map<SupportWaitingSide, string>> | null = null;
+let trelloResolvedLabelCache: { id: string; fetchedAt: number } | null = null;
 
 async function getTrelloWaitingLabelMap(
   apiKey: string,
@@ -424,6 +485,43 @@ async function setTrelloWaitingState(
   }
 }
 
+async function addTrelloResolvedLabel(
+  apiKey: string,
+  apiToken: string,
+  listId: string,
+  cardId: string
+): Promise<void> {
+  let labelId = trelloResolvedLabelCache && Date.now() - trelloResolvedLabelCache.fetchedAt < 5 * 60 * 1000
+    ? trelloResolvedLabelCache.id
+    : "";
+
+  if (!labelId) {
+    const boardId = await resolveTrelloBoardId(apiKey, apiToken, listId);
+    if (!boardId) throw new Error("Não foi possível identificar o quadro do Trello.");
+    const query = new URLSearchParams({ key: apiKey, token: apiToken, fields: "id,name", limit: "1000" });
+    const labelsRes = await trelloFetch(`/boards/${encodeURIComponent(boardId)}/labels?${query.toString()}`);
+    if (!labelsRes.ok) throw new Error(`Não foi possível consultar as etiquetas do Trello (${labelsRes.status}).`);
+    const labels = await labelsRes.json();
+    const resolvedLabel = Array.isArray(labels)
+      ? labels.find((label: any) => SUPPORT_RESOLVED_LABEL_ALIASES.includes(normalizeTrelloLabelName(label?.name || "")))
+      : null;
+    labelId = typeof resolvedLabel?.id === "string" ? resolvedLabel.id : "";
+    if (!labelId) throw new Error('A etiqueta "Resolvido" não foi encontrada no quadro do Trello.');
+    trelloResolvedLabelCache = { id: labelId, fetchedAt: Date.now() };
+  }
+
+  const cardQuery = new URLSearchParams({ key: apiKey, token: apiToken, fields: "idLabels" });
+  const cardRes = await trelloFetch(`/cards/${encodeURIComponent(cardId)}?${cardQuery.toString()}`);
+  if (!cardRes.ok) throw new Error(`Não foi possível consultar o card do Trello (${cardRes.status}).`);
+  const card = await cardRes.json();
+  const currentLabels = new Set<string>(Array.isArray(card?.idLabels) ? card.idLabels : []);
+  if (currentLabels.has(labelId)) return;
+
+  const addQuery = new URLSearchParams({ key: apiKey, token: apiToken, value: labelId });
+  const addRes = await trelloFetch(`/cards/${encodeURIComponent(cardId)}/idLabels?${addQuery.toString()}`, { method: "POST" });
+  if (!addRes.ok) throw new Error(`Não foi possível aplicar a etiqueta "Resolvido" (${addRes.status}).`);
+}
+
 function isValidTrelloWebhookSignature(rawBody: Buffer, receivedSignature: string): boolean {
   const secret = process.env.TRELLO_API_SECRET || "";
   const callbackUrl = process.env.TRELLO_WEBHOOK_CALLBACK_URL || "";
@@ -434,25 +532,49 @@ function isValidTrelloWebhookSignature(rawBody: Buffer, receivedSignature: strin
   return expectedBuffer.length === receivedBuffer.length && timingSafeEqual(expectedBuffer, receivedBuffer);
 }
 
+function extractSupportCommentAttachments(rawText: string): {
+  attachments: SupportCommentAttachment[];
+  textWithoutAttachmentMarkdown: string;
+} {
+  const attachments: SupportCommentAttachment[] = [];
+  const seenAttachmentIds = new Set<string>();
+  // Trello represents files inserted into comments as Markdown images. Comments
+  // created by Agro Stock use a regular Markdown link prefixed by "Anexo".
+  const attachmentPattern = /!?\[([^\]]+)]\((https?:\/\/[^)\s]*\/attachments\/([a-f0-9]{24})(?:\/[^)\s]*)?)\)/gi;
+
+  for (const match of rawText.matchAll(attachmentPattern)) {
+    const attachmentId = match[3];
+    if (!attachmentId || seenAttachmentIds.has(attachmentId)) continue;
+    seenAttachmentIds.add(attachmentId);
+    attachments.push({
+      id: attachmentId,
+      filename: match[1].trim() || "Imagem anexada",
+      url: match[2]
+    });
+  }
+
+  const textWithoutAttachmentMarkdown = rawText
+    .replace(attachmentPattern, "")
+    .replace(/^\s*\*\*Anexo:\*\*\s*$/gim, "")
+    .replace(/[ \t]+\r?\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return { attachments, textWithoutAttachmentMarkdown };
+}
+
 function parseSupportComment(action: any): SupportComment | null {
   const rawText = typeof action?.data?.text === "string" ? action.data.text.trim() : "";
   if (!rawText || typeof action?.id !== "string") return null;
 
   const isAppComment = rawText.includes(SUPPORT_APP_COMMENT_HEADER);
+  const parsedAttachments = extractSupportCommentAttachments(rawText);
   const appAuthor = isAppComment
     ? rawText.match(/\*\*Nome:\*\*\s*([^\r\n]+)/i)?.[1]?.trim() || "Cliente"
     : "";
   const appBody = isAppComment
     ? rawText.split(/\r?\n\s*\r?\n/).slice(1).join("\n\n").trim()
-    : rawText;
-  const attachments: Array<{ id: string; filename: string; url: string }> = [];
-  if (isAppComment) {
-    const attachmentPattern = /\*\*Anexo:\*\*\s*\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/gi;
-    for (const match of rawText.matchAll(attachmentPattern)) {
-      const attachmentId = match[2].match(/\/attachments\/([a-f0-9]{24})(?:\/|$)/i)?.[1] || "";
-      attachments.push({ id: attachmentId, filename: match[1].trim(), url: match[2] });
-    }
-  }
+    : parsedAttachments.textWithoutAttachmentMarkdown;
   const trelloAuthor = typeof action?.memberCreator?.fullName === "string" && action.memberCreator.fullName.trim()
     ? action.memberCreator.fullName.trim()
     : typeof action?.memberCreator?.username === "string" && action.memberCreator.username.trim()
@@ -465,7 +587,7 @@ function parseSupportComment(action: any): SupportComment | null {
     createdAt: typeof action?.date === "string" ? action.date : null,
     authorName: isAppComment ? appAuthor : trelloAuthor,
     source: isAppComment ? "app" : "trello",
-    attachments
+    attachments: parsedAttachments.attachments
   };
 }
 
@@ -589,6 +711,40 @@ export async function createApp() {
   }));
   app.use(express.urlencoded({ limit: "15mb", extended: true }));
 
+  app.get("/api/notifications/public-key", (_req, res) => {
+    res.json({ configured: webPushConfigured(), publicKey: process.env.VAPID_PUBLIC_KEY || "" });
+  });
+
+  app.post("/api/notifications/subscribe", async (req, res) => {
+    try {
+      const requester = await resolveSupportRequester(req);
+      if (requester.invalidToken || !requester.uid) return res.status(401).json({ error: "Autenticação necessária." });
+      if (process.env.NODE_ENV === "production" && !requester.verified) {
+        return res.status(401).json({ error: "Uma sessão Firebase válida é necessária para ativar Web Push." });
+      }
+      if (!HAS_FIRESTORE_CREDS || !webPushConfigured()) {
+        return res.status(503).json({ error: "Web Push ainda não foi configurado neste ambiente." });
+      }
+      const subscription = req.body?.subscription;
+      if (!subscription?.endpoint || !subscription?.keys?.p256dh || !subscription?.keys?.auth) {
+        return res.status(400).json({ error: "Assinatura de dispositivo inválida." });
+      }
+      const id = createHash("sha256").update(String(subscription.endpoint)).digest("hex");
+      await getFirestore().collection("pushSubscriptions").doc(id).set({
+        uid: requester.uid,
+        email: requester.email,
+        name: requester.name,
+        subscription,
+        userAgent: String(req.headers["user-agent"] || "").slice(0, 500),
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true });
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error("Erro ao registrar Web Push:", error?.message || error);
+      return res.status(500).json({ error: "Não foi possível ativar notificações neste dispositivo." });
+    }
+  });
+
   // Trello validates the callback with HEAD before creating a webhook.
   app.head("/api/support/trello/webhook", (_req, res) => res.sendStatus(200));
 
@@ -616,19 +772,51 @@ export async function createApp() {
 
       if (actionType === "commentCard") {
         const text = typeof action?.data?.text === "string" ? action.data.text : "";
-        await setTrelloWaitingState(apiKey, apiToken, listId, cardId, text.includes(SUPPORT_APP_COMMENT_HEADER) ? "support" : "client");
+        const isAppComment = text.includes(SUPPORT_APP_COMMENT_HEADER);
+        await setTrelloWaitingState(apiKey, apiToken, listId, cardId, isAppComment ? "support" : "client");
+        if (!isAppComment && HAS_FIRESTORE_CREDS) {
+          const ticketSnapshot = await getFirestore().collection("supportTickets").where("trelloCardId", "==", cardId).limit(1).get();
+          if (!ticketSnapshot.empty) {
+            const ticket = ticketSnapshot.docs[0].data();
+            await sendPushToUser(ticket.autorUid, {
+              title: "Nova resposta do suporte",
+              body: ticket.titulo || "A equipe respondeu ao seu chamado.",
+              url: "/?open=support",
+              tag: `support-reply-${ticketSnapshot.docs[0].id}`
+            });
+          }
+        }
       } else if (actionType === "updateCard" && typeof action?.data?.listAfter?.id === "string") {
         const statusMap = await getTrelloListStatusMap(apiKey, apiToken, listId);
         const status = statusMap.get(action.data.listAfter.id) || "";
-        if (status === "Concluído") await setTrelloWaitingState(apiKey, apiToken, listId, cardId, null);
+        let labelSyncError: unknown = null;
+        if (status === "Concluído") {
+          try {
+            await setTrelloWaitingState(apiKey, apiToken, listId, cardId, null);
+            await addTrelloResolvedLabel(apiKey, apiToken, listId, cardId);
+          } catch (error) {
+            labelSyncError = error;
+          }
+        }
 
         if (HAS_FIRESTORE_CREDS && status) {
           const db = getFirestore();
           const snapshot = await db.collection("supportTickets").where("trelloCardId", "==", cardId).limit(1).get();
           if (!snapshot.empty) {
+            const ticket = snapshot.docs[0].data();
             await snapshot.docs[0].ref.update({ status, updatedAt: FieldValue.serverTimestamp() });
+            if (status === "Concluído") {
+              await sendPushToUser(ticket.autorUid, {
+                title: "Chamado concluído",
+                body: ticket.titulo || "Seu chamado foi marcado como resolvido.",
+                url: "/?open=support",
+                tag: `support-complete-${snapshot.docs[0].id}`
+              });
+            }
           }
         }
+
+        if (labelSyncError) throw labelSyncError;
       }
 
       return res.sendStatus(200);
@@ -1762,6 +1950,7 @@ ${extractedText}`;
       }
 
       let trelloCardId = "";
+      let ticketStatus = "";
       if (HAS_FIRESTORE_CREDS) {
         const ticketDoc = await getFirestore().collection("supportTickets").doc(ticketId).get();
         const ticket = ticketDoc.exists ? ticketDoc.data() as any : null;
@@ -1769,13 +1958,38 @@ ${extractedText}`;
           return res.status(404).json({ error: "Chamado não encontrado." });
         }
         trelloCardId = typeof ticket.trelloCardId === "string" ? ticket.trelloCardId : "";
+        ticketStatus = typeof ticket.status === "string" ? ticket.status : "";
       } else {
         const tickets = await loadTrelloTicketsForRequester(apiKey, apiToken, listId, requester);
         const ticket = tickets.find((item) => item.id === ticketId);
         trelloCardId = typeof ticket?.trelloCardId === "string" ? ticket.trelloCardId : "";
+        ticketStatus = typeof ticket?.status === "string" ? ticket.status : "";
       }
       if (!trelloCardId) {
         return res.status(404).json({ error: "Chamado não encontrado ou sem vínculo com o atendimento." });
+      }
+
+      if (ticketStatus === "Concluído") {
+        return res.status(409).json({ error: "Este chamado já foi concluído e não aceita novas mensagens." });
+      }
+
+      // Firestore can be a few seconds behind a move made directly in Trello.
+      // Confirm the card's current list before accepting text or attachments.
+      try {
+        const [statusMap, cardRes] = await Promise.all([
+          getTrelloListStatusMap(apiKey, apiToken, listId),
+          trelloFetch(`/cards/${encodeURIComponent(trelloCardId)}?key=${apiKey}&token=${apiToken}&fields=idList,closed`)
+        ]);
+        if (cardRes.ok) {
+          const card = await cardRes.json();
+          const currentStatus = typeof card?.idList === "string" ? statusMap.get(card.idList) || "" : "";
+          if (card?.closed === true || currentStatus === "Concluído") {
+            return res.status(409).json({ error: "Este chamado já foi concluído e não aceita novas mensagens." });
+          }
+        }
+      } catch (error: any) {
+        // The stored status remains the fallback when Trello is temporarily unavailable.
+        console.error(`Erro ao confirmar status do ticket ${ticketId}:`, error?.message || error);
       }
 
       const authorName = (requester.name || requestedAuthorName || "Cliente").replace(/[\r\n]+/g, " ").trim().slice(0, 160) || "Cliente";
@@ -2287,6 +2501,54 @@ ${extractedText}`;
               result.idle.count = idleComponents.length;
             }
           }
+        }
+      }
+
+      // Native operational alerts are independent from the optional email recipients.
+      // The delivery marker prevents the scheduled route from repeating the same alert all day.
+      if (webPushConfigured()) {
+        const [licenseSnapshot, maintenanceSnapshot, loanSnapshot] = await Promise.all([
+          db.collection("licenses").get(),
+          db.collection("maintenances").get(),
+          db.collection("loans").get()
+        ]);
+        const today = todayStr(now);
+        const expiredLicenses = licenseSnapshot.docs
+          .map(document => ({ id: document.id, ...document.data() } as any))
+          .filter(license => license.expirationDate && license.expirationDate < today);
+        const overdueMaintenanceDays = Number(maintSettings?.overdueDays) || 7;
+        const overdueMaintenances = getOverdueMaintenances(
+          maintenanceSnapshot.docs.map(document => ({ id: document.id, ...document.data() })),
+          overdueMaintenanceDays,
+          now
+        );
+        const overdueLoans = loanSnapshot.docs
+          .map(document => ({ id: document.id, ...document.data() } as any))
+          .filter(loan => loan.status === "Ativo" && loan.estimatedReturnDate && loan.estimatedReturnDate < today);
+
+        if (expiredLicenses.length > 0) {
+          await sendUniqueDailyPush("expired-licenses", {
+            title: expiredLicenses.length === 1 ? "1 licença vencida" : `${expiredLicenses.length} licenças vencidas`,
+            body: "Revise as licenças que precisam de renovação.",
+            url: "/?open=licenses",
+            tag: "expired-licenses"
+          }, now);
+        }
+        if (overdueMaintenances.length > 0) {
+          await sendUniqueDailyPush("overdue-maintenances", {
+            title: overdueMaintenances.length === 1 ? "1 manutenção atrasada" : `${overdueMaintenances.length} manutenções atrasadas`,
+            body: "Há equipamentos que ainda não retornaram da assistência.",
+            url: "/?open=components",
+            tag: "overdue-maintenances"
+          }, now);
+        }
+        if (overdueLoans.length > 0) {
+          await sendUniqueDailyPush("overdue-loans", {
+            title: overdueLoans.length === 1 ? "1 empréstimo atrasado" : `${overdueLoans.length} empréstimos atrasados`,
+            body: "Revise as devoluções pendentes.",
+            url: "/?open=loans",
+            tag: "overdue-loans"
+          }, now);
         }
       }
 

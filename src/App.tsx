@@ -33,8 +33,10 @@ import {
   ComponentStatus,
   MaintenanceProvider,
   Partner,
+  PartnerType,
   FieldDataCollection,
   DashboardNavPreset,
+  MachineType,
   LicenseSettings,
   CampoAlertSettings,
   LoanAlertSettings,
@@ -42,8 +44,11 @@ import {
   IdleAlertSettings,
   AlertHistoryEntry,
   MovementStatus,
-  MovementHistoryEntry
+  MovementHistoryEntry,
+  RegisteredType,
+  RegisteredTypeCategory
 } from './types';
+import { DEFAULT_REGISTERED_TYPES, DEFAULT_TYPE_NAMES, CORE_SERVICE_ACTIONS } from './constants/typeRegistry';
 import AuthScreen from './components/AuthScreen';
 import { useNotifications } from './components/NotificationProvider';
 import { hashPassword } from './utils/crypto';
@@ -57,6 +62,7 @@ import PartnersTab from './components/PartnersTab';
 import ProfileTab from './components/ProfileTab';
 import SupportTab from './components/SupportTab';
 import SettingsTab from './components/SettingsTab';
+import AppNotificationCenter from './components/AppNotificationCenter';
 import { useLicenseAlertSettings } from './hooks/useLicenseAlertSettings';
 import { useCampoAlertSettings } from './hooks/useCampoAlertSettings';
 import { useLoanAlertSettings } from './hooks/useLoanAlertSettings';
@@ -143,6 +149,7 @@ export default function App() {
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(DEFAULT_COMPANY_PROFILE);
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
   const [fieldDataCollections, setFieldDataCollections] = useState<FieldDataCollection[]>([]);
+  const [typeRegistry, setTypeRegistry] = useState<RegisteredType[]>([]);
   const [movementsSubTab, setMovementsSubTab] = useState<'os' | 'kanban' | undefined>(undefined);
   const [licensePresetFilter, setLicensePresetFilter] = useState<'active' | 'expired' | null>(null);
   const [componentPresetFilter, setComponentPresetFilter] = useState<DashboardNavPreset | null>(null);
@@ -158,6 +165,18 @@ export default function App() {
   const { loanSettings, saveLoanSettings } = useLoanAlertSettings(isDemoMode);
   const { maintenanceSettings, saveMaintenanceSettings } = useMaintenanceAlertSettings(isDemoMode);
   const { idleSettings, saveIdleSettings } = useIdleAlertSettings(isDemoMode);
+
+  useEffect(() => {
+    if (!user) return;
+    const params = new URLSearchParams(window.location.search);
+    const target = params.get('open');
+    if (target && ['support', 'licenses', 'components', 'loans', 'movements'].includes(target)) {
+      setCurrentTab(target);
+      params.delete('open');
+      const cleanQuery = params.toString();
+      window.history.replaceState({}, '', `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ''}${window.location.hash}`);
+    }
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!isUserMenuOpen) return;
@@ -931,6 +950,27 @@ export default function App() {
       (error) => handleFirestoreError(error, OperationType.LIST, 'partners')
     );
 
+    // Type Registry Listener
+    const unsubTypeRegistry = onSnapshot(
+      collection(db, 'type_registry'),
+      (snapshot) => {
+        const list: RegisteredType[] = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          list.push({
+            id: d.id,
+            category: data.category || 'partner',
+            name: data.name || '',
+            active: data.active !== false,
+            updatedAt: data.updatedAt,
+            updatedBy: data.updatedBy || ''
+          });
+        });
+        setTypeRegistry(list);
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'type_registry')
+    );
+
     // Company Profile Listener
     const unsubCompany = onSnapshot(
       doc(db, 'settings', 'company'),
@@ -998,6 +1038,7 @@ export default function App() {
       unsubMaintenances();
       unsubProviders();
       unsubPartners();
+      unsubTypeRegistry();
       unsubCompany();
       unsubUsers();
     };
@@ -1045,6 +1086,7 @@ export default function App() {
     const localCompany = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}company_profile`);
     const localUsers = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}users`);
     const localFieldData = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}field_data_collections`);
+    const localTypeRegistry = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}type_registry`);
  
     if (localComponents) setComponents(JSON.parse(localComponents));
     if (localMachines) setMachines(JSON.parse(localMachines));
@@ -1056,6 +1098,11 @@ export default function App() {
     if (localProviders) setProviders(JSON.parse(localProviders));
     if (localPartners) setPartners(JSON.parse(localPartners));
     if (localFieldData) setFieldDataCollections(JSON.parse(localFieldData));
+    if (localTypeRegistry) {
+      setTypeRegistry(JSON.parse(localTypeRegistry));
+    } else {
+      setTypeRegistry(DEFAULT_REGISTERED_TYPES);
+    }
     if (localCompany) {
       setCompanyProfile(JSON.parse(localCompany));
     } else {
@@ -1103,7 +1150,7 @@ export default function App() {
   }, [isDemoMode]);
 
   // Sync demo mode states to localStorage
-  const saveDemoData = (type: 'components' | 'machines' | 'movements' | 'licenses' | 'third_parties' | 'loans' | 'maintenances' | 'providers' | 'partners' | 'company_profile' | 'users' | 'field_data_collections', data: any) => {
+  const saveDemoData = (type: 'components' | 'machines' | 'movements' | 'licenses' | 'third_parties' | 'loans' | 'maintenances' | 'providers' | 'partners' | 'company_profile' | 'users' | 'field_data_collections' | 'type_registry', data: any) => {
     if (!isDemoMode) return;
     localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}${type}`, JSON.stringify(data));
   };
@@ -1145,6 +1192,7 @@ export default function App() {
       setThirdParties([]);
       setLoans([]);
       setMaintenances([]);
+      setTypeRegistry([]);
     } else {
       try {
         await signOut(auth);
@@ -1235,6 +1283,7 @@ export default function App() {
       localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}third_parties`, JSON.stringify(initialThirdParties));
       localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}loans`, JSON.stringify(initialLoans));
       localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}maintenances`, JSON.stringify(initialMaintenances));
+      localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}type_registry`, JSON.stringify(DEFAULT_REGISTERED_TYPES));
     }
   };
 
@@ -1293,6 +1342,22 @@ export default function App() {
           id: docRef.id,
           updatedAt: serverTimestamp()
         });
+      }
+
+      // Insert default type registry
+      const registrySnap = await getDocs(collection(db, 'type_registry'));
+      if (registrySnap.empty) {
+        for (const t of DEFAULT_REGISTERED_TYPES) {
+          const docRef = doc(collection(db, 'type_registry'));
+          await setDoc(docRef, {
+            id: docRef.id,
+            category: t.category,
+            name: t.name,
+            active: true,
+            updatedAt: serverTimestamp(),
+            updatedBy: user?.name || user?.email || 'Sistema'
+          });
+        }
       }
 
       // We will let Firestore listener update the local react state automatically!
@@ -1376,6 +1441,101 @@ export default function App() {
       } catch (err) {
         handleFirestoreError(err, OperationType.DELETE, `components/${id}`);
       }
+    }
+  };
+
+  // Type Registry (Settings > Cadastro)
+  const handleAddRegisteredType = async (category: RegisteredTypeCategory, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (typeRegistry.some(t => t.category === category && t.name.toLowerCase() === trimmed.toLowerCase())) {
+      showToast('error', 'Já existe um tipo com esse nome nesta lista.');
+      return;
+    }
+    if (isDemoMode) {
+      const newType: RegisteredType = {
+        id: 'demo_type_' + Math.random().toString(36).substr(2, 9),
+        category,
+        name: trimmed,
+        active: true,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user?.name || 'Sistema'
+      };
+      const updatedList = [...typeRegistry, newType];
+      setTypeRegistry(updatedList);
+      saveDemoData('type_registry', updatedList);
+    } else {
+      try {
+        const docRef = doc(collection(db, 'type_registry'));
+        await setDoc(docRef, {
+          id: docRef.id,
+          category,
+          name: trimmed,
+          active: true,
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.name || user?.email || 'Sistema'
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, 'type_registry');
+      }
+    }
+  };
+
+  const handleUpdateRegisteredType = async (id: string, updates: Partial<Omit<RegisteredType, 'id' | 'updatedAt' | 'updatedBy'>>) => {
+    if (isDemoMode) {
+      const updatedList = typeRegistry.map(t => t.id === id ? { ...t, ...updates, updatedAt: new Date().toISOString(), updatedBy: user?.name || 'Sistema' } : t);
+      setTypeRegistry(updatedList);
+      saveDemoData('type_registry', updatedList);
+    } else {
+      try {
+        await updateDoc(doc(db, 'type_registry', id), {
+          ...updates,
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.name || user?.email || 'Sistema'
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `type_registry/${id}`);
+      }
+    }
+  };
+
+  const handleDeleteRegisteredType = async (id: string) => {
+    if (isDemoMode) {
+      const updatedList = typeRegistry.filter(t => t.id !== id);
+      setTypeRegistry(updatedList);
+      saveDemoData('type_registry', updatedList);
+    } else {
+      try {
+        await deleteDoc(doc(db, 'type_registry', id));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `type_registry/${id}`);
+      }
+    }
+  };
+
+  // Active registered names for a category; falls back to defaults when registry is empty.
+  const getActiveTypes = (category: RegisteredTypeCategory): string[] => {
+    const entries = typeRegistry.filter(t => t.category === category && t.active).map(t => t.name);
+    if (entries.length === 0) return DEFAULT_TYPE_NAMES[category];
+    return Array.from(new Set(entries));
+  };
+
+  // How many records reference a given registered type name.
+  const getTypeUsageCount = (category: RegisteredTypeCategory, name: string): number => {
+    switch (category) {
+      case 'partner':
+        return partners.filter(p => p.types.includes(name as any)).length;
+      case 'equipment_component':
+        return components.filter(c => c.type === name).length
+          + loans.filter(l => l.status === 'Ativo' && l.items.some(i => i.componentType === name)).length;
+      case 'equipment_machine':
+        return machines.filter(m => m.type === name).length
+          + fieldDataCollections.filter(f => f.machineType === name).length;
+      case 'service':
+        return movements.filter(mv => mv.action === name).length
+          + maintenances.filter(mt => mt.serviceType === name).length;
+      default:
+        return 0;
     }
   };
 
@@ -1594,11 +1754,12 @@ export default function App() {
     const actorName = user?.name || user?.email || 'Técnico';
 
     const history = movement.history || [];
+    const normalizedDetail = detail?.trim();
     const entry: MovementHistoryEntry = {
       timestamp: timestampStr,
       actorName,
       action: actionLabel,
-      detail
+      ...(normalizedDetail ? { detail: normalizedDetail } : {})
     };
 
     const currentStatus = movement.status || 'Aberta';
@@ -2943,8 +3104,20 @@ export default function App() {
 
             </div>
 
+            {/* Notification center — shared by desktop and mobile */}
+            <div className="ml-auto flex items-center">
+              <AppNotificationCenter
+                user={user}
+                licenses={licenses}
+                maintenances={maintenances}
+                loans={loans}
+                maintenanceOverdueDays={maintenanceSettings?.overdueDays || 7}
+                onNavigate={(tab) => navigateToTab(tab)}
+              />
+            </div>
+
             {/* User Profile / Logout Area */}
-            <div className="ml-auto hidden items-center md:flex">
+            <div className="hidden items-center md:flex">
               <div className="relative">
                 <button
                   onClick={() => {
@@ -3022,7 +3195,7 @@ export default function App() {
             </div>
 
             {/* Mobile menu button */}
-            <div className="ml-auto flex items-center md:hidden">
+            <div className="flex items-center md:hidden">
               <button
                 onClick={() => {
                   setIsUserMenuOpen(false);
@@ -3160,6 +3333,8 @@ export default function App() {
             role={user.role}
             initialStatusFilter={componentPresetFilter?.componentStatus}
             initialBrandFilter={componentPresetFilter?.componentBrand}
+            componentTypes={getActiveTypes('equipment_component')}
+            serviceTypes={getActiveTypes('service')}
             onAddComponent={handleAddComponent}
             onEditComponent={handleEditComponent}
             onDeleteComponent={handleDeleteComponent}
@@ -3221,6 +3396,7 @@ export default function App() {
             fieldDataCollections={fieldDataCollections}
             role={user.role}
             initialTypeFilter={machinePresetFilter?.machineType}
+            machineTypes={getActiveTypes('equipment_machine') as MachineType[]}
             onAddMachine={handleAddMachine}
             onEditMachine={handleEditMachine}
             onDeleteMachine={handleDeleteMachine}
@@ -3236,6 +3412,7 @@ export default function App() {
             role={user.role}
             currentUserId={user.uid}
             currentUserName={user.name}
+            extraServiceActions={getActiveTypes('service').filter(a => !CORE_SERVICE_ACTIONS.includes(a))}
             onAddMovement={handleAddMovement}
             onUpdateMovement={handleUpdateMovement}
             onDeleteMovement={handleDeleteMovement}
@@ -3280,6 +3457,7 @@ export default function App() {
             role={user.role}
             maintenances={maintenances}
             loans={loans}
+            partnerTypes={getActiveTypes('partner') as PartnerType[]}
             onAddPartner={handleAddPartner}
             onEditPartner={handleEditPartner}
             onDeactivatePartner={handleDeactivatePartner}
@@ -3313,6 +3491,11 @@ export default function App() {
             maintenances={maintenances}
             currentUser={user}
             isDemoMode={isDemoMode}
+            typeRegistry={typeRegistry}
+            onAddType={handleAddRegisteredType}
+            onUpdateType={handleUpdateRegisteredType}
+            onDeleteType={handleDeleteRegisteredType}
+            getTypeUsageCount={getTypeUsageCount}
             onUpdateCompany={handleUpdateCompany}
             onAddUser={handleAddUser}
             onEditUser={handleEditUser}
