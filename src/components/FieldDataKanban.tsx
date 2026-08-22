@@ -17,7 +17,11 @@ import {
   ChevronRight,
   MousePointerClick,
   Columns3,
-  History
+  History,
+  CircleDashed,
+  Activity,
+  Check,
+  Loader2
 } from 'lucide-react';
 
 interface FieldDataKanbanProps {
@@ -295,23 +299,36 @@ export default function FieldDataKanban({
 
     const totalInFrente = allMachinesInFrente.length;
     const completedInFrente = allMachinesInFrente.filter(m => getMachineStatus(m.id) === 'Concluído').length;
+    const frenteProgress = totalInFrente > 0 ? Math.round((completedInFrente / totalInFrente) * 100) : 0;
     return (
       <div 
         key={frenteName} 
-        className={`bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden`}
+        className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-[0_8px_24px_-20px_rgba(15,23,42,0.55)]"
       >
         {/* Frente Header */}
-        <div className="px-4 py-3 border-b border-slate-100 flex justify-between items-center gap-2">
-          <h4 className="font-bold text-sm text-slate-900 truncate">
-            {frenteName}
-          </h4>
-          <span className="text-[11px] text-slate-500 font-semibold whitespace-nowrap">
-            {completedInFrente}/{totalInFrente} máquinas
-          </span>
+        <div className="border-b border-slate-100 px-4 py-3.5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <span className="text-[9px] font-bold uppercase tracking-[0.16em] text-slate-400">Frente operacional</span>
+              <h4 className="mt-0.5 truncate text-sm font-bold text-slate-900">{frenteName}</h4>
+            </div>
+            <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-600">
+              {completedInFrente}/{totalInFrente}
+            </span>
+          </div>
+          <div className="mt-3 flex items-center gap-2.5">
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full bg-emerald-500 transition-all duration-500"
+                style={{ width: `${frenteProgress}%` }}
+              />
+            </div>
+            <span className="text-[10px] font-bold tabular-nums text-slate-500">{frenteProgress}%</span>
+          </div>
         </div>
 
         {/* Machine List */}
-        <div className="space-y-2 bg-slate-50/60 p-2">
+        <div className="space-y-2.5 bg-slate-50/70 p-2.5">
           {filteredMachines.length === 0 ? (
             <p className="rounded-lg bg-white px-4 py-4 text-center text-xs text-slate-400">
               Nenhuma máquina encontrada na busca.
@@ -322,7 +339,7 @@ export default function FieldDataKanban({
               const status = getMachineStatus(machine.id);
               const isCompleted = status === 'Concluído';
 
-              const dotClass = isCompleted
+              const stateClass = isCompleted
                 ? 'bg-emerald-500'
                 : lateInWeek
                   ? 'bg-rose-500'
@@ -334,10 +351,10 @@ export default function FieldDataKanban({
                   key={machine.id}
                   onClick={() => handleCardClick(machine)}
                   disabled={!isCurrentWeek || isCompleted || updatingId === machine.id}
-                  className={`w-full rounded-lg border px-3 py-2.5 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
+                  className={`relative w-full overflow-hidden rounded-xl border py-3 pl-4 pr-3 text-left shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
                     isCompleted
-                      ? 'border-emerald-100 bg-emerald-50/40'
-                      : 'border-slate-200 bg-white hover:-translate-y-px hover:border-slate-300 hover:shadow-sm active:translate-y-0'
+                      ? 'border-emerald-200/80 bg-emerald-50/50'
+                      : 'border-slate-200 bg-white hover:-translate-y-px hover:border-slate-300 hover:shadow-md active:translate-y-0'
                   } ${updatingId === machine.id
                     ? 'cursor-wait opacity-50'
                     : !isCurrentWeek || isCompleted
@@ -346,29 +363,42 @@ export default function FieldDataKanban({
                   id={`kanban-machine-${machine.prefix}`}
                   title={!isCurrentWeek ? 'Semanas encerradas são somente para consulta' : isCompleted ? 'Coleta já concluída' : 'Marcar coleta como concluída'}
                 >
+                  <span className={`absolute inset-y-0 left-0 w-1 ${stateClass}`} aria-hidden="true" />
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className={`h-2 w-2 rounded-full shrink-0 ${dotClass}`} />
                       <span className="font-bold text-sm text-slate-900 tracking-tight">
                         {machine.prefix}
                       </span>
-                      {isCompleted && <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />}
+                      {isCompleted && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />}
                     </div>
-                    <span className="ml-2 max-w-[42%] shrink-0 truncate whitespace-nowrap rounded-full bg-slate-50 px-2 py-1 text-[10px] font-medium text-slate-500">
+                    <span className="ml-2 max-w-[42%] shrink-0 truncate whitespace-nowrap text-[10px] font-bold uppercase tracking-wide text-slate-400">
                       {machine.type}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-600 mt-0.5">
+                  <p className="mt-1 text-[11px] font-medium text-slate-600">
                     {machine.brand} {machine.model}
                   </p>
                   {isCompleted && collectionRecord && (
-                    <p className="mt-1.5 text-[10px] font-medium text-emerald-700">
-                      Concluída em {formatCollectionDate(collectionRecord.collectedAt)}
-                      {collectionRecord.collectedBy ? ` · ${collectionRecord.collectedBy}` : ''}
-                    </p>
+                    <div className="mt-2.5 flex items-center gap-1.5 border-t border-emerald-100 pt-2 text-[10px] font-semibold text-emerald-700">
+                      <Check className="h-3.5 w-3.5 shrink-0" />
+                      <span className="truncate">
+                        Recolhida em {formatCollectionDate(collectionRecord.collectedAt)}
+                        {collectionRecord.collectedBy ? ` · ${collectionRecord.collectedBy}` : ''}
+                      </span>
+                    </div>
                   )}
                   {!isCurrentWeek && !isCompleted && (
-                    <p className="mt-1.5 text-[10px] font-medium text-rose-600">Não recolhida nesta semana</p>
+                    <p className="mt-2.5 border-t border-slate-100 pt-2 text-[10px] font-semibold text-rose-600">Não recolhida nesta semana</p>
+                  )}
+                  {isCurrentWeek && !isCompleted && (
+                    <div className="mt-2.5 flex items-center gap-1.5 border-t border-slate-100 pt-2 text-[10px] font-semibold text-slate-500">
+                      {updatingId === machine.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" />
+                      ) : (
+                        <Check className="h-3.5 w-3.5 text-emerald-600" />
+                      )}
+                      {updatingId === machine.id ? 'Registrando coleta...' : 'Marcar como recolhida'}
+                    </div>
                   )}
                 </button>
               );
@@ -379,6 +409,53 @@ export default function FieldDataKanban({
       </div>
     );
   };
+
+  const renderKanbanColumn = ({
+    title,
+    subtitle,
+    frentes,
+    Icon,
+    shellClass,
+    railClass,
+    iconClass,
+    countClass
+  }: {
+    title: string;
+    subtitle: string;
+    frentes: string[];
+    Icon: React.ComponentType<{ className?: string }>;
+    shellClass: string;
+    railClass: string;
+    iconClass: string;
+    countClass: string;
+  }) => (
+    <section className={`overflow-hidden rounded-2xl border ${shellClass}`}>
+      <div className={`h-1 ${railClass}`} aria-hidden="true" />
+      <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-3.5">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${iconClass}`}>
+            <Icon className="h-4.5 w-4.5" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-sm font-bold text-slate-900">{title}</h3>
+            <p className="mt-0.5 text-[10px] font-medium text-slate-500">{subtitle}</p>
+          </div>
+        </div>
+        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-bold ${countClass}`}>
+          {frentes.length} {frentes.length === 1 ? 'frente' : 'frentes'}
+        </span>
+      </div>
+      <div className="min-h-[140px] space-y-3 px-3 pb-3">
+        {frentes.length === 0 ? (
+          <div className="flex min-h-24 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white/70 px-4 text-center text-xs font-medium text-slate-400">
+            Nenhuma frente nesta etapa
+          </div>
+        ) : (
+          frentes.map(frenteName => renderFrenteCard(frenteName))
+        )}
+      </div>
+    </section>
+  );
 
   return (
     <div className="space-y-5" id="field-data-kanban-container">
@@ -604,71 +681,37 @@ export default function FieldDataKanban({
       )}
 
       {/* THE 3 KANBAN QUADROS */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start" id="kanban-3-quadros">
-        
-        {/* QUADRO 1: PENDENTE */}
-        <div className="bg-slate-50 rounded-2xl border border-slate-200 p-3 sm:p-4">
-          <div className="flex items-center justify-between pb-2">
-            <div className="flex items-center gap-2 font-bold text-sm text-slate-800">
-              <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
-              Pendente
-            </div>
-            <span className="text-xs font-bold text-slate-500">
-              {frentesPendente.length} {frentesPendente.length === 1 ? 'frente' : 'frentes'}
-            </span>
-          </div>
-
-          <div className="space-y-3 min-h-[120px]">
-            {frentesPendente.length === 0 ? (
-              <p className="text-xs text-slate-400 py-6 text-center">Nenhuma frente nesta etapa.</p>
-            ) : (
-              frentesPendente.map(frenteName => renderFrenteCard(frenteName))
-            )}
-          </div>
-        </div>
-
-        {/* QUADRO 2: EM ANDAMENTO */}
-        <div className="bg-slate-50 rounded-2xl border border-slate-200 p-3 sm:p-4">
-          <div className="flex items-center justify-between pb-2">
-            <div className="flex items-center gap-2 font-bold text-sm text-slate-800">
-              <span className="h-2.5 w-2.5 rounded-full bg-blue-500" />
-              Em andamento
-            </div>
-            <span className="text-xs font-bold text-slate-500">
-              {frentesEmAndamento.length} {frentesEmAndamento.length === 1 ? 'frente' : 'frentes'}
-            </span>
-          </div>
-
-          <div className="space-y-3 min-h-[120px]">
-            {frentesEmAndamento.length === 0 ? (
-              <p className="text-xs text-slate-400 py-6 text-center">Nenhuma frente nesta etapa.</p>
-            ) : (
-              frentesEmAndamento.map(frenteName => renderFrenteCard(frenteName))
-            )}
-          </div>
-        </div>
-
-        {/* QUADRO 3: CONCLUÍDO */}
-        <div className="bg-slate-50 rounded-2xl border border-slate-200 p-3 sm:p-4">
-          <div className="flex items-center justify-between pb-2">
-            <div className="flex items-center gap-2 font-bold text-sm text-slate-800">
-              <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-              Concluído
-            </div>
-            <span className="text-xs font-bold text-slate-500">
-              {frentesConcluido.length} {frentesConcluido.length === 1 ? 'frente' : 'frentes'}
-            </span>
-          </div>
-
-          <div className="space-y-3 min-h-[120px]">
-            {frentesConcluido.length === 0 ? (
-              <p className="text-xs text-slate-400 py-6 text-center">Nenhuma frente nesta etapa.</p>
-            ) : (
-              frentesConcluido.map(frenteName => renderFrenteCard(frenteName))
-            )}
-          </div>
-        </div>
-
+      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-3" id="kanban-3-quadros">
+        {renderKanbanColumn({
+          title: 'Pendente',
+          subtitle: 'Aguardando início',
+          frentes: frentesPendente,
+          Icon: CircleDashed,
+          shellClass: 'border-amber-200/70 bg-amber-50/30',
+          railClass: 'bg-amber-400',
+          iconClass: 'bg-amber-100 text-amber-700',
+          countClass: 'bg-amber-100/80 text-amber-800'
+        })}
+        {renderKanbanColumn({
+          title: 'Em andamento',
+          subtitle: 'Coleta parcial',
+          frentes: frentesEmAndamento,
+          Icon: Activity,
+          shellClass: 'border-sky-200/70 bg-sky-50/30',
+          railClass: 'bg-sky-500',
+          iconClass: 'bg-sky-100 text-sky-700',
+          countClass: 'bg-sky-100/80 text-sky-800'
+        })}
+        {renderKanbanColumn({
+          title: 'Concluído',
+          subtitle: 'Todas recolhidas',
+          frentes: frentesConcluido,
+          Icon: CheckCircle2,
+          shellClass: 'border-emerald-200/70 bg-emerald-50/30',
+          railClass: 'bg-emerald-500',
+          iconClass: 'bg-emerald-100 text-emerald-700',
+          countClass: 'bg-emerald-100/80 text-emerald-800'
+        })}
       </div>
 
     </div>

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNotifications } from './NotificationProvider';
 import { 
   AutopilotComponent, 
@@ -24,7 +25,9 @@ import {
   History,
   ArrowLeft,
   Calendar,
-  AlertTriangle
+  AlertTriangle,
+  MoreVertical,
+  SlidersHorizontal
 } from 'lucide-react';
 
 interface ComponentsTabProps {
@@ -71,9 +74,34 @@ export default function ComponentsTab({
   const [brandFilter, setBrandFilter] = useState<string>(initialBrandFilter || 'all');
   const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter || 'all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
   const [isAdding, setIsAdding] = useState(false);
   const [editingComp, setEditingComp] = useState<AutopilotComponent | null>(null);
+  const [selectedComp, setSelectedComp] = useState<AutopilotComponent | null>(null);
+  const [componentActionsOpen, setComponentActionsOpen] = useState(false);
+  const componentActionsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!componentActionsOpen) return;
+
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (componentActionsRef.current && !componentActionsRef.current.contains(event.target as Node)) {
+        setComponentActionsOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setComponentActionsOpen(false);
+    };
+
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [componentActionsOpen]);
 
   // Form states
   const [serialNumber, setSerialNumber] = useState('');
@@ -90,6 +118,8 @@ export default function ComponentsTab({
   const [showMaintenanceView, setShowMaintenanceView] = useState(false);
   const [isSendingToMaint, setIsSendingToMaint] = useState(false);
   const [maintComponentId, setMaintComponentId] = useState('');
+  const [maintComponentSearch, setMaintComponentSearch] = useState('');
+  const [maintComponentPickerOpen, setMaintComponentPickerOpen] = useState(false);
   const [maintProviderName, setMaintProviderName] = useState('');
   const [maintIssueDescription, setMaintIssueDescription] = useState('');
   const [maintSentDate, setMaintSentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -109,6 +139,15 @@ export default function ComponentsTab({
   const [newProviderEmail, setNewProviderEmail] = useState('');
   const [newProviderAddress, setNewProviderAddress] = useState('');
   const [newProviderContact, setNewProviderContact] = useState('');
+
+  useEffect(() => {
+    if (!isAdding && !editingComp && !selectedComp && !isSendingToMaint && !returningMaint) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isAdding, editingComp, selectedComp, isSendingToMaint, returningMaint]);
 
   const handleAddProviderSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,6 +202,7 @@ export default function ComponentsTab({
           componentBrand: comp.brand,
           componentType: comp.type,
           sentDate: new Date(maintSentDate).toISOString(),
+          providerId: providers.find(provider => provider.name.trim().toLocaleLowerCase('pt-BR') === maintProviderName.trim().toLocaleLowerCase('pt-BR'))?.id || '',
           providerName: maintProviderName,
           issueDescription: maintIssueDescription,
           status: 'Em Manutenção'
@@ -170,6 +210,8 @@ export default function ComponentsTab({
       }
       setIsSendingToMaint(false);
       setMaintComponentId('');
+      setMaintComponentSearch('');
+      setMaintComponentPickerOpen(false);
       setMaintProviderName('');
       setMaintIssueDescription('');
       setMaintSentDate(new Date().toISOString().split('T')[0]);
@@ -287,6 +329,8 @@ export default function ComponentsTab({
   };
 
   const startEdit = (comp: AutopilotComponent) => {
+    setSelectedComp(null);
+    setComponentActionsOpen(false);
     setEditingComp(comp);
     setSerialNumber(comp.serialNumber);
     setName(comp.name);
@@ -298,10 +342,10 @@ export default function ComponentsTab({
   };
 
   const handleDelete = async (id: string) => {
-    if (!isAdminOrTech) return;
+    if (!isAdminOrTech) return false;
     const confirmed = await confirmDialog({
       title: 'Excluir Componente',
-      message: 'Tem certeza de que deseja excluir este componente do estoque? Esta ação é irreversível.',
+      message: 'Tem certeza de que deseja excluir este equipamento do cadastro? Esta ação é irreversível.',
       confirmLabel: 'Sim, Excluir',
       cancelLabel: 'Cancelar',
       danger: true
@@ -309,10 +353,12 @@ export default function ComponentsTab({
     if (confirmed) {
       try {
         await onDeleteComponent(id);
+        return true;
       } catch (err: any) {
         showToast('error', err.message || 'Erro ao excluir componente.');
       }
     }
+    return false;
   };
 
   // Filtered listing
@@ -341,36 +387,46 @@ export default function ComponentsTab({
   if (showMaintenanceView) {
     const activeMaintenances = maintenances.filter(m => m.status === 'Em Manutenção');
     const pastMaintenances = maintenances.filter(m => m.status !== 'Em Manutenção');
+    const availableMaintenanceComponents = components.filter(c => c.status !== 'Manutenção' && c.status !== 'Descartado');
+    const maintenanceComponentMatches = availableMaintenanceComponents.filter(component => {
+      const query = maintComponentSearch.trim().toLocaleLowerCase('pt-BR');
+      if (!query || component.id === maintComponentId) return true;
+      return [component.name, component.serialNumber, component.brand, component.type]
+        .some(value => value.toLocaleLowerCase('pt-BR').includes(query));
+    });
 
     return (
-      <div className="space-y-6 animate-fade-in" id="maintenance-module">
+      <div className="space-y-4 animate-fade-in" id="maintenance-module">
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:justify-between md:items-center bg-white p-6 rounded-2xl border border-slate-200 shadow-sm gap-4">
-          <div>
-            <button
-              onClick={() => { setShowMaintenanceView(false); setIsSendingToMaint(false); setReturningMaint(null); setError(null); }}
-              className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors mb-2 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Voltar ao Estoque
-            </button>
-            <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-              <Wrench className="h-5 w-5 text-amber-600" />
-              Gerenciamento de Manutenção Externa
-            </h1>
-            <p className="text-slate-500 text-xs mt-1">
-              Envie equipamentos com defeito para reparo em assistência autorizada, registre as peças substituídas e finalize o retorno para o estoque.
-            </p>
+        <button
+          onClick={() => { setShowMaintenanceView(false); setIsSendingToMaint(false); setReturningMaint(null); setError(null); }}
+          className="flex min-h-9 w-fit items-center gap-1.5 rounded-lg px-2 text-xs font-bold text-slate-500 transition-colors hover:bg-white hover:text-slate-800"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Voltar aos equipamentos
+        </button>
+
+        <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 md:flex-row md:items-center md:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+              <Wrench className="h-5 w-5" />
+            </span>
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold text-slate-900">Manutenção externa</h1>
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">
+                Acompanhe equipamentos enviados para assistência e registre o retorno após o reparo.
+              </p>
+            </div>
           </div>
 
           {isAdminOrTech && !isSendingToMaint && !returningMaint && (
             <button
               onClick={() => { setIsSendingToMaint(true); setError(null); }}
-              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5 whitespace-nowrap self-start"
+              className="flex min-h-10 shrink-0 items-center gap-1.5 self-start whitespace-nowrap rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-amber-700"
               id="send-to-maintenance-btn"
             >
               <Plus className="h-4 w-4" />
-              Enviar para Manutenção
+              Enviar equipamento
             </button>
           )}
         </div>
@@ -382,53 +438,122 @@ export default function ComponentsTab({
         )}
 
         {/* 1. Form Send to Maintenance */}
-        {isSendingToMaint && (
-          <div className="bg-white p-6 rounded-2xl border border-amber-200 shadow-md animate-fade-in">
-            <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
-              <h2 className="text-md font-bold text-slate-900 flex items-center gap-1.5">
-                <Wrench className="h-5 w-5 text-amber-600" />
-                Enviar Equipamento para Manutenção Externa
-              </h2>
-              <button 
-                onClick={() => setIsSendingToMaint(false)} 
-                className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSendToMaintSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Selecionar Equipamento Danificado *</label>
-                <select
-                  required
-                  value={maintComponentId}
-                  onChange={(e) => setMaintComponentId(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-amber-500 focus:border-amber-500 text-xs bg-white"
+        {isSendingToMaint && createPortal(
+          <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4">
+            <button
+              type="button"
+              aria-label="Fechar envio para manutenção"
+              className="absolute inset-0 cursor-default bg-slate-950/55 backdrop-blur-[1px]"
+              onClick={() => !loading && setIsSendingToMaint(false)}
+            />
+            <div className="relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl">
+              <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+                    <Wrench className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0">
+                    <h2 className="text-base font-bold text-slate-900 sm:text-lg">Enviar equipamento</h2>
+                    <p className="mt-0.5 text-xs text-slate-500">Registre o envio para uma assistência técnica externa.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => !loading && setIsSendingToMaint(false)}
+                  disabled={loading}
+                  aria-label="Fechar formulário"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-50"
                 >
-                  <option value="">-- Selecione o Equipamento --</option>
-                  {components
-                    .filter(c => c.status !== 'Manutenção' && c.status !== 'Descartado')
-                    .map(c => (
-                      <option key={c.id} value={c.id}>
-                        [{c.brand}] {c.name} - S/N: {c.serialNumber} ({c.status})
-                      </option>
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:py-5">
+                <form onSubmit={handleSendToMaintSubmit} className="space-y-6">
+              <section>
+                <div className="mb-3">
+                  <h3 className="text-xs font-bold text-slate-800">Encaminhamento</h3>
+                  <p className="mt-0.5 text-[10px] text-slate-500">Defina o equipamento e a assistência responsável.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div
+                className="relative"
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                    setMaintComponentPickerOpen(false);
+                  }
+                }}
+              >
+                <label className="block text-xs font-bold text-slate-700 mb-1">Selecionar Equipamento Danificado *</label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    value={maintComponentSearch}
+                    onFocus={() => setMaintComponentPickerOpen(true)}
+                    onClick={() => setMaintComponentPickerOpen(true)}
+                    onChange={(event) => {
+                      setMaintComponentSearch(event.target.value);
+                      setMaintComponentId('');
+                      setMaintComponentPickerOpen(true);
+                    }}
+                    role="combobox"
+                    aria-expanded={maintComponentPickerOpen}
+                    aria-controls="maintenance-component-options"
+                    aria-autocomplete="list"
+                    className="w-full rounded-xl border border-slate-300 py-2 pl-9 pr-9 text-xs text-slate-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    placeholder="Digite o nome, S/N ou marca"
+                  />
+                  {maintComponentSearch && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMaintComponentSearch('');
+                        setMaintComponentId('');
+                        setMaintComponentPickerOpen(true);
+                      }}
+                      aria-label="Limpar equipamento selecionado"
+                      className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                {maintComponentPickerOpen && (
+                  <div
+                    id="maintenance-component-options"
+                    role="listbox"
+                    className="absolute z-20 mt-1.5 max-h-56 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
+                  >
+                    {maintenanceComponentMatches.length === 0 ? (
+                      <p className="px-3 py-5 text-center text-xs text-slate-400">Nenhum equipamento encontrado.</p>
+                    ) : maintenanceComponentMatches.map(component => (
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={maintComponentId === component.id}
+                        key={component.id}
+                        onClick={() => {
+                          setMaintComponentId(component.id);
+                          setMaintComponentSearch(`${component.name} · S/N ${component.serialNumber}`);
+                          setMaintComponentPickerOpen(false);
+                        }}
+                        className={`flex w-full items-start justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${maintComponentId === component.id ? 'bg-amber-50' : 'hover:bg-slate-50'}`}
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-bold text-slate-800">{component.name}</span>
+                          <span className="mt-0.5 block truncate font-mono text-[10px] text-slate-500">S/N {component.serialNumber}</span>
+                        </span>
+                        <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold text-slate-500">{component.brand}</span>
+                      </button>
                     ))}
-                </select>
+                  </div>
+                )}
               </div>
 
               <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="block text-xs font-bold text-slate-700">Empresa / Assistência Técnica de Destino *</label>
-                  <button
-                    type="button"
-                    onClick={() => { setIsAddingProvider(true); setError(null); }}
-                    className="text-[10px] text-amber-600 hover:text-amber-800 font-bold flex items-center gap-1 bg-amber-50 hover:bg-amber-100 px-2 py-0.5 rounded border border-amber-200 transition-colors"
-                  >
-                    <Plus className="h-3 w-3" />
-                    Nova Assistência Técnica
-                  </button>
-                </div>
+                <label className="mb-1 block text-xs font-bold text-slate-700">Empresa / Assistência Técnica de Destino *</label>
                 <input
                   type="text"
                   required
@@ -446,9 +571,25 @@ export default function ComponentsTab({
                   <option value="Laboratório Oeste GPS" />
                   <option value="Topcon Precision Repair" />
                 </datalist>
+                <button
+                  type="button"
+                  onClick={() => { setIsAddingProvider(true); setError(null); }}
+                  className="mt-1.5 flex min-h-7 items-center gap-1 rounded-lg px-1.5 text-[10px] font-semibold text-slate-500 transition-colors hover:bg-amber-50 hover:text-amber-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                >
+                  <Plus className="h-3 w-3" />
+                  Cadastrar nova assistência
+                </button>
               </div>
+                </div>
+              </section>
 
-              <div>
+              <section className="border-t border-slate-100 pt-5">
+                <div className="mb-3">
+                  <h3 className="text-xs font-bold text-slate-800">Detalhes do problema</h3>
+                  <p className="mt-0.5 text-[10px] text-slate-500">Registre quando o equipamento foi enviado e o defeito observado.</p>
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-[180px_minmax(0,1fr)] sm:items-start">
+              <div className="sm:max-w-[180px]">
                 <label className="block text-xs font-bold text-slate-700 mb-1">Data de Envio *</label>
                 <input
                   type="date"
@@ -463,15 +604,18 @@ export default function ComponentsTab({
                 <label className="block text-xs font-bold text-slate-700 mb-1">Descrição Detalhada do Defeito *</label>
                 <textarea
                   required
-                  rows={2}
+                  rows={5}
                   value={maintIssueDescription}
                   onChange={(e) => setMaintIssueDescription(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-amber-500 focus:border-amber-500 text-xs"
-                  placeholder="Descreva o problema observado no equipamento que motivou o envio para reparo..."
+                  className="min-h-28 w-full resize-y rounded-xl border border-slate-300 px-3 py-2.5 text-xs leading-relaxed text-slate-900 focus:border-amber-500 focus:ring-amber-500"
+                  placeholder="Descreva os sintomas, quando o problema começou e o que já foi verificado..."
                 />
+                <p className="mt-1 text-[10px] text-slate-400">Inclua detalhes que ajudem a assistência a reproduzir o defeito.</p>
               </div>
+                </div>
+              </section>
 
-              <div className="md:col-span-2 flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
                 <button
                   type="button"
                   onClick={() => setIsSendingToMaint(false)}
@@ -487,8 +631,11 @@ export default function ComponentsTab({
                   {loading ? 'Salvando...' : 'Confirmar Envio para Manutenção'}
                 </button>
               </div>
-            </form>
-          </div>
+                </form>
+              </div>
+            </div>
+          </div>,
+          document.body
         )}
 
         {/* 2. Form Return from Maintenance */}
@@ -603,38 +750,53 @@ export default function ComponentsTab({
         )}
 
         {/* 3. Toggle List Tabs */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap gap-2">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="grid grid-cols-2 border-b border-slate-200 px-3 sm:px-4">
             <button
               onClick={() => setMaintListTab('ativos')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+              className={`flex min-h-12 items-center justify-center gap-1.5 border-b-2 px-2 text-xs font-bold transition-colors ${
                 maintListTab === 'ativos' 
-                  ? 'bg-amber-100 text-amber-800' 
-                  : 'text-slate-600 hover:bg-slate-100'
+                  ? 'border-amber-500 text-amber-800'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
               <Wrench className="h-4 w-4" />
-              Equipamentos em Manutenção ({activeMaintenances.length})
+              <span>Em manutenção</span>
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${maintListTab === 'ativos' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-500'}`}>{activeMaintenances.length}</span>
             </button>
             <button
               onClick={() => setMaintListTab('historico')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+              className={`flex min-h-12 items-center justify-center gap-1.5 border-b-2 px-2 text-xs font-bold transition-colors ${
                 maintListTab === 'historico' 
-                  ? 'bg-slate-800 text-slate-100' 
-                  : 'text-slate-600 hover:bg-slate-100'
+                  ? 'border-slate-700 text-slate-900'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
               <History className="h-4 w-4" />
-              Histórico de Manutenções ({pastMaintenances.length})
+              <span>Histórico</span>
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${maintListTab === 'historico' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500'}`}>{pastMaintenances.length}</span>
             </button>
           </div>
-        </div>
 
         {/* 4. Display Lists */}
+        <div className="p-3 sm:p-4">
         {maintListTab === 'ativos' ? (
           activeMaintenances.length === 0 ? (
-            <div className="bg-white p-12 text-center border border-slate-200 rounded-2xl text-slate-400 text-xs">
-              Não há equipamentos em manutenção externa no momento.
+            <div className="flex min-h-56 flex-col items-center justify-center rounded-xl border border-dashed border-amber-200 bg-amber-50/30 px-6 py-10 text-center">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-amber-600 shadow-sm ring-1 ring-amber-100">
+                <Wrench className="h-5 w-5" />
+              </span>
+              <h3 className="mt-4 text-sm font-bold text-slate-800">Nenhum equipamento em manutenção</h3>
+              <p className="mt-1 max-w-xs text-xs leading-relaxed text-slate-500">Os equipamentos enviados para assistência aparecerão aqui.</p>
+              {isAdminOrTech && (
+                <button
+                  type="button"
+                  onClick={() => { setIsSendingToMaint(true); setError(null); }}
+                  className="mt-4 flex min-h-9 items-center gap-1.5 rounded-xl border border-amber-200 bg-white px-3 text-xs font-bold text-amber-700 transition-colors hover:bg-amber-50"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Enviar equipamento
+                </button>
+              )}
             </div>
           ) : (
             <>
@@ -682,6 +844,16 @@ export default function ComponentsTab({
                     <p className="text-slate-600">
                       <span className="text-slate-400 font-medium">Defeito:</span> {m.issueDescription}
                     </p>
+                  </div>
+                  <div className="flex items-center gap-2 border-t border-slate-100 pt-3" aria-label="Etapas da manutenção">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-white"><Check className="h-3 w-3" /></span>
+                    <span className="h-px flex-1 bg-amber-300" />
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full border-2 border-amber-500 bg-white"><span className="h-1.5 w-1.5 rounded-full bg-amber-500" /></span>
+                    <span className="h-px flex-1 bg-slate-200" />
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-[9px] font-bold text-slate-400">3</span>
+                  </div>
+                  <div className="grid grid-cols-3 text-[9px] font-semibold text-slate-400">
+                    <span>Enviado</span><span className="text-center text-amber-700">Na assistência</span><span className="text-right">Retorno</span>
                   </div>
                 </div>
               ))}
@@ -744,8 +916,12 @@ export default function ComponentsTab({
           )
         ) : (
           pastMaintenances.length === 0 ? (
-            <div className="bg-white p-12 text-center border border-slate-200 rounded-2xl text-slate-400 text-xs">
-              Nenhum histórico de manutenção registrado até o momento.
+            <div className="flex min-h-56 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-6 py-10 text-center">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-sm ring-1 ring-slate-200">
+                <History className="h-5 w-5" />
+              </span>
+              <h3 className="mt-4 text-sm font-bold text-slate-800">Histórico ainda vazio</h3>
+              <p className="mt-1 max-w-xs text-xs leading-relaxed text-slate-500">Manutenções finalizadas aparecerão aqui com serviços, peças e custos.</p>
             </div>
           ) : (
             <>
@@ -843,6 +1019,8 @@ export default function ComponentsTab({
             </>
           )
         )}
+        </div>
+        </div>
 
         {/* Modal para cadastro de Nova Assistência Técnica */}
         {isAddingProvider && (
@@ -979,55 +1157,279 @@ export default function ComponentsTab({
       {/* Header and Add Button */}
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Estoque de Hardware GPS</h1>
+          <h1 className="text-xl font-bold text-slate-900">Equipamentos GPS</h1>
           <p className="text-slate-500 text-xs mt-1">
             {isAdminOrTech 
-              ? 'Gerencie, adicione e altere detalhes de antenas, telas e controladoras, receptores.' 
-              : 'Consulte a disponibilidade de equipamentos para instalações.'}
+              ? 'Cadastre e acompanhe antenas, receptores, telas e controladoras da empresa.'
+              : 'Consulte os equipamentos GPS cadastrados e suas situações atuais.'}
           </p>
         </div>
 
-        {isAdminOrTech && !isAdding && !editingComp && (
-          <div className="flex flex-wrap gap-2">
+        <div className="flex items-center justify-between gap-2 md:flex-wrap md:justify-start">
+          {isAdminOrTech && !isAdding && !editingComp && (
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                onClick={() => { setShowMaintenanceView(true); resetForm(); }}
+                className="flex min-h-10 items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-amber-700 sm:px-4"
+                id="open-maintenance-submodule"
+              >
+                <Wrench className="h-4 w-4" />
+                Manutenção
+              </button>
+              <button
+                onClick={() => { setIsAdding(true); resetForm(); }}
+                aria-label="Cadastrar novo equipamento"
+                className="flex min-h-10 items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-emerald-700 sm:px-4"
+                id="open-add-component-form"
+              >
+                <Plus className="h-4 w-4" />
+                Novo
+              </button>
+            </div>
+          )}
+          <div className="flex shrink-0 items-center gap-2 md:hidden">
             <button
-              onClick={() => { setShowMaintenanceView(true); resetForm(); }}
-              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5"
-              id="open-maintenance-submodule"
+              type="button"
+              onClick={() => {
+                setMobileSearchOpen(open => !open);
+                setMobileFiltersOpen(false);
+              }}
+              aria-label={mobileSearchOpen ? 'Fechar busca' : 'Buscar equipamentos'}
+              aria-expanded={mobileSearchOpen}
+              className={`flex h-10 w-10 items-center justify-center rounded-xl border transition-colors ${
+                mobileSearchOpen || searchTerm
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'border-slate-200 text-slate-500'
+              }`}
             >
-              <Wrench className="h-4 w-4" />
-              Manutenção
+              <Search className="h-4 w-4" />
             </button>
             <button
-              onClick={() => { setIsAdding(true); resetForm(); }}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors flex items-center gap-1.5"
-              id="open-add-component-form"
+              type="button"
+              onClick={() => {
+                setMobileFiltersOpen(open => !open);
+                setMobileSearchOpen(false);
+              }}
+              aria-label={mobileFiltersOpen ? 'Fechar filtros' : 'Filtrar equipamentos'}
+              aria-expanded={mobileFiltersOpen}
+              className={`relative flex h-10 w-10 items-center justify-center rounded-xl border transition-colors ${
+                mobileFiltersOpen || brandFilter !== 'all' || statusFilter !== 'all'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'border-slate-200 text-slate-500'
+              }`}
             >
-              <Plus className="h-4 w-4" />
-              Cadastrar Componente
+              <SlidersHorizontal className="h-4 w-4" />
+              {(brandFilter !== 'all' || statusFilter !== 'all') && (
+                <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-emerald-600" />
+              )}
             </button>
+          </div>
+        </div>
+
+        {mobileSearchOpen && (
+          <div className="relative md:hidden">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              autoFocus
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              className="min-h-10 w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-10 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              placeholder="Buscar por S/N, modelo ou máquina"
+              aria-label="Buscar equipamentos"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                aria-label="Limpar busca"
+                className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 hover:bg-white hover:text-slate-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        )}
+
+        {mobileFiltersOpen && (
+          <div className="grid grid-cols-1 gap-2 rounded-xl bg-slate-50 p-2 md:hidden">
+            <select
+              value={brandFilter}
+              onChange={(event) => setBrandFilter(event.target.value)}
+              className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              aria-label="Filtrar por marca"
+            >
+              <option value="all">Todas as marcas</option>
+              <option value="Trimble">Trimble</option>
+              <option value="Topcon">Topcon</option>
+            </select>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              aria-label="Filtrar por status"
+            >
+              <option value="all">Todos os status</option>
+              <option value="Disponível">Disponível</option>
+              <option value="Em Uso">Em Uso</option>
+              <option value="Manutenção">Manutenção</option>
+              <option value="Descartado">Descartado</option>
+            </select>
           </div>
         )}
       </div>
 
-      {/* Forms Area */}
-      {isAdminOrTech && isAdding && (
-        <div className="bg-white p-6 rounded-2xl border border-emerald-200 shadow-md animate-fade-in" id="add-component-form-block">
-          <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
-            <h2 className="text-md font-bold text-slate-900 flex items-center gap-1.5">
-              <Cpu className="h-5 w-5 text-emerald-600" />
-              Cadastrar Novo Equipamento
-            </h2>
-            <button 
-              onClick={() => setIsAdding(false)} 
-              className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600"
-            >
-              <X className="h-5 w-5" />
-            </button>
+      {selectedComp && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4">
+          <button
+            type="button"
+            aria-label="Fechar resumo do equipamento"
+            className="absolute inset-0 cursor-default bg-slate-950/55 backdrop-blur-[1px]"
+            onClick={() => {
+              setComponentActionsOpen(false);
+              setSelectedComp(null);
+            }}
+          />
+          <div className="relative flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-xl sm:rounded-2xl">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                  <Cpu className="h-5 w-5" />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="truncate text-base font-bold text-slate-900 sm:text-lg">{selectedComp.name}</h2>
+                  <p className="mt-0.5 truncate font-mono text-xs text-slate-500">S/N {selectedComp.serialNumber}</p>
+                </div>
+              </div>
+              <div ref={componentActionsRef} className="relative flex shrink-0 items-center gap-1">
+                {isAdminOrTech && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => startEdit(selectedComp)}
+                      aria-label="Editar equipamento"
+                      title="Editar equipamento"
+                      className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-emerald-50 hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                    >
+                      <Edit className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setComponentActionsOpen(open => !open)}
+                      aria-label="Mais ações do equipamento"
+                      aria-expanded={componentActionsOpen}
+                      className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                    >
+                      <MoreVertical className="h-5 w-5" />
+                    </button>
+                    {componentActionsOpen && (
+                      <div className="absolute right-10 top-10 z-20 w-48 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setComponentActionsOpen(false);
+                            const deleted = await handleDelete(selectedComp.id);
+                            if (deleted) setSelectedComp(null);
+                          }}
+                          className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Excluir equipamento
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setComponentActionsOpen(false);
+                    setSelectedComp(null);
+                  }}
+                  aria-label="Fechar resumo"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/60 px-4 py-4 sm:px-5">
+              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+                <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Equipamento GPS</p>
+                    <p className="mt-1 text-lg font-bold text-slate-900">{selectedComp.name}</p>
+                  </div>
+                  <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${
+                    selectedComp.status === 'Disponível' ? 'border-blue-100 bg-blue-50 text-blue-700' :
+                    selectedComp.status === 'Em Uso' ? 'border-emerald-100 bg-emerald-50 text-emerald-700' :
+                    selectedComp.status === 'Manutenção' ? 'border-amber-100 bg-amber-50 text-amber-700' :
+                    'border-rose-100 bg-rose-50 text-rose-700'
+                  }`}>{selectedComp.status}</span>
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-5">
+                  <div>
+                    <dt className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Número de série</dt>
+                    <dd className="mt-1 break-all font-mono text-xs font-semibold text-slate-700">{selectedComp.serialNumber}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Marca</dt>
+                    <dd className="mt-1 text-sm font-semibold text-slate-700">{selectedComp.brand}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Tipo</dt>
+                    <dd className="mt-1 text-sm font-semibold text-slate-700">{selectedComp.type}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Máquina / localização</dt>
+                    <dd className="mt-1 text-sm font-semibold text-slate-700">
+                      {selectedComp.status === 'Em Uso' ? selectedComp.currentMachine || 'Não informada' : 'Almoxarifado central'}
+                    </dd>
+                  </div>
+                </dl>
+              </section>
+            </div>
           </div>
+        </div>,
+        document.body
+      )}
 
-          {error && <p className="bg-rose-50 border border-rose-200 text-rose-600 p-3 rounded-xl text-xs mb-4">{error}</p>}
+      {/* Forms Area */}
+      {isAdminOrTech && isAdding && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4" id="add-component-form-block">
+          <button
+            type="button"
+            aria-label="Fechar cadastro de equipamento"
+            className="absolute inset-0 cursor-default bg-slate-950/55 backdrop-blur-[1px]"
+            onClick={() => !loading && setIsAdding(false)}
+          />
+          <div className="relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                  <Cpu className="h-5 w-5" />
+                </span>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 sm:text-lg">Cadastrar equipamento GPS</h2>
+                  <p className="mt-0.5 text-xs text-slate-500">Adicione um novo equipamento ao cadastro da empresa.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !loading && setIsAdding(false)}
+                disabled={loading}
+                aria-label="Fechar cadastro"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
 
-          <form onSubmit={handleCreate} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:py-5">
+              {error && <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-600">{error}</p>}
+
+              <form onSubmit={handleCreate} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Número de Série (S/N) *</label>
               <input
@@ -1108,7 +1510,7 @@ export default function ComponentsTab({
               </div>
             )}
 
-            <div className="md:col-span-3 flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-2 sm:col-span-2">
               <button
                 type="button"
                 onClick={() => setIsAdding(false)}
@@ -1125,28 +1527,46 @@ export default function ComponentsTab({
                 {loading ? 'Salvando...' : 'Cadastrar Equipamento'}
               </button>
             </div>
-          </form>
-        </div>
-      )}
-
-      {editingComp && (
-        <div className="bg-white p-6 rounded-2xl border border-indigo-200 shadow-md animate-fade-in" id="edit-component-form-block">
-          <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
-            <h2 className="text-md font-bold text-slate-900 flex items-center gap-1.5">
-              <Edit className="h-5 w-5 text-indigo-600" />
-              Editar Informações do Equipamento
-            </h2>
-            <button 
-              onClick={() => setEditingComp(null)} 
-              className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600"
-            >
-              <X className="h-5 w-5" />
-            </button>
+              </form>
+            </div>
           </div>
+        </div>
+      , document.body)}
 
-          {error && <p className="bg-rose-50 border border-rose-200 text-rose-600 p-3 rounded-xl text-xs mb-4">{error}</p>}
+      {editingComp && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4" id="edit-component-form-block">
+          <button
+            type="button"
+            aria-label="Fechar edição do equipamento"
+            className="absolute inset-0 cursor-default bg-slate-950/55 backdrop-blur-[1px]"
+            onClick={() => !loading && setEditingComp(null)}
+          />
+          <div className="relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-2xl sm:rounded-2xl">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                  <Edit className="h-5 w-5" />
+                </span>
+                <div className="min-w-0">
+                  <h2 className="truncate text-base font-bold text-slate-900 sm:text-lg">Editar equipamento · {editingComp.serialNumber}</h2>
+                  <p className="mt-0.5 truncate text-xs text-slate-500">Atualize os dados cadastrais e a situação do equipamento.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !loading && setEditingComp(null)}
+                disabled={loading}
+                aria-label="Fechar edição"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
 
-          <form onSubmit={handleUpdate} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:py-5">
+              {error && <p className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-600">{error}</p>}
+
+              <form onSubmit={handleUpdate} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Número de Série (S/N)</label>
               <input
@@ -1231,7 +1651,7 @@ export default function ComponentsTab({
               </div>
             )}
 
-            <div className="md:col-span-3 flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-2 sm:col-span-2">
               <button
                 type="button"
                 onClick={() => setEditingComp(null)}
@@ -1242,22 +1662,24 @@ export default function ComponentsTab({
               <button
                 type="submit"
                 disabled={loading}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors"
                 id="edit-comp-submit"
               >
                 {loading ? 'Salvando...' : 'Salvar Alterações'}
               </button>
             </div>
-          </form>
+              </form>
+            </div>
+          </div>
         </div>
-      )}
+      , document.body)}
 
       {/* Search and Filters panel */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+      <div className="hidden space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:block">
         <div className="flex flex-col md:flex-row gap-3">
           
           {/* Search text input */}
-          <div className="flex-1 relative rounded-xl shadow-sm">
+          <div className={`${mobileSearchOpen ? 'block' : 'hidden'} relative flex-1 rounded-xl shadow-sm md:block`}>
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <Search className="h-4 w-4 text-slate-400" />
             </div>
@@ -1272,7 +1694,7 @@ export default function ComponentsTab({
           </div>
 
           {/* Brand select filter */}
-          <div className="w-full md:w-44 flex items-center gap-2">
+          <div className={`${mobileFiltersOpen ? 'flex' : 'hidden'} w-full items-center gap-2 md:flex md:w-44`}>
             <span className="text-[11px] text-slate-400 font-bold whitespace-nowrap uppercase">Marca:</span>
             <select
               value={brandFilter}
@@ -1287,7 +1709,7 @@ export default function ComponentsTab({
           </div>
 
           {/* Status select filter */}
-          <div className="w-full md:w-44 flex items-center gap-2">
+          <div className={`${mobileFiltersOpen ? 'flex' : 'hidden'} w-full items-center gap-2 md:flex md:w-44`}>
             <span className="text-[11px] text-slate-400 font-bold whitespace-nowrap uppercase">Status:</span>
             <select
               value={statusFilter}
@@ -1331,35 +1753,26 @@ export default function ComponentsTab({
             return (
               <div 
                 key={comp.id} 
-                className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col gap-3"
+                role="button"
+                tabIndex={0}
+                aria-label={`Abrir resumo do equipamento ${comp.name}`}
+                onClick={() => setSelectedComp(comp)}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setSelectedComp(comp);
+                  }
+                }}
+                className="flex cursor-pointer flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
               >
-                <div className="flex justify-between items-start gap-2">
-                  <div className="flex flex-wrap gap-1.5">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${brandBadge}`}>
-                      {comp.brand}
-                    </span>
-                    <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${statusBadge}`}>
-                      {comp.status}
-                    </span>
-                  </div>
-                  {isAdminOrTech && (
-                    <div className="flex gap-1.5 shrink-0">
-                      <button
-                        onClick={() => startEdit(comp)}
-                        className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors"
-                        title="Editar equipamento"
-                      >
-                        <Edit className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(comp.id)}
-                        className="p-1.5 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
-                        title="Excluir equipamento"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
+                <div className="flex flex-wrap gap-1.5">
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${brandBadge}`}>
+                    {comp.brand}
+                  </span>
+                  <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${statusBadge}`}>
+                    {comp.status}
+                  </span>
                 </div>
 
                 <div>
@@ -1408,7 +1821,6 @@ export default function ComponentsTab({
                   <th className="py-3 px-4">Tipo</th>
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4">Máquina / Localização</th>
-                  <th className="py-3 px-4 text-right">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs text-slate-700" id="components-table-body">
@@ -1424,7 +1836,21 @@ export default function ComponentsTab({
                     : 'bg-sky-50 text-sky-700 border-sky-100';
 
                   return (
-                    <tr key={comp.id} className="hover:bg-slate-50/50 transition-colors">
+                    <tr
+                      key={comp.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Abrir resumo do equipamento ${comp.name}`}
+                      onClick={() => setSelectedComp(comp)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedComp(comp);
+                        }
+                      }}
+                      className="cursor-pointer transition-colors hover:bg-slate-50/50 focus:outline-none focus-visible:bg-emerald-50/50"
+                    >
                       <td className="py-3 px-4 font-bold text-slate-900">
                         {comp.name}
                       </td>
@@ -1464,29 +1890,6 @@ export default function ComponentsTab({
                         ) : (
                           <span className="text-slate-400 italic">Almoxarifado Central</span>
                         )}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex justify-end gap-1.5">
-                          {isAdminOrTech && (
-                            <button
-                              onClick={() => startEdit(comp)}
-                              className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-900 transition-colors"
-                              title="Editar equipamento"
-                            >
-                              <Edit className="h-4 w-4" />
-                            </button>
-                          )}
-                          
-                          {isAdminOrTech && (
-                            <button
-                              onClick={() => handleDelete(comp.id)}
-                              className="p-1.5 hover:bg-rose-50 rounded-lg text-slate-400 hover:text-rose-600 transition-colors"
-                              title="Excluir equipamento"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          )}
-                        </div>
                       </td>
                     </tr>
                   );

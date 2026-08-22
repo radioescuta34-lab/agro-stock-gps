@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   onAuthStateChanged, 
   signOut 
@@ -32,6 +32,7 @@ import {
   ComponentMaintenance,
   ComponentStatus,
   MaintenanceProvider,
+  Partner,
   FieldDataCollection,
   DashboardNavPreset,
   LicenseSettings,
@@ -52,6 +53,7 @@ import MachinesTab from './components/MachinesTab';
 import MovementsTab from './components/MovementsTab';
 import LicensesTab from './components/LicensesTab';
 import LoansTab from './components/LoansTab';
+import PartnersTab from './components/PartnersTab';
 import ProfileTab from './components/ProfileTab';
 import SupportTab from './components/SupportTab';
 import SettingsTab from './components/SettingsTab';
@@ -71,7 +73,6 @@ import {
   Cpu, 
   Tractor,
   Satellite,
-  Shield, 
   Wrench, 
   LogOut, 
   LayoutDashboard, 
@@ -84,7 +85,9 @@ import {
   Handshake,
   User,
   Settings,
-  LifeBuoy
+  LifeBuoy,
+  ChevronDown,
+  Building2
 } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'agro_stock_gps_';
@@ -124,6 +127,7 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isRegistrationsMenuOpen, setIsRegistrationsMenuOpen] = useState(false);
   const [isDemoMode, setIsDemoMode] = useState(false);
 
   // Core Data Lists
@@ -135,6 +139,7 @@ export default function App() {
   const [loans, setLoans] = useState<ComponentLoan[]>([]);
   const [maintenances, setMaintenances] = useState<ComponentMaintenance[]>([]);
   const [providers, setProviders] = useState<MaintenanceProvider[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(DEFAULT_COMPANY_PROFILE);
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
   const [fieldDataCollections, setFieldDataCollections] = useState<FieldDataCollection[]>([]);
@@ -145,6 +150,7 @@ export default function App() {
   const [kanbanPresetFilter, setKanbanPresetFilter] = useState<DashboardNavPreset | null>(null);
 
   const [loadingApp, setLoadingApp] = useState(true);
+  const legacyPartnersMigrationStarted = useRef(false);
 
   // License alert settings (global background auto-scan)
   const { alertSettings: licenseAlertSettings, saveAlertSettings } = useLicenseAlertSettings(isDemoMode);
@@ -161,9 +167,100 @@ export default function App() {
         setIsUserMenuOpen(false);
       }
     };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsUserMenuOpen(false);
+    };
     document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, [isUserMenuOpen]);
+
+  useEffect(() => {
+    if (!isRegistrationsMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-registrations-menu]')) {
+        setIsRegistrationsMenuOpen(false);
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsRegistrationsMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isRegistrationsMenuOpen]);
+
+  useEffect(() => {
+    if (!user || thirdParties.length === 0 || legacyPartnersMigrationStarted.current) return;
+    const missingPartners = thirdParties.filter(tp => !partners.some(partner => partner.id === tp.id));
+    if (missingPartners.length === 0) return;
+
+    legacyPartnersMigrationStarted.current = true;
+    const migrate = async () => {
+      try {
+        if (isDemoMode) {
+          const migrated: Partner[] = missingPartners.map(tp => ({
+            id: tp.id,
+            legalName: tp.company || tp.name,
+            tradingName: tp.name,
+            personType: tp.document.replace(/\D/g, '').length <= 11 ? 'PF' : 'PJ',
+            document: tp.document,
+            phone: tp.phone,
+            email: tp.email,
+            cep: '',
+            address: '',
+            contactPerson: tp.name,
+            contacts: [{ id: `legacy_${tp.id}`, name: tp.name, phone: tp.phone, email: tp.email }],
+            types: ['Recebedor de empréstimo'],
+            active: true,
+            notes: 'Migrado do cadastro legado de terceiros.',
+            createdAt: tp.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            updatedBy: user.name
+          }));
+          const updated = [...partners, ...migrated];
+          setPartners(updated);
+          saveDemoData('partners', updated);
+          return;
+        }
+
+        await Promise.all(missingPartners.map(async tp => {
+          const partnerRef = doc(db, 'partners', tp.id);
+          if ((await getDoc(partnerRef)).exists()) return;
+          await setDoc(partnerRef, {
+            id: tp.id,
+            legalName: tp.company || tp.name,
+            tradingName: tp.name,
+            personType: tp.document.replace(/\D/g, '').length <= 11 ? 'PF' : 'PJ',
+            document: tp.document,
+            phone: tp.phone,
+            email: tp.email,
+            cep: '',
+            address: '',
+            contactPerson: tp.name,
+            contacts: [{ id: `legacy_${tp.id}`, name: tp.name, phone: tp.phone, email: tp.email }],
+            types: ['Recebedor de empréstimo'],
+            active: true,
+            notes: 'Migrado do cadastro legado de terceiros.',
+            createdAt: tp.createdAt || serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            updatedBy: user.name || user.email || 'Sistema'
+          });
+        }));
+      } catch (migrationError) {
+        legacyPartnersMigrationStarted.current = false;
+        console.error('Não foi possível migrar os terceiros legados para parceiros:', migrationError);
+      }
+    };
+    void migrate();
+  }, [isDemoMode, partners, thirdParties, user]);
 
   // Authenticated state listener
   useEffect(() => {
@@ -686,10 +783,10 @@ export default function App() {
       }
     );
 
-    // Third Parties Listener
-    const unsubThirdParties = onSnapshot(
-      collection(db, 'third_parties'),
-      (snapshot) => {
+    // One-time compatibility read used only to migrate legacy third parties.
+    const unsubThirdParties = () => undefined;
+    void getDocs(collection(db, 'third_parties'))
+      .then((snapshot) => {
         const list: ThirdParty[] = [];
         snapshot.forEach((d) => {
           const data = d.data();
@@ -706,11 +803,10 @@ export default function App() {
           });
         });
         setThirdParties(list);
-      },
-      (error) => {
+      })
+      .catch((error) => {
         handleFirestoreError(error, OperationType.LIST, 'third_parties');
-      }
-    );
+      });
 
     // Loans Listener
     const unsubLoans = onSnapshot(
@@ -760,6 +856,7 @@ export default function App() {
             componentType: data.componentType || '',
             sentDate: data.sentDate || '',
             returnDate: data.returnDate || '',
+            providerId: data.providerId || '',
             providerName: data.providerName || '',
             issueDescription: data.issueDescription || '',
             replacedParts: data.replacedParts || '',
@@ -801,6 +898,37 @@ export default function App() {
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'providers');
       }
+    );
+
+    const unsubPartners = onSnapshot(
+      collection(db, 'partners'),
+      (snapshot) => {
+        const list: Partner[] = [];
+        snapshot.forEach((entry) => {
+          const data = entry.data();
+          list.push({
+            id: entry.id,
+            legalName: data.legalName || '',
+            tradingName: data.tradingName || '',
+            personType: data.personType === 'PF' ? 'PF' : data.personType === 'PJ' ? 'PJ' : (String(data.document || '').replace(/\D/g, '').length <= 11 ? 'PF' : 'PJ'),
+            document: data.document || '',
+            phone: data.phone || '',
+            email: data.email || '',
+            cep: data.cep || '',
+            address: data.address || '',
+            contactPerson: data.contactPerson || '',
+            contacts: Array.isArray(data.contacts) ? data.contacts : [],
+            types: Array.isArray(data.types) ? data.types : [],
+            active: data.active !== false,
+            notes: data.notes || '',
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt,
+            updatedBy: data.updatedBy || ''
+          });
+        });
+        setPartners(list);
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'partners')
     );
 
     // Company Profile Listener
@@ -869,6 +997,7 @@ export default function App() {
       unsubLoans();
       unsubMaintenances();
       unsubProviders();
+      unsubPartners();
       unsubCompany();
       unsubUsers();
     };
@@ -912,6 +1041,7 @@ export default function App() {
     const localLoans = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}loans`);
     const localMaintenances = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}maintenances`);
     const localProviders = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}providers`);
+    const localPartners = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}partners`);
     const localCompany = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}company_profile`);
     const localUsers = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}users`);
     const localFieldData = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}field_data_collections`);
@@ -924,6 +1054,7 @@ export default function App() {
     if (localLoans) setLoans(JSON.parse(localLoans));
     if (localMaintenances) setMaintenances(JSON.parse(localMaintenances));
     if (localProviders) setProviders(JSON.parse(localProviders));
+    if (localPartners) setPartners(JSON.parse(localPartners));
     if (localFieldData) setFieldDataCollections(JSON.parse(localFieldData));
     if (localCompany) {
       setCompanyProfile(JSON.parse(localCompany));
@@ -972,7 +1103,7 @@ export default function App() {
   }, [isDemoMode]);
 
   // Sync demo mode states to localStorage
-  const saveDemoData = (type: 'components' | 'machines' | 'movements' | 'licenses' | 'third_parties' | 'loans' | 'maintenances' | 'providers' | 'company_profile' | 'users' | 'field_data_collections', data: any) => {
+  const saveDemoData = (type: 'components' | 'machines' | 'movements' | 'licenses' | 'third_parties' | 'loans' | 'maintenances' | 'providers' | 'partners' | 'company_profile' | 'users' | 'field_data_collections', data: any) => {
     if (!isDemoMode) return;
     localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}${type}`, JSON.stringify(data));
   };
@@ -2352,6 +2483,60 @@ export default function App() {
     }
   };
 
+  const handleAddPartner = async (partnerData: Omit<Partner, 'id' | 'createdAt' | 'updatedAt' | 'updatedBy'>) => {
+    const updatedBy = user?.name || user?.email || 'Sistema';
+    if (isDemoMode) {
+      const partner: Partner = { ...partnerData, id: `demo_partner_${Date.now()}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), updatedBy };
+      const updated = [...partners, partner];
+      setPartners(updated); saveDemoData('partners', updated);
+      return;
+    }
+    const ref = doc(collection(db, 'partners'));
+    await setDoc(ref, { ...partnerData, id: ref.id, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy });
+  };
+
+  const handleEditPartner = async (id: string, updates: Partial<Partner>) => {
+    const updatedBy = user?.name || user?.email || 'Sistema';
+    if (isDemoMode) {
+      const updated = partners.map(partner => partner.id === id ? { ...partner, ...updates, updatedAt: new Date().toISOString(), updatedBy } : partner);
+      setPartners(updated); saveDemoData('partners', updated);
+      return;
+    }
+    await updateDoc(doc(db, 'partners', id), { ...updates, updatedAt: serverTimestamp(), updatedBy });
+  };
+
+  const handleDeactivatePartner = async (id: string) => handleEditPartner(id, { active: false });
+
+  const handleAddUnifiedThirdParty = async (thirdParty: Omit<ThirdParty, 'id' | 'createdAt' | 'updatedAt' | 'updatedBy'>) => {
+    await handleAddPartner({
+      legalName: thirdParty.company || thirdParty.name,
+      tradingName: thirdParty.name,
+      personType: thirdParty.document.replace(/\D/g, '').length <= 11 ? 'PF' : 'PJ',
+      document: thirdParty.document,
+      phone: thirdParty.phone,
+      email: thirdParty.email,
+      cep: '', address: '', contactPerson: thirdParty.name,
+      contacts: [{ id: `contact_${Date.now()}`, name: thirdParty.name, phone: thirdParty.phone, email: thirdParty.email }],
+      types: ['Recebedor de empréstimo'], active: true, notes: ''
+    });
+  };
+
+  const handleEditUnifiedThirdParty = async (id: string, updates: Partial<ThirdParty>) => {
+    if (!partners.some(partner => partner.id === id)) return handleEditThirdParty(id, updates);
+    await handleEditPartner(id, {
+      legalName: updates.company,
+      tradingName: updates.name,
+      document: updates.document,
+      phone: updates.phone,
+      email: updates.email
+    });
+  };
+
+  const handleDeleteUnifiedThirdParty = async (id: string) => {
+    if (!partners.some(partner => partner.id === id)) return handleDeleteThirdParty(id);
+    await handleDeactivatePartner(id);
+  };
+
   // Update Company Profile (Firestore or Demo)
   const handleUpdateCompany = async (updates: Omit<CompanyProfile, 'updatedAt' | 'updatedBy'>) => {
     const timestampStr = new Date().toISOString();
@@ -2640,6 +2825,7 @@ export default function App() {
     setKanbanPresetFilter(preset?.kanbanStatus ? preset : null);
     setIsMobileMenuOpen(false);
     setIsUserMenuOpen(false);
+    setIsRegistrationsMenuOpen(false);
   };
 
   if (loadingApp) {
@@ -2697,7 +2883,7 @@ export default function App() {
             </div>
 
             {/* Desktop Nav Items */}
-            <div className="ml-auto hidden items-center gap-2 md:flex">
+            <div className="ml-6 hidden items-center gap-2 md:flex">
               <button
                 onClick={() => navigateToTab('dashboard')}
                 className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'dashboard' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
@@ -2707,23 +2893,35 @@ export default function App() {
                 Dashboard
               </button>
 
-              <button
-                onClick={() => navigateToTab('components')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'components' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
-                id="nav-components"
-              >
-                <Cpu className="h-4 w-4" />
-                Estoque GPS
-              </button>
-
-              <button
-                onClick={() => navigateToTab('licenses')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'licenses' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
-                id="nav-licenses"
-              >
-                <Key className="h-4 w-4" />
-                Licenças
-              </button>
+              <div className="relative" data-registrations-menu>
+                <button
+                  onClick={() => setIsRegistrationsMenuOpen(open => !open)}
+                  className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-all ${isRegistrationsMenuOpen || ['components', 'partners', 'licenses', 'machines'].includes(currentTab) ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
+                  id="registrations-menu-button"
+                  aria-haspopup="menu"
+                  aria-expanded={isRegistrationsMenuOpen}
+                >
+                  <Database className="h-4 w-4" />
+                  Cadastros
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isRegistrationsMenuOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {isRegistrationsMenuOpen && (
+                  <div id="registrations-menu-dropdown" role="menu" className="absolute left-0 top-full z-50 mt-2 w-56 rounded-2xl border border-slate-700 bg-slate-800 p-1.5 shadow-2xl shadow-slate-950/30">
+                    <button onClick={() => navigateToTab('components')} role="menuitem" className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-colors ${currentTab === 'components' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-200 hover:bg-slate-700/60 hover:text-white'}`}>
+                      <Cpu className="h-4 w-4" /> Equipamentos GPS
+                    </button>
+                    <button onClick={() => navigateToTab('partners')} role="menuitem" className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-colors ${currentTab === 'partners' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-200 hover:bg-slate-700/60 hover:text-white'}`}>
+                      <Building2 className="h-4 w-4" /> Parceiros
+                    </button>
+                    <button onClick={() => navigateToTab('licenses')} role="menuitem" className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-colors ${currentTab === 'licenses' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-200 hover:bg-slate-700/60 hover:text-white'}`}>
+                      <Key className="h-4 w-4" /> Licenças
+                    </button>
+                    <button onClick={() => navigateToTab('machines')} role="menuitem" className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-colors ${currentTab === 'machines' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-200 hover:bg-slate-700/60 hover:text-white'}`}>
+                      <Tractor className="h-4 w-4" /> Frota
+                    </button>
+                  </div>
+                )}
+              </div>
 
               <button
                 onClick={() => navigateToTab('movements')}
@@ -2743,32 +2941,23 @@ export default function App() {
                 Empréstimos
               </button>
 
-              <button
-                onClick={() => navigateToTab('machines')}
-                className={`px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${currentTab === 'machines' ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
-                id="nav-machines"
-              >
-                <Menu className="h-4 w-4" />
-                Frota
-              </button>
-
             </div>
 
             {/* User Profile / Logout Area */}
-            <div className="ml-2 hidden items-center md:flex">
+            <div className="ml-auto hidden items-center md:flex">
               <div className="relative">
                 <button
                   onClick={() => {
                     setIsMobileMenuOpen(false);
                     setIsUserMenuOpen(!isUserMenuOpen);
                   }}
-                  className={`flex items-center gap-3 rounded-xl p-1 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${isUserMenuOpen || ['profile', 'support', 'settings'].includes(currentTab) ? 'bg-slate-800' : 'hover:bg-slate-800/70'}`}
+                  className={`group flex min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 ${isUserMenuOpen || ['profile', 'support', 'settings'].includes(currentTab) ? 'bg-slate-800/80' : 'hover:bg-slate-800/55'}`}
                   id="user-menu-button"
                   aria-haspopup="menu"
                   aria-expanded={isUserMenuOpen}
                   aria-label="Abrir menu do usuário"
                 >
-                  <div className="w-8 h-8 rounded-full overflow-hidden bg-emerald-500/20 flex items-center justify-center shrink-0 ring-1 ring-emerald-500/30">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/10 bg-slate-800 ring-1 ring-emerald-400/20">
                     {user.photoURL ? (
                       <img src={user.photoURL} alt="" className="w-full h-full object-cover" />
                     ) : (
@@ -2777,22 +2966,13 @@ export default function App() {
                       </span>
                     )}
                   </div>
-                  <div className="hidden text-left md:block">
-                    <span className="block text-xs font-bold text-white">{user.name.split(' ')[0]}</span>
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase bg-emerald-500/15 text-emerald-400/80 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                      {user.role === 'administrador' || user.role === 'ADMINISTRADOR' ? (
-                        <>
-                          <Shield className="h-3 w-3" />
-                          Admin
-                        </>
-                      ) : (
-                        <>
-                          <Wrench className="h-3 w-3" />
-                          Técnico
-                        </>
-                      )}
+                  <div className="hidden min-w-0 text-left md:block">
+                    <span className="block max-w-24 truncate text-xs font-bold leading-tight text-white">{user.name.split(' ')[0]}</span>
+                    <span className="mt-0.5 block text-[10px] font-medium leading-tight text-slate-400">
+                      {user.role === 'administrador' || user.role === 'ADMINISTRADOR' ? 'Administrador' : 'Técnico de campo'}
                     </span>
                   </div>
+                  <ChevronDown className={`hidden h-3.5 w-3.5 shrink-0 text-slate-500 transition-transform duration-200 group-hover:text-slate-300 md:block ${isUserMenuOpen ? 'rotate-180 text-slate-300' : ''}`} aria-hidden="true" />
                 </button>
 
                 {isUserMenuOpen && (
@@ -2870,21 +3050,33 @@ export default function App() {
               Dashboard
             </button>
 
-            <button
-              onClick={() => navigateToTab('components')}
-              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'components' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
-            >
-              <Cpu className="h-4 w-4" />
-              Estoque GPS
-            </button>
-
-            <button
-              onClick={() => navigateToTab('licenses')}
-              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'licenses' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
-            >
-              <Key className="h-4 w-4" />
-              Licenças
-            </button>
+            <div data-registrations-menu className={`rounded-xl ${['components', 'partners', 'licenses', 'machines'].includes(currentTab) ? 'bg-slate-900/45' : ''}`}>
+              <button
+                onClick={() => setIsRegistrationsMenuOpen(open => !open)}
+                className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-all ${['components', 'partners', 'licenses', 'machines'].includes(currentTab) ? 'text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
+                aria-expanded={isRegistrationsMenuOpen}
+              >
+                <Database className="h-4 w-4" />
+                <span className="flex-1">Cadastros</span>
+                <ChevronDown className={`h-4 w-4 transition-transform ${isRegistrationsMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {isRegistrationsMenuOpen && (
+                <div className="space-y-1 px-2 pb-2">
+                  <button onClick={() => navigateToTab('components')} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs font-semibold ${currentTab === 'components' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-400 hover:bg-slate-700/50 hover:text-white'}`}>
+                    <Cpu className="h-4 w-4" /> Equipamentos GPS
+                  </button>
+                  <button onClick={() => navigateToTab('partners')} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs font-semibold ${currentTab === 'partners' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-400 hover:bg-slate-700/50 hover:text-white'}`}>
+                    <Building2 className="h-4 w-4" /> Parceiros
+                  </button>
+                  <button onClick={() => navigateToTab('licenses')} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs font-semibold ${currentTab === 'licenses' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-400 hover:bg-slate-700/50 hover:text-white'}`}>
+                    <Key className="h-4 w-4" /> Licenças
+                  </button>
+                  <button onClick={() => navigateToTab('machines')} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs font-semibold ${currentTab === 'machines' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-400 hover:bg-slate-700/50 hover:text-white'}`}>
+                    <Tractor className="h-4 w-4" /> Frota
+                  </button>
+                </div>
+              )}
+            </div>
 
             <button
               onClick={() => navigateToTab('movements')}
@@ -2900,14 +3092,6 @@ export default function App() {
             >
               <Handshake className="h-4 w-4" />
               Empréstimos
-            </button>
-
-            <button
-              onClick={() => navigateToTab('machines')}
-              className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${currentTab === 'machines' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
-            >
-              <Menu className="h-4 w-4" />
-              Frota
             </button>
 
             <div className="mt-3 border-t border-slate-700/60 pt-3">
@@ -2982,8 +3166,37 @@ export default function App() {
             maintenances={maintenances}
             onSendToMaintenance={handleSendToMaintenance}
             onReturnFromMaintenance={handleReturnFromMaintenance}
-            providers={providers}
-            onAddProvider={handleAddProvider}
+            providers={[
+              ...providers,
+              ...partners
+                .filter(partner => partner.active && partner.types.includes('Assistência técnica'))
+                .map(partner => ({
+                  id: partner.id,
+                  name: partner.tradingName || partner.legalName,
+                  phone: partner.phone,
+                  email: partner.email,
+                  address: partner.address || '',
+                  contactPerson: partner.contactPerson || '',
+                  createdAt: partner.createdAt,
+                  updatedAt: partner.updatedAt,
+                  updatedBy: partner.updatedBy
+                }))
+            ]}
+            onAddProvider={async provider => handleAddPartner({
+              legalName: provider.name,
+              tradingName: provider.name,
+              personType: 'PJ',
+              document: '',
+              phone: provider.phone || '',
+              email: provider.email || '',
+              cep: '',
+              address: provider.address || '',
+              contactPerson: provider.contactPerson || '',
+              contacts: provider.contactPerson || provider.phone || provider.email ? [{ id: `contact_${Date.now()}`, name: provider.contactPerson || provider.name, phone: provider.phone || '', email: provider.email || '' }] : [],
+              types: ['Assistência técnica'],
+              active: true,
+              notes: ''
+            })}
           />
         )}
 
@@ -3037,18 +3250,39 @@ export default function App() {
         {currentTab === 'loans' && (
           <LoansTab
             components={components}
-            thirdParties={thirdParties}
+            thirdParties={partners
+              .filter(partner => partner.active && partner.types.includes('Recebedor de empréstimo'))
+              .map(partner => ({
+                id: partner.id,
+                name: partner.tradingName || partner.legalName,
+                document: partner.document,
+                phone: partner.phone,
+                email: partner.email,
+                company: partner.legalName,
+                createdAt: partner.createdAt,
+                updatedAt: partner.updatedAt,
+                updatedBy: partner.updatedBy
+              }))}
             loans={loans}
             role={user.role}
             currentUserName={user.name}
             companyProfile={companyProfile}
-            onAddThirdParty={handleAddThirdParty}
-            onEditThirdParty={handleEditThirdParty}
-            onDeleteThirdParty={handleDeleteThirdParty}
             onAddLoan={handleAddLoan}
             onReturnLoan={handleReturnLoan}
             onPartialReturnLoan={handlePartialReturnLoan}
             onDeleteLoan={handleDeleteLoan}
+          />
+        )}
+
+        {currentTab === 'partners' && (
+          <PartnersTab
+            partners={partners}
+            role={user.role}
+            maintenances={maintenances}
+            loans={loans}
+            onAddPartner={handleAddPartner}
+            onEditPartner={handleEditPartner}
+            onDeactivatePartner={handleDeactivatePartner}
           />
         )}
 

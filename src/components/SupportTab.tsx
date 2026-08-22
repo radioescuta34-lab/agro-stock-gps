@@ -57,6 +57,7 @@ interface SupportComment {
   createdAt: string | null;
   authorName: string;
   source: 'app' | 'trello';
+  attachments?: Array<{ id: string; filename: string; url: string }>;
 }
 
 interface SupportTabProps {
@@ -65,6 +66,7 @@ interface SupportTabProps {
 }
 
 const MAX_FILES = 4;
+const MAX_REPLY_FILES = 2;
 const MAX_FILE_BYTES = 6 * 1024 * 1024;
 const COMPRESS_THRESHOLD = 800 * 1024;
 const MAX_DIMENSION = 1600;
@@ -193,6 +195,58 @@ async function buildHeaders(user: UserProfile): Promise<Record<string, string>> 
   return headers;
 }
 
+function SupportAttachmentPreview({ ticketId, attachment, user }: {
+  key?: React.Key;
+  ticketId: string;
+  attachment: { id: string; filename: string; url: string };
+  user: UserProfile;
+}) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl = '';
+    if (!attachment.id) {
+      setFailed(true);
+      return;
+    }
+    void (async () => {
+      try {
+        const headers = await buildHeaders(user);
+        const response = await fetch(
+          `/api/support/tickets/${encodeURIComponent(ticketId)}/attachments/${encodeURIComponent(attachment.id)}`,
+          { headers }
+        );
+        if (!response.ok) throw new Error('Imagem indisponível');
+        objectUrl = URL.createObjectURL(await response.blob());
+        if (active) setPreviewUrl(objectUrl);
+      } catch {
+        if (active) setFailed(true);
+      }
+    })();
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [attachment.id, ticketId, user]);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-emerald-100 bg-white">
+      {previewUrl ? (
+        <img src={previewUrl} alt={attachment.filename} className="aspect-video w-full object-cover" />
+      ) : failed ? (
+        <div className="flex aspect-video items-center justify-center gap-1.5 bg-slate-50 px-2 text-[10px] font-medium text-slate-500">
+          <AlertTriangle className="h-3.5 w-3.5" />Prévia indisponível
+        </div>
+      ) : (
+        <div className="flex aspect-video items-center justify-center bg-slate-50"><Loader2 className="h-4 w-4 animate-spin text-emerald-500" /></div>
+      )}
+      <span className="block truncate px-2 py-1.5 text-[10px] font-semibold text-slate-600">{attachment.filename}</span>
+    </div>
+  );
+}
+
 function MeusChamados({ user }: { user: UserProfile }) {
   const [tickets, setTickets] = useState<TrackedTicket[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -201,6 +255,7 @@ function MeusChamados({ user }: { user: UserProfile }) {
   const [statusFilter, setStatusFilter] = useState<'todos' | 'abertos' | 'concluidos'>('todos');
   const [expandedTicket, setExpandedTicket] = useState<string | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [replyAttachments, setReplyAttachments] = useState<Record<string, SupportAttachment[]>>({});
   const [replyingTicket, setReplyingTicket] = useState<string | null>(null);
   const [replyErrors, setReplyErrors] = useState<Record<string, string>>({});
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
@@ -254,9 +309,59 @@ function MeusChamados({ user }: { user: UserProfile }) {
   const openCount = (tickets || []).filter((ticket) => ticket.status !== 'Concluído').length;
   const closedCount = (tickets || []).filter((ticket) => ticket.status === 'Concluído').length;
 
+  const handleReplyFiles = async (ticketId: string, files: File[]) => {
+    const existing = replyAttachments[ticketId] || [];
+    const remaining = MAX_REPLY_FILES - existing.length;
+    if (remaining <= 0) return;
+    const selected = files.slice(0, remaining);
+    const processed: SupportAttachment[] = [];
+
+    for (const file of selected) {
+      try {
+        if (!file.type.startsWith('image/')) {
+          setReplyErrors((current) => ({ ...current, [ticketId]: 'Nesta conversa, envie imagens PNG, JPG, WEBP ou GIF.' }));
+          continue;
+        }
+        let dataUrl = await readAsDataUrl(file);
+        let mimeType = file.type;
+        let filename = file.name;
+        let sizeBytes = file.size;
+        if (mimeType !== 'image/gif' && sizeBytes > COMPRESS_THRESHOLD) {
+          dataUrl = await compressImage(dataUrl);
+          mimeType = 'image/jpeg';
+          sizeBytes = Math.round(dataUrl.length * 0.75);
+          if (!/\.jpe?g$/i.test(filename)) filename = `${filename.replace(/\.[^.]+$/, '')}.jpg`;
+        }
+        if (sizeBytes > MAX_FILE_BYTES) {
+          setReplyErrors((current) => ({ ...current, [ticketId]: `A imagem ${file.name} excede o limite de 6 MB.` }));
+          continue;
+        }
+        processed.push({
+          id: generateAttachmentId(),
+          filename,
+          mimeType,
+          base64: dataUrl.substring(dataUrl.indexOf(',') + 1),
+          previewUrl: dataUrl,
+          sizeBytes
+        });
+      } catch (err: any) {
+        setReplyErrors((current) => ({ ...current, [ticketId]: err?.message || `Erro ao processar ${file.name}.` }));
+      }
+    }
+
+    if (processed.length > 0) {
+      setReplyAttachments((current) => ({
+        ...current,
+        [ticketId]: [...(current[ticketId] || []), ...processed].slice(0, MAX_REPLY_FILES)
+      }));
+      setReplyErrors((current) => ({ ...current, [ticketId]: '' }));
+    }
+  };
+
   const submitReply = async (ticketId: string) => {
     const message = (replyDrafts[ticketId] || '').trim();
-    if (!message || replyingTicket) return;
+    const attachments = replyAttachments[ticketId] || [];
+    if ((!message && attachments.length === 0) || replyingTicket) return;
     setReplyingTicket(ticketId);
     setReplyErrors((current) => ({ ...current, [ticketId]: '' }));
     try {
@@ -264,7 +369,15 @@ function MeusChamados({ user }: { user: UserProfile }) {
       const res = await fetch(`/api/support/tickets/${encodeURIComponent(ticketId)}/comments`, {
         method: 'POST',
         headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, authorName: user.name })
+        body: JSON.stringify({
+          message,
+          authorName: user.name,
+          anexos: attachments.map((attachment) => ({
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            base64: attachment.base64
+          }))
+        })
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.success || !data?.comment) {
@@ -278,6 +391,13 @@ function MeusChamados({ user }: { user: UserProfile }) {
           }
         : ticket) || []);
       setReplyDrafts((current) => ({ ...current, [ticketId]: '' }));
+      setReplyAttachments((current) => ({ ...current, [ticketId]: [] }));
+      if (Array.isArray(data.attachmentsFailed) && data.attachmentsFailed.length > 0) {
+        setReplyErrors((current) => ({
+          ...current,
+          [ticketId]: `Mensagem enviada, mas não foi possível anexar: ${data.attachmentsFailed.join(', ')}.`
+        }));
+      }
     } catch (err: any) {
       setReplyErrors((current) => ({
         ...current,
@@ -424,6 +544,13 @@ function MeusChamados({ user }: { user: UserProfile }) {
                         <span className={fromApp ? 'text-emerald-600' : 'text-slate-400'}>{formatTicketDate(comment.createdAt)}</span>
                       </div>
                       <p className="mt-1.5 whitespace-pre-line break-words text-sm leading-relaxed text-slate-700">{comment.text}</p>
+                      {comment.attachments && comment.attachments.length > 0 && (
+                        <div className="mt-2 grid max-w-sm grid-cols-2 gap-2">
+                          {comment.attachments.map((attachment) => (
+                            <SupportAttachmentPreview key={`${comment.id}-${attachment.id || attachment.url}`} ticketId={t.id} attachment={attachment} user={user} />
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -434,21 +561,70 @@ function MeusChamados({ user }: { user: UserProfile }) {
               </div>
 
               <div className="mt-4 rounded-xl border border-slate-200 bg-white p-2 shadow-sm focus-within:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-500/10">
+                {(replyAttachments[t.id] || []).length > 0 && (
+                  <div className="mb-2 flex gap-2 overflow-x-auto px-1 pb-1">
+                    {(replyAttachments[t.id] || []).map((attachment) => (
+                      <div key={attachment.id} className="relative h-20 w-24 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                        {attachment.previewUrl && <img src={attachment.previewUrl} alt={attachment.filename} className="h-full w-full object-cover" />}
+                        <button
+                          type="button"
+                          onClick={() => setReplyAttachments((current) => ({ ...current, [t.id]: (current[t.id] || []).filter((item) => item.id !== attachment.id) }))}
+                          className="absolute right-1 top-1 rounded-full bg-slate-900/75 p-1 text-white"
+                          aria-label={`Remover ${attachment.filename}`}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <label htmlFor={`reply-${t.id}`} className="sr-only">Responder ao chamado {t.id}</label>
                 <textarea
                   id={`reply-${t.id}`}
                   value={replyDrafts[t.id] || ''}
                   onChange={(event) => setReplyDrafts((current) => ({ ...current, [t.id]: event.target.value.slice(0, 2000) }))}
+                  onPaste={(event) => {
+                    const clipboardItems = Array.from(event.clipboardData.items) as DataTransferItem[];
+                    const imageFiles = clipboardItems
+                      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+                      .map((item) => item.getAsFile())
+                      .filter((file): file is File => Boolean(file));
+                    if (imageFiles.length === 0) return;
+                    event.preventDefault();
+                    void handleReplyFiles(t.id, imageFiles);
+                  }}
                   rows={2}
                   placeholder="Escreva uma resposta para a equipe de suporte..."
                   className="max-h-40 min-h-16 w-full resize-y border-0 bg-transparent px-2 py-1.5 text-sm leading-relaxed text-slate-700 outline-none placeholder:text-slate-400"
                 />
                 <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-1 pt-2">
-                  <span className="text-[9px] text-slate-400">{(replyDrafts[t.id] || '').length}/2000</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id={`reply-files-${t.id}`}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      multiple
+                      className="hidden"
+                      onChange={(event) => {
+                        void handleReplyFiles(t.id, Array.from(event.target.files || []));
+                        event.target.value = '';
+                      }}
+                    />
+                    <label
+                      htmlFor={`reply-files-${t.id}`}
+                      className={`inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition ${replyingTicket === t.id || (replyAttachments[t.id] || []).length >= MAX_REPLY_FILES ? 'pointer-events-none text-slate-300' : 'text-slate-500 hover:bg-slate-100 hover:text-emerald-700'}`}
+                      title="Anexar captura de tela"
+                    >
+                      <Paperclip className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Anexar imagem</span>
+                    </label>
+                    <span className="hidden text-[9px] text-slate-400 lg:inline">ou cole com Ctrl+V</span>
+                    <span className="text-[9px] text-slate-400">{(replyDrafts[t.id] || '').length}/2000</span>
+                  </div>
                   <button
                     type="button"
                     onClick={() => submitReply(t.id)}
-                    disabled={replyingTicket === t.id || !(replyDrafts[t.id] || '').trim()}
+                    disabled={replyingTicket === t.id || (!(replyDrafts[t.id] || '').trim() && (replyAttachments[t.id] || []).length === 0)}
                     className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-[11px] font-extrabold text-white transition hover:bg-emerald-700 disabled:pointer-events-none disabled:bg-slate-300"
                   >
                     {replyingTicket === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}

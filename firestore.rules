@@ -250,5 +250,22 @@ service cloud.firestore {
       allow create, update: if (isAdmin() || isTechnician()) && isValidId(providerId) && isValidProvider(request.resource.data);
       allow delete: if isAdmin();
     }
+
+    function isValidPartner(partner) {
+      return partner.id is string && partner.id.size() <= 128
+        && partner.legalName is string && partner.legalName.size() <= 256
+        && partner.document is string && partner.document.size() <= 64
+        && partner.phone is string && partner.phone.size() <= 64
+        && partner.email is string && partner.email.size() <= 128
+        && partner.types is list
+        && partner.types.size() > 0
+        && partner.active is bool;
+    }
+
+    match /partners/{partnerId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if (isAdmin() || isTechnician()) && isValidId(partnerId) && isValidPartner(request.resource.data);
+      allow delete: if false;
+    }
   }
 }

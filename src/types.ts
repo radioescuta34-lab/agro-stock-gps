@@ -255,6 +255,7 @@ export interface ComponentMaintenance {
   componentType: string;
   sentDate: string; // ISO string
   returnDate?: string; // ISO string or empty
+  providerId?: string; // Related partner/provider
   providerName: string; // Maintenance company
   issueDescription: string; // Description of the problem
   replacedParts?: string; // Parts replaced during maintenance
@@ -272,6 +273,38 @@ export interface MaintenanceProvider {
   email?: string;
   address?: string;
   contactPerson?: string;
+  createdAt: any;
+  updatedAt: any;
+  updatedBy: string;
+}
+
+export type PartnerType = 'Assistência técnica' | 'Prestador de serviço' | 'Recebedor de empréstimo';
+export type PartnerPersonType = 'PF' | 'PJ';
+
+export interface PartnerContact {
+  id: string;
+  name: string;
+  role?: string;
+  phone?: string;
+  mobile?: string;
+  email?: string;
+}
+
+export interface Partner {
+  id: string;
+  legalName: string;
+  tradingName?: string;
+  personType: PartnerPersonType;
+  document: string;
+  phone: string;
+  email: string;
+  cep?: string;
+  address?: string;
+  contactPerson?: string;
+  contacts?: PartnerContact[];
+  types: PartnerType[];
+  active: boolean;
+  notes?: string;
   createdAt: any;
   updatedAt: any;
   updatedBy: string;

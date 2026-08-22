@@ -16,7 +16,6 @@ import {
   X, 
   Kanban,
   MoreVertical,
-  Eye,
   Play,
   Check,
   Ban,
@@ -124,7 +123,17 @@ export default function MovementsTab({
       }
     };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenuOpenId(null);
+        setMenuAnchor(null);
+      }
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
   }, []);
 
   useEffect(() => {
@@ -138,9 +147,16 @@ export default function MovementsTab({
         setDetailMenuOpen(false);
       }
     };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDetailMenuOpen(false);
+    };
 
     document.addEventListener('mousedown', closeDetailMenu);
-    return () => document.removeEventListener('mousedown', closeDetailMenu);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeDetailMenu);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
   }, [selectedMove]);
 
   useEffect(() => {
@@ -435,7 +451,7 @@ export default function MovementsTab({
     const rect = button.getBoundingClientRect();
     const menuWidth = 192;
     const move = movements.find(item => item.id === moveId);
-    const menuItems = 1 + (move ? availableTransitions(move).length + (canEditMovement(move) ? 1 : 0) + (canDeleteMovement(move) ? 1 : 0) : 0);
+    const menuItems = move ? availableTransitions(move).length + (canEditMovement(move) ? 1 : 0) + (canDeleteMovement(move) ? 1 : 0) : 0;
     const estimatedMenuHeight = 8 + menuItems * 36;
     const left = Math.min(rect.left, window.innerWidth - menuWidth - 8);
     const spaceBelow = window.innerHeight - rect.bottom - 8;
@@ -842,37 +858,47 @@ export default function MovementsTab({
             {/* Mobile list */}
             <div className="divide-y divide-slate-100 md:hidden" id="movements-mobile-list">
               {filteredMovements.map((move) => (
-                <article key={move.id} className="px-4 py-3.5">
+                <article
+                  key={move.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedMove(move)}
+                  onKeyDown={(event) => {
+                    if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                      event.preventDefault();
+                      setSelectedMove(move);
+                    }
+                  }}
+                  className="cursor-pointer px-4 py-3.5 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500"
+                  aria-label={`Abrir detalhes da O.S. ${String(move.osNumber || '').padStart(4, '0')}`}
+                >
                   <div className="flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedMove(move)}
-                      className="flex min-w-0 items-center gap-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-                    >
+                    <div className="flex min-w-0 items-center gap-2 text-left">
                       <span className="text-xs font-bold text-slate-900">
                         #{String(move.osNumber || '').padStart(4, '0')}
                       </span>
                       <span className="text-[10px] font-medium text-slate-400">{formatDate(move.date)}</span>
-                    </button>
+                    </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       {renderStatusBadge(move)}
-                      <button
-                        type="button"
-                        data-os-menu-trigger
-                        onClick={(event) => toggleOSMenu(move.id, event.currentTarget)}
-                        className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-                        aria-label={`Ações da O.S. ${String(move.osNumber || '').padStart(4, '0')}`}
-                      >
-                        <MoreVertical className="h-4 w-4" />
-                      </button>
+                      {(canEditMovement(move) || availableTransitions(move).length > 0 || canDeleteMovement(move)) && (
+                        <button
+                          type="button"
+                          data-os-menu-trigger
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleOSMenu(move.id, event.currentTarget);
+                          }}
+                          className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                          aria-label={`Ações da O.S. ${String(move.osNumber || '').padStart(4, '0')}`}
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setSelectedMove(move)}
-                    className="mt-2.5 block w-full rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-                  >
+                  <div className="mt-2.5 block w-full text-left">
                     <span className="block text-[11px] font-semibold text-slate-600">{ACTION_LABELS[move.action]}</span>
                     <span className="mt-1 block text-xs font-semibold text-slate-800">{move.componentName}</span>
                     <span className="mt-0.5 block font-mono text-[10px] text-slate-400">S/N {move.componentSerial}</span>
@@ -883,7 +909,7 @@ export default function MovementsTab({
                       <span aria-hidden="true" className="text-slate-300">•</span>
                       <span>{move.technicianName}</span>
                     </span>
-                  </button>
+                  </div>
                 </article>
               ))}
             </div>
@@ -907,7 +933,20 @@ export default function MovementsTab({
                   {filteredMovements.map((move) => {
                     const meta = getStatusMeta(move);
                     return (
-                      <tr key={move.id} className="hover:bg-slate-50/50 transition-colors">
+                      <tr
+                        key={move.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setSelectedMove(move)}
+                        onKeyDown={(event) => {
+                          if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                            event.preventDefault();
+                            setSelectedMove(move);
+                          }
+                        }}
+                        className="cursor-pointer transition-colors hover:bg-slate-50 focus:outline-none focus-visible:bg-emerald-50/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500"
+                        aria-label={`Abrir detalhes da O.S. ${String(move.osNumber || '').padStart(4, '0')}`}
+                      >
                         <td className="py-3 px-4 font-bold text-slate-900 whitespace-nowrap">
                           #{String(move.osNumber || '').padStart(4, '0')}
                         </td>
@@ -935,16 +974,19 @@ export default function MovementsTab({
                           {renderStatusBadge(move)}
                         </td>
                         <td className="py-3 px-4 text-right">
-                          <div className="relative inline-block">
+                          {(canEditMovement(move) || availableTransitions(move).length > 0 || canDeleteMovement(move)) && <div className="relative inline-block">
                             <button
                               data-os-menu-trigger
-                              onClick={(event) => toggleOSMenu(move.id, event.currentTarget)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleOSMenu(move.id, event.currentTarget);
+                              }}
                               className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
                               aria-label="Ações da ordem"
                             >
                               <MoreVertical className="h-4 w-4" />
                             </button>
-                          </div>
+                          </div>}
                         </td>
                       </tr>
                     );
@@ -974,7 +1016,21 @@ export default function MovementsTab({
                   </p>
                 </div>
                 <div ref={detailMenuRef} className="relative flex shrink-0 items-center gap-1">
-                  {(canEditMovement(selectedMove) || canDeleteMovement(selectedMove) || availableTransitions(selectedMove).some(t => t.status === 'Cancelada')) && (
+                  {canEditMovement(selectedMove) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDetailMenuOpen(false);
+                        startEdit(selectedMove);
+                      }}
+                      aria-label="Editar ordem de serviço"
+                      title="Editar O.S."
+                      className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-emerald-50 hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                    >
+                      <Edit className="h-4 w-4" />
+                    </button>
+                  )}
+                  {(canDeleteMovement(selectedMove) || availableTransitions(selectedMove).some(t => t.status === 'Cancelada')) && (
                     <>
                       <button
                         type="button"
@@ -987,18 +1043,6 @@ export default function MovementsTab({
                       </button>
                       {detailMenuOpen && (
                         <div className="absolute right-0 top-10 z-20 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-                          {canEditMovement(selectedMove) && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setDetailMenuOpen(false);
-                                startEdit(selectedMove);
-                              }}
-                              className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50"
-                            >
-                              <Edit className="h-4 w-4" /> Editar O.S.
-                            </button>
-                          )}
                           {availableTransitions(selectedMove).some(t => t.status === 'Cancelada') && (
                             <button
                               type="button"
@@ -1134,12 +1178,6 @@ export default function MovementsTab({
               className="fixed z-50 w-48 bg-white border border-slate-200 rounded-xl shadow-lg py-1"
               style={{ top: menuAnchor.top, left: menuAnchor.left }}
             >
-              <button
-                onClick={() => { setSelectedMove(move); setMenuOpenId(null); setMenuAnchor(null); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 rounded-lg cursor-pointer"
-              >
-                <Eye className="h-3.5 w-3.5" /> Ver detalhes
-              </button>
               {canEditMovement(move) && (
                 <button
                   onClick={() => {

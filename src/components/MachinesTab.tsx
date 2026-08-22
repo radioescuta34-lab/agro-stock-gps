@@ -103,9 +103,16 @@ export default function MachinesTab({
         setMachineActionsOpen(false);
       }
     };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMachineActionsOpen(false);
+    };
 
     document.addEventListener('mousedown', closeActions);
-    return () => document.removeEventListener('mousedown', closeActions);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeActions);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
   }, [historyMachine]);
 
   const resetForm = () => {
@@ -322,9 +329,9 @@ export default function MachinesTab({
       {/* Header and Add Button */}
       <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:flex-row md:items-center md:justify-between md:p-6">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Frota da Usina</h1>
+          <h1 className="text-xl font-bold text-slate-900">Gestão de frota</h1>
           <p className="text-slate-500 text-xs mt-1">
-            Cadastro de tratores, colhedoras e pulverizadores onde os pilotos Trimble e Topcon são instalados.
+            Cadastre máquinas e veículos, acompanhe licenças e consulte o histórico de manutenção.
           </p>
         </div>
 
@@ -442,7 +449,7 @@ export default function MachinesTab({
                 </span>
                 <div>
                   <h2 className="text-base font-bold text-slate-900 sm:text-lg">Cadastrar veículo</h2>
-                  <p className="mt-0.5 text-xs text-slate-500">Adicione uma máquina à frota da usina.</p>
+                  <p className="mt-0.5 text-xs text-slate-500">Adicione uma máquina ou veículo à frota da empresa.</p>
                 </div>
               </div>
               <button
@@ -821,6 +828,20 @@ export default function MachinesTab({
                   <>
                     <button
                       type="button"
+                      onClick={() => {
+                        const machine = historyMachine;
+                        setMachineActionsOpen(false);
+                        setHistoryMachine(null);
+                        startEdit(machine);
+                      }}
+                      aria-label="Editar veículo"
+                      title="Editar veículo"
+                      className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-emerald-50 hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                    >
+                      <Edit className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setMachineActionsOpen(open => !open)}
                       aria-label="Mais ações do veículo"
                       aria-expanded={machineActionsOpen}
@@ -1107,22 +1128,6 @@ export default function MachinesTab({
               )}
             </div>
 
-            {machineDetailTab === 'summary' && isAdminOrTech && (
-              <div className="ios-safe-action-bar shrink-0 border-t border-slate-100 bg-white px-4 pt-3 sm:flex sm:justify-end">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const machine = historyMachine;
-                    setHistoryMachine(null);
-                    startEdit(machine);
-                  }}
-                  className="flex min-h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-4 text-xs font-bold text-white transition-colors hover:bg-emerald-700 sm:w-auto"
-                >
-                  <Edit className="h-3.5 w-3.5" />
-                  Editar
-                </button>
-              </div>
-            )}
           </div>
         </div>,
         document.body

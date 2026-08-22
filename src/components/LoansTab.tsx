@@ -37,9 +37,6 @@ interface LoansTabProps {
   role: UserRole;
   currentUserName: string;
   companyProfile?: CompanyProfile;
-  onAddThirdParty: (tp: Omit<ThirdParty, 'id' | 'createdAt' | 'updatedAt' | 'updatedBy'>) => Promise<void>;
-  onEditThirdParty: (id: string, updates: Partial<ThirdParty>) => Promise<void>;
-  onDeleteThirdParty: (id: string) => Promise<void>;
   onAddLoan: (loan: Omit<ComponentLoan, 'id' | 'contractNumber' | 'createdAt' | 'updatedAt' | 'updatedBy'>) => Promise<void>;
   onReturnLoan: (id: string) => Promise<void>;
   onPartialReturnLoan: (id: string, returnedItemIds: string[]) => Promise<void>;
@@ -53,9 +50,6 @@ export default function LoansTab({
   role,
   currentUserName,
   companyProfile,
-  onAddThirdParty,
-  onEditThirdParty,
-  onDeleteThirdParty,
   onAddLoan,
   onReturnLoan,
   onPartialReturnLoan,
@@ -64,15 +58,13 @@ export default function LoansTab({
   const { showToast, showDialog } = useNotifications();
 
   // Navigation within tab
-  const [subTab, setSubTab] = useState<'loans' | 'thirdparties' | 'history'>('loans');
+  const [subTab, setSubTab] = useState<'loans' | 'history'>('loans');
   const [historyTypeFilter, setHistoryTypeFilter] = useState<string>('all');
   const [historyStatusFilter, setHistoryStatusFilter] = useState<'all' | 'Ativo' | 'Devolvido'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'Ativo' | 'Devolvido'>('all');
 
   // Modals
-  const [isAddingThirdParty, setIsAddingThirdParty] = useState(false);
-  const [editingThirdParty, setEditingThirdParty] = useState<ThirdParty | null>(null);
   const [isCreatingLoan, setIsCreatingLoan] = useState(false);
   const [viewingContract, setViewingContract] = useState<ComponentLoan | null>(null);
 
@@ -81,14 +73,6 @@ export default function LoansTab({
   const [isPartialMode, setIsPartialMode] = useState(false);
   const [selectedPartialItemIds, setSelectedPartialItemIds] = useState<Record<string, boolean>>({});
   const [loanToDelete, setLoanToDelete] = useState<ComponentLoan | null>(null);
-  const [thirdPartyToDelete, setThirdPartyToDelete] = useState<ThirdParty | null>(null);
-
-  // Third party form states
-  const [tpName, setTpName] = useState('');
-  const [tpDocument, setTpDocument] = useState('');
-  const [tpPhone, setTpPhone] = useState('');
-  const [tpEmail, setTpEmail] = useState('');
-  const [tpCompany, setTpCompany] = useState('');
 
   // Loan form states
   const [selectedThirdPartyId, setSelectedThirdPartyId] = useState('');
@@ -217,15 +201,6 @@ export default function LoansTab({
   const availableComponents = components.filter(c => c.status === 'Disponível');
 
   // Resets
-  const resetThirdPartyForm = () => {
-    setTpName('');
-    setTpDocument('');
-    setTpPhone('');
-    setTpEmail('');
-    setTpCompany('');
-    setError(null);
-  };
-
   const resetLoanForm = () => {
     setSelectedThirdPartyId('');
     setLoanDate(new Date().toISOString().split('T')[0]);
@@ -234,68 +209,6 @@ export default function LoansTab({
     setTempSelectedComponentId('');
     setLoanedItems([]);
     setError(null);
-  };
-
-  // Create Third Party handler
-  const handleCreateThirdParty = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tpName || !tpDocument || !tpCompany) {
-      setError('Por favor, preencha o Nome, CPF/CNPJ e Empresa do terceiro.');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      await onAddThirdParty({
-        name: tpName.trim(),
-        document: tpDocument.trim(),
-        phone: tpPhone.trim(),
-        email: tpEmail.trim(),
-        company: tpCompany.trim()
-      });
-      setIsAddingThirdParty(false);
-      resetThirdPartyForm();
-    } catch (err: any) {
-      setError(err.message || 'Erro ao cadastrar prestador terceiro.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Edit Third Party handler
-  const handleUpdateThirdParty = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingThirdParty) return;
-    if (!tpName || !tpDocument || !tpCompany) {
-      setError('Campos Nome, CPF/CNPJ e Empresa são obrigatórios.');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      await onEditThirdParty(editingThirdParty.id, {
-        name: tpName.trim(),
-        document: tpDocument.trim(),
-        phone: tpPhone.trim(),
-        email: tpEmail.trim(),
-        company: tpCompany.trim()
-      });
-      setEditingThirdParty(null);
-      resetThirdPartyForm();
-    } catch (err: any) {
-      setError(err.message || 'Erro ao editar dados.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const startEditThirdParty = (tp: ThirdParty) => {
-    setEditingThirdParty(tp);
-    setTpName(tp.name);
-    setTpDocument(tp.document);
-    setTpPhone(tp.phone);
-    setTpEmail(tp.email);
-    setTpCompany(tp.company);
   };
 
   // Add component to temp loan list
@@ -323,7 +236,7 @@ export default function LoansTab({
   const handleSaveLoan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedThirdPartyId) {
-      setError('Por favor, selecione um prestador terceiro.');
+      setError('Por favor, selecione um parceiro recebedor.');
       return;
     }
     if (loanedItems.length === 0) {
@@ -333,7 +246,7 @@ export default function LoansTab({
 
     const thirdParty = thirdParties.find(tp => tp.id === selectedThirdPartyId);
     if (!thirdParty) {
-      setError('Prestador terceiro inválido.');
+      setError('Parceiro recebedor inválido.');
       return;
     }
 
@@ -633,12 +546,6 @@ export default function LoansTab({
     return matchesSearch && matchesStatus;
   });
 
-  const filteredThirdParties = thirdParties.filter(tp => 
-    tp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    tp.company.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    tp.document.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
   return (
     <div className="space-y-4" id="loans-module-root">
       
@@ -650,7 +557,7 @@ export default function LoansTab({
             Módulo de Empréstimos
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Gestão de empréstimos de antenas, monitores e nav controllers para prestadores de serviços terceiros.
+            Gestão de empréstimos de equipamentos para parceiros e responsáveis externos.
           </p>
         </div>
 
@@ -662,14 +569,6 @@ export default function LoansTab({
           >
             <ArrowLeftRight className="h-3.5 w-3.5" />
             Empréstimos
-          </button>
-          <button
-            onClick={() => { setSubTab('thirdparties'); setSearchTerm(''); }}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${subTab === 'thirdparties' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}
-          >
-            <Users className="h-3.5 w-3.5" />
-            Terceiros
-            <span className="bg-slate-200 text-slate-700 rounded-full px-1.5 text-[9px] font-black leading-4">{thirdParties.length}</span>
           </button>
           <button
             onClick={() => { setSubTab('history'); setSearchTerm(''); }}
@@ -691,11 +590,9 @@ export default function LoansTab({
             <input
               type="text"
               placeholder={
-                subTab === 'loans' 
-                  ? 'Buscar por nº, terceiro ou nº de série...' 
-                  : subTab === 'thirdparties'
-                  ? 'Buscar terceiro por nome, CPF/CNPJ ou empresa...'
-                  : 'Buscar no histórico (terceiro, componente, série, termo)...'
+                subTab === 'loans'
+                  ? 'Buscar por nº, parceiro ou nº de série...'
+                  : 'Buscar no histórico (parceiro, componente, série, termo)...'
               }
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -724,15 +621,10 @@ export default function LoansTab({
                 onClick={() => {
                   if (thirdParties.length === 0) {
                     showDialog({
-                      title: 'Nenhum prestador terceiro cadastrado',
-                      message: 'Para criar um empréstimo, você precisa cadastrar pelo menos um prestador terceiro.',
+                      title: 'Nenhum parceiro disponível',
+                      message: 'Cadastre em Parceiros uma empresa ou pessoa do tipo “Recebedor de empréstimo” antes de criar o empréstimo.',
                       icon: 'warning',
-                      okLabel: 'Cadastrar Prestador Terceiro',
-                      cancelLabel: 'Cancelar',
-                      onOk: () => {
-                        setSubTab('thirdparties');
-                        setIsAddingThirdParty(true);
-                      }
+                      okLabel: 'Entendi'
                     });
                     return;
                   }
@@ -744,16 +636,6 @@ export default function LoansTab({
                 Novo Empréstimo
               </button>
             </>
-          )}
-
-          {subTab === 'thirdparties' && (
-            <button
-              onClick={() => setIsAddingThirdParty(true)}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5"
-            >
-              <UserPlus className="h-4 w-4" />
-              Cadastrar Terceiro
-            </button>
           )}
 
           {subTab === 'history' && (
@@ -798,7 +680,7 @@ export default function LoansTab({
               </div>
               <p className="font-bold text-slate-700 text-sm">Nenhum empréstimo cadastrado</p>
               <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-                Ajuste os filtros de busca ou crie um novo termo de empréstimo para liberar componentes a terceiros.
+                Ajuste os filtros de busca ou crie um novo termo para disponibilizar equipamentos a parceiros.
               </p>
             </div>
           ) : (
@@ -955,88 +837,7 @@ export default function LoansTab({
         </div>
       )}
 
-      {/* ========================================================= */}
-      {/* TAB 2: THIRD PARTIES LIST & RECOVERY */}
-      {/* ========================================================= */}
-      {subTab === 'thirdparties' && (
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden" id="thirdparties-list-view">
-          {filteredThirdParties.length === 0 ? (
-            <div className="text-center py-12">
-              <Users className="h-8 w-8 text-slate-300 mx-auto mb-3" />
-              <p className="font-bold text-slate-700 text-sm">Nenhum terceiro localizado</p>
-              <p className="text-xs text-slate-400 mt-1">
-                Ajuste os filtros de busca ou crie um novo cadastro de terceiro prestador.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-500 text-[11px] font-extrabold uppercase tracking-wider">
-                    <th className="py-3 px-4">Nome Completo</th>
-                    <th className="py-3 px-4">Empresa / Fazenda</th>
-                    <th className="py-3 px-4">CPF / CNPJ</th>
-                    <th className="py-3 px-4">Contato Telefônico</th>
-                    <th className="py-3 px-4">E-mail</th>
-                    <th className="py-3 px-4 text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-xs text-slate-700 font-medium">
-                  {filteredThirdParties.map(tp => (
-                    <tr key={tp.id} className="hover:bg-slate-50/35 transition-colors">
-                      <td className="py-3.5 px-4 font-bold text-slate-900 flex items-center gap-2">
-                        <Users className="h-3.5 w-3.5 text-slate-400" />
-                        {tp.name}
-                      </td>
-                      <td className="py-3.5 px-4 font-semibold text-slate-600">
-                        {tp.company}
-                      </td>
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-500">
-                        {tp.document}
-                      </td>
-                      <td className="py-3.5 px-4 text-slate-600">
-                        <span className="flex items-center gap-1.5">
-                          <Phone className="h-3 w-3 text-slate-400 shrink-0" />
-                          {tp.phone || <span className="text-slate-300">Não informado</span>}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-slate-600">
-                        <span className="flex items-center gap-1.5">
-                          <Mail className="h-3 w-3 text-slate-400 shrink-0" />
-                          {tp.email || <span className="text-slate-300">Não informado</span>}
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            onClick={() => startEditThirdParty(tp)}
-                            className="p-1.5 hover:bg-slate-50 border border-slate-100 hover:text-indigo-600 rounded-lg transition-colors text-slate-500"
-                            title="Editar Dados do Terceiro"
-                          >
-                            Editar
-                          </button>
-                          {(role === 'administrador' || role === 'ADMINISTRADOR') && (
-                            <button
-                              onClick={() => setThirdPartyToDelete(tp)}
-                              className="p-1.5 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-colors text-slate-400"
-                              title="Excluir Terceiro"
-                            >
-                              Excluir
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ========================================================= */}
-      {/* TAB 3: EQUIPMENT LOAN HISTORY */}
+     {/* TAB 3: EQUIPMENT LOAN HISTORY */}
       {/* ========================================================= */}
       {subTab === 'history' && (
         <div className="space-y-6 animate-fade-in" id="history-loans-view">
@@ -1060,7 +861,7 @@ export default function LoansTab({
               <div>
                 <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block">Ativos em Campo</span>
                 <span className="text-xl font-extrabold text-slate-900">{statsActiveCount}</span>
-                <span className="text-[10px] text-slate-500 block mt-0.5">sob posse dos terceiros atualmente</span>
+                <span className="text-[10px] text-slate-500 block mt-0.5">sob posse dos parceiros atualmente</span>
               </div>
             </div>
 
@@ -1092,7 +893,7 @@ export default function LoansTab({
                   <thead>
                     <tr className="bg-slate-50/75 border-b border-slate-200 text-slate-500 text-[11px] font-extrabold uppercase tracking-wider">
                       <th className="py-3 px-4">Equipamento / Componente</th>
-                      <th className="py-3 px-4">Responsável (Terceiro)</th>
+                      <th className="py-3 px-4">Parceiro responsável</th>
                       <th className="py-3 px-4">Termo / Contrato</th>
                       <th className="py-3 px-4">Data de Empréstimo</th>
                       <th className="py-3 px-4">Retorno Efetivo / Estimado</th>
@@ -1203,134 +1004,7 @@ export default function LoansTab({
         </div>
       )}
 
-      {/* ========================================================= */}
-      {/* MODAL: REGISTER/EDIT THIRD PARTY */}
-      {/* ========================================================= */}
-      {(isAddingThirdParty || editingThirdParty) && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl overflow-hidden border border-slate-100 animate-slide-up">
-            
-            {/* Modal Header */}
-            <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
-              <h2 className="text-sm font-extrabold uppercase tracking-wider flex items-center gap-2">
-                <Users className="h-4 w-4 text-emerald-400" />
-                {editingThirdParty ? 'Editar Prestador Terceiro' : 'Cadastrar Prestador Terceiro'}
-              </h2>
-              <button 
-                onClick={() => {
-                  setIsAddingThirdParty(false);
-                  setEditingThirdParty(null);
-                  resetThirdPartyForm();
-                }}
-                className="text-slate-400 hover:text-white transition-colors"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <form onSubmit={editingThirdParty ? handleUpdateThirdParty : handleCreateThirdParty} className="p-6 space-y-4">
-              
-              {error && (
-                <div className="p-3 bg-rose-50 border border-rose-100 text-rose-700 text-xs font-semibold rounded-xl">
-                  {error}
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Name */}
-                <div className="space-y-1.5 md:col-span-2">
-                  <label className="text-[10px] uppercase font-black text-slate-400">Nome do Prestador/Operador *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: João da Silva Santos"
-                    value={tpName}
-                    onChange={(e) => setTpName(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 px-3.5 py-2 rounded-xl text-xs focus:bg-white focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-800"
-                  />
-                </div>
-
-                {/* CPF/CNPJ */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-black text-slate-400">CPF ou CNPJ *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: 000.000.000-00"
-                    value={tpDocument}
-                    onChange={(e) => setTpDocument(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 px-3.5 py-2 rounded-xl text-xs focus:bg-white focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-800"
-                  />
-                </div>
-
-                {/* Company */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-black text-slate-400">Empresa / Fazenda Vinculada *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: Cooperativa Agroeste"
-                    value={tpCompany}
-                    onChange={(e) => setTpCompany(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 px-3.5 py-2 rounded-xl text-xs focus:bg-white focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-800"
-                  />
-                </div>
-
-                {/* Phone */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-black text-slate-400">Telefone de Contato</label>
-                  <input
-                    type="tel"
-                    placeholder="Ex: (16) 99999-9999"
-                    value={tpPhone}
-                    onChange={(e) => setTpPhone(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 px-3.5 py-2 rounded-xl text-xs focus:bg-white focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-800"
-                  />
-                </div>
-
-                {/* Email */}
-                <div className="space-y-1.5">
-                  <label className="text-[10px] uppercase font-black text-slate-400">E-mail</label>
-                  <input
-                    type="email"
-                    placeholder="Ex: joao@empresa.com"
-                    value={tpEmail}
-                    onChange={(e) => setTpEmail(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 px-3.5 py-2 rounded-xl text-xs focus:bg-white focus:ring-1 focus:ring-emerald-500 outline-none font-semibold text-slate-800"
-                  />
-                </div>
-              </div>
-
-              {/* Form Actions */}
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAddingThirdParty(false);
-                    setEditingThirdParty(null);
-                    resetThirdPartyForm();
-                  }}
-                  className="px-4 py-2 hover:bg-slate-50 border border-slate-200 text-slate-600 font-bold text-xs rounded-xl transition-all"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  {loading ? 'Processando...' : editingThirdParty ? 'Salvar Alterações' : 'Cadastrar Terceiro'}
-                </button>
-              </div>
-
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================= */}
-      {/* MODAL: CREATE LOAN (COMPREHENSIVE MULTI-ITEM SELECTOR) */}
+     {/* MODAL: CREATE LOAN (COMPREHENSIVE MULTI-ITEM SELECTOR) */}
       {/* ========================================================= */}
       {isCreatingLoan && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1372,7 +1046,7 @@ export default function LoansTab({
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {/* Select Third Party */}
                   <div className="space-y-1.5 md:col-span-1">
-                    <label className="text-[10px] uppercase font-black text-slate-400">Prestador Terceiro *</label>
+                    <label className="text-[10px] uppercase font-black text-slate-400">Parceiro recebedor *</label>
                     <select
                       required
                       value={selectedThirdPartyId}
@@ -1725,7 +1399,7 @@ export default function LoansTab({
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
                   {isPartialMode 
-                    ? 'Selecione quais componentes estão sendo devolvidos agora. Os não selecionados continuarão sob posse do terceiro.'
+                    ? 'Selecione quais componentes estão sendo devolvidos agora. Os não selecionados continuarão sob posse do parceiro.'
                     : 'Você está confirmando a devolução total dos itens associados a este empréstimo.'
                   }
                 </p>
@@ -1893,7 +1567,7 @@ export default function LoansTab({
             <div className="p-6 space-y-4">
               <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 space-y-1 text-xs">
                 <div>Termo: <strong>{loanToDelete.contractNumber}</strong></div>
-                <div>Terceiro: <strong>{loanToDelete.thirdPartyName}</strong></div>
+                <div>Parceiro: <strong>{loanToDelete.thirdPartyName}</strong></div>
                 <div>Status Atual: <span className="font-bold text-amber-600">{loanToDelete.status}</span></div>
               </div>
               <p className="text-[11px] text-rose-600 font-semibold leading-relaxed">
@@ -1921,64 +1595,7 @@ export default function LoansTab({
             </div>
           </div>
         </div>
-      )}
-
-      {/* Custom Confirmation Modal for Third Party Deletion */}
-      {thirdPartyToDelete && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in" id="thirdparty-delete-confirm-modal">
-          <div className="bg-white rounded-3xl border border-rose-100 shadow-2xl max-w-md w-full overflow-hidden transform transition-all scale-100">
-            <div className="bg-rose-50/50 p-6 border-b border-slate-100 flex items-start gap-4">
-              <div className="h-10 w-10 bg-rose-100 text-rose-700 rounded-full flex items-center justify-center shrink-0">
-                <Trash2 className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Excluir Cadastro de Terceiro</h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  Excluir permanentemente o prestador terceiro e seu histórico de contato.
-                </p>
-              </div>
-            </div>
-
-            <div className="p-6 space-y-4">
-              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 space-y-1 text-xs">
-                <div>Nome: <strong>{thirdPartyToDelete.name}</strong></div>
-                <div>Documento: <strong>{thirdPartyToDelete.document}</strong></div>
-                {thirdPartyToDelete.company && <div>Empresa: <strong>{thirdPartyToDelete.company}</strong></div>}
-              </div>
-              <p className="text-[11px] text-slate-500 italic">
-                Nota: Esta exclusão não afetará termos de empréstimo anteriores já fechados ou em aberto com este prestador.
-              </p>
-            </div>
-
-            <div className="bg-slate-50 px-6 py-4 flex justify-end gap-3 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setThirdPartyToDelete(null)}
-                className="px-4 py-2 hover:bg-slate-100 border border-slate-200 text-slate-600 font-bold text-xs rounded-xl transition-all"
-                id="cancel-delete-tp-btn"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await onDeleteThirdParty(thirdPartyToDelete.id);
-                    setThirdPartyToDelete(null);
-                  } catch (err: any) {
-                    showToast('error', err.message || 'Erro ao deletar terceiro.');
-                  }
-                }}
-                className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-1.5"
-                id="confirm-delete-tp-btn"
-              >
-                Sim, Excluir Cadastro
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-    </div>
+     )}
+   </div>
   );
 }

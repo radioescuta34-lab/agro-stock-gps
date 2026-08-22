@@ -319,6 +319,7 @@ type SupportComment = {
   createdAt: string | null;
   authorName: string;
   source: "app" | "trello";
+  attachments?: Array<{ id: string; filename: string; url: string }>;
 };
 
 const SUPPORT_APP_COMMENT_HEADER = "Resposta do cliente via Agro Stock GPS";
@@ -444,6 +445,14 @@ function parseSupportComment(action: any): SupportComment | null {
   const appBody = isAppComment
     ? rawText.split(/\r?\n\s*\r?\n/).slice(1).join("\n\n").trim()
     : rawText;
+  const attachments: Array<{ id: string; filename: string; url: string }> = [];
+  if (isAppComment) {
+    const attachmentPattern = /\*\*Anexo:\*\*\s*\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/gi;
+    for (const match of rawText.matchAll(attachmentPattern)) {
+      const attachmentId = match[2].match(/\/attachments\/([a-f0-9]{24})(?:\/|$)/i)?.[1] || "";
+      attachments.push({ id: attachmentId, filename: match[1].trim(), url: match[2] });
+    }
+  }
   const trelloAuthor = typeof action?.memberCreator?.fullName === "string" && action.memberCreator.fullName.trim()
     ? action.memberCreator.fullName.trim()
     : typeof action?.memberCreator?.username === "string" && action.memberCreator.username.trim()
@@ -455,7 +464,8 @@ function parseSupportComment(action: any): SupportComment | null {
     text: appBody || rawText,
     createdAt: typeof action?.date === "string" ? action.date : null,
     authorName: isAppComment ? appAuthor : trelloAuthor,
-    source: isAppComment ? "app" : "trello"
+    source: isAppComment ? "app" : "trello",
+    attachments
   };
 }
 
@@ -1526,6 +1536,7 @@ ${extractedText}`;
           form.append("key", apiKey);
           form.append("token", apiToken);
           form.append("name", anexo.filename);
+          form.append("setCover", "false");
           form.append("file", new Blob([new Uint8Array(anexo.buffer)], { type: anexo.mimeType }), anexo.filename);
           const attachRes = await trelloFetch(`/cards/${card.id}/attachments`, { method: "POST", body: form });
           if (!attachRes.ok) {
@@ -1725,9 +1736,30 @@ ${extractedText}`;
       const ticketId = typeof req.params.ticketId === "string" ? req.params.ticketId.trim() : "";
       const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
       const requestedAuthorName = typeof req.body?.authorName === "string" ? req.body.authorName.trim() : "";
+      const rawAnexos: any[] = Array.isArray(req.body?.anexos) ? req.body.anexos : [];
       if (!ticketId) return res.status(400).json({ error: "Chamado não informado." });
-      if (!message) return res.status(400).json({ error: "Digite uma mensagem antes de enviar." });
+      if (!message && rawAnexos.length === 0) return res.status(400).json({ error: "Digite uma mensagem ou anexe uma imagem antes de enviar." });
       if (message.length > 2000) return res.status(400).json({ error: "A mensagem deve ter no máximo 2000 caracteres." });
+      if (rawAnexos.length > 2) return res.status(400).json({ error: "No máximo 2 imagens são permitidas por resposta." });
+
+      const anexos: Array<{ filename: string; mimeType: string; buffer: Buffer }> = [];
+      for (const raw of rawAnexos) {
+        const base64 = typeof raw?.base64 === "string" ? raw.base64 : "";
+        const mimeType = typeof raw?.mimeType === "string" ? raw.mimeType : "";
+        const filename = typeof raw?.filename === "string" && raw.filename.trim()
+          ? raw.filename.replace(/[\[\]\r\n]+/g, " ").trim().slice(0, 120)
+          : "captura-de-tela";
+        if (!base64) continue;
+        if (!mimeType.startsWith("image/") || !SUPPORT_ALLOWED_MIME_TYPES.includes(mimeType)) {
+          return res.status(400).json({ error: `Formato não permitido (${filename}). Envie uma imagem PNG, JPG, WEBP ou GIF.` });
+        }
+        const buffer = Buffer.from(base64, "base64");
+        if (buffer.length === 0) return res.status(400).json({ error: `Imagem inválida ou vazia: ${filename}.` });
+        if (buffer.length > SUPPORT_MAX_ATTACHMENT_BYTES) {
+          return res.status(400).json({ error: `A imagem ${filename} excede o limite de 6 MB.` });
+        }
+        anexos.push({ filename, mimeType, buffer });
+      }
 
       let trelloCardId = "";
       if (HAS_FIRESTORE_CREDS) {
@@ -1747,11 +1779,44 @@ ${extractedText}`;
       }
 
       const authorName = (requester.name || requestedAuthorName || "Cliente").replace(/[\r\n]+/g, " ").trim().slice(0, 160) || "Cliente";
+      const uploadedAttachments: Array<{ id: string; filename: string; url: string }> = [];
+      const attachmentsFailed: string[] = [];
+      for (const anexo of anexos) {
+        try {
+          const form = new FormData();
+          form.append("key", apiKey);
+          form.append("token", apiToken);
+          form.append("name", anexo.filename);
+          form.append("setCover", "false");
+          form.append("file", new Blob([new Uint8Array(anexo.buffer)], { type: anexo.mimeType }), anexo.filename);
+          const attachRes = await trelloFetch(`/cards/${encodeURIComponent(trelloCardId)}/attachments`, { method: "POST", body: form });
+          if (!attachRes.ok) {
+            attachmentsFailed.push(anexo.filename);
+            continue;
+          }
+          const uploaded = await attachRes.json();
+          if (typeof uploaded?.url === "string" && typeof uploaded?.id === "string") {
+            uploadedAttachments.push({ id: uploaded.id, filename: anexo.filename, url: uploaded.url });
+          } else {
+            attachmentsFailed.push(anexo.filename);
+          }
+        } catch (error: any) {
+          attachmentsFailed.push(anexo.filename);
+          console.error(`Erro ao anexar ${anexo.filename} à conversa do ticket ${ticketId}:`, error?.message || error);
+        }
+      }
+
+      if (!message && anexos.length > 0 && uploadedAttachments.length === 0) {
+        return res.status(502).json({ error: "Não foi possível enviar a imagem agora. Tente novamente em instantes." });
+      }
+
+      const attachmentLines = uploadedAttachments.map((attachment) => `**Anexo:** [${attachment.filename}](${attachment.url})`);
       const trelloText = [
         `💬 **${SUPPORT_APP_COMMENT_HEADER}**`,
         `**Nome:** ${authorName}`,
+        ...attachmentLines,
         "",
-        message
+        message || "Captura de tela enviada."
       ].join("\n");
       const commentQuery = new URLSearchParams({ key: apiKey, token: apiToken, text: trelloText });
       const commentRes = await trelloFetch(`/cards/${encodeURIComponent(trelloCardId)}/actions/comments?${commentQuery.toString()}`, {
@@ -1784,15 +1849,75 @@ ${extractedText}`;
         success: true,
         comment: {
           id: typeof action?.id === "string" ? action.id : `app-${Date.now()}`,
-          text: message,
+          text: message || "Captura de tela enviada.",
           createdAt: typeof action?.date === "string" ? action.date : new Date().toISOString(),
           authorName,
-          source: "app"
-        }
+          source: "app",
+          attachments: uploadedAttachments
+        },
+        attachmentsFailed
       });
     } catch (error: any) {
       console.error("Erro ao responder chamado de suporte:", error);
       return res.status(500).json({ error: error.message || "Erro interno ao responder ao chamado." });
+    }
+  });
+
+  // Proxies a Trello attachment after validating that the authenticated user owns the ticket.
+  app.get("/api/support/tickets/:ticketId/attachments/:attachmentId", async (req, res) => {
+    try {
+      const requester = await resolveSupportRequester(req);
+      if (requester.invalidToken) return res.status(401).json({ error: "Sessão expirada." });
+      if (!requester.uid) return res.status(401).json({ error: "Autenticação necessária." });
+
+      const apiKey = process.env.TRELLO_API_KEY;
+      const apiToken = process.env.TRELLO_TOKEN;
+      const listId = process.env.TRELLO_LIST_ID;
+      if (!apiKey || !apiToken || !listId) return res.status(503).json({ error: "Anexos do suporte não configurados." });
+
+      const ticketId = typeof req.params.ticketId === "string" ? req.params.ticketId.trim() : "";
+      const attachmentId = typeof req.params.attachmentId === "string" ? req.params.attachmentId.trim() : "";
+      if (!ticketId || !/^[a-f0-9]{24}$/i.test(attachmentId)) return res.status(400).json({ error: "Anexo inválido." });
+
+      let trelloCardId = "";
+      if (HAS_FIRESTORE_CREDS) {
+        const ticketDoc = await getFirestore().collection("supportTickets").doc(ticketId).get();
+        const ticket = ticketDoc.exists ? ticketDoc.data() as any : null;
+        if (!ticket || ticket.autorUid !== requester.uid) return res.status(404).json({ error: "Chamado não encontrado." });
+        trelloCardId = typeof ticket.trelloCardId === "string" ? ticket.trelloCardId : "";
+      } else {
+        const tickets = await loadTrelloTicketsForRequester(apiKey, apiToken, listId, requester);
+        const ticket = tickets.find((item) => item.id === ticketId);
+        trelloCardId = typeof ticket?.trelloCardId === "string" ? ticket.trelloCardId : "";
+      }
+      if (!trelloCardId) return res.status(404).json({ error: "Chamado não encontrado." });
+
+      const authQuery = new URLSearchParams({ key: apiKey, token: apiToken });
+      const metadataRes = await trelloFetch(
+        `/cards/${encodeURIComponent(trelloCardId)}/attachments/${encodeURIComponent(attachmentId)}?${authQuery.toString()}`
+      );
+      if (!metadataRes.ok) return res.status(404).json({ error: "Anexo não encontrado." });
+      const metadataPayload = await metadataRes.json();
+      const metadata = Array.isArray(metadataPayload) ? metadataPayload[0] : metadataPayload;
+      if (typeof metadata?.url !== "string") return res.status(404).json({ error: "Arquivo indisponível." });
+
+      // Trello requires OAuth credentials in the Authorization header for private
+      // attachment downloads; query-string credentials only authenticate metadata calls.
+      const fileRes = await fetch(metadata.url, {
+        redirect: "follow",
+        headers: {
+          Authorization: `OAuth oauth_consumer_key="${apiKey}", oauth_token="${apiToken}"`
+        }
+      });
+      if (!fileRes.ok || !fileRes.body) return res.status(502).json({ error: "Não foi possível carregar a imagem." });
+
+      res.setHeader("Content-Type", fileRes.headers.get("content-type") || metadata.mimeType || "application/octet-stream");
+      res.setHeader("Cache-Control", "private, max-age=300");
+      const fileBuffer = Buffer.from(await fileRes.arrayBuffer());
+      return res.send(fileBuffer);
+    } catch (error: any) {
+      console.error("Erro ao carregar anexo do suporte:", error?.message || error);
+      return res.status(500).json({ error: "Erro interno ao carregar o anexo." });
     }
   });
 
