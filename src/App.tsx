@@ -16,7 +16,10 @@ import {
   query,
   where,
   getDocs,
-  writeBatch
+  writeBatch,
+  arrayRemove,
+  arrayUnion,
+  FieldValue
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { 
@@ -957,9 +960,11 @@ export default function App() {
         const list: RegisteredType[] = [];
         snapshot.forEach((d) => {
           const data = d.data();
+          // Normalize legacy category: equipment_machine → vehicle
+          const category = data.category === 'equipment_machine' ? 'vehicle' : (data.category || 'partner');
           list.push({
             id: d.id,
-            category: data.category || 'partner',
+            category: category as RegisteredTypeCategory,
             name: data.name || '',
             active: data.active !== false,
             updatedAt: data.updatedAt,
@@ -1099,7 +1104,13 @@ export default function App() {
     if (localPartners) setPartners(JSON.parse(localPartners));
     if (localFieldData) setFieldDataCollections(JSON.parse(localFieldData));
     if (localTypeRegistry) {
-      setTypeRegistry(JSON.parse(localTypeRegistry));
+      // Normalize legacy category: equipment_machine → vehicle
+      const parsed = JSON.parse(localTypeRegistry);
+      const normalized = parsed.map((t: RegisteredType) => ({
+        ...t,
+        category: ((t as any).category === 'equipment_machine' ? 'vehicle' : t.category) as RegisteredTypeCategory
+      }));
+      setTypeRegistry(normalized);
     } else {
       setTypeRegistry(DEFAULT_REGISTERED_TYPES);
     }
@@ -1481,7 +1492,106 @@ export default function App() {
     }
   };
 
+  // Propagate type rename across all referencing collections
+  const propagateTypeName = async (
+    category: RegisteredTypeCategory,
+    oldName: string,
+    newName: string
+  ) => {
+    const batch = writeBatch(db);
+    const now = serverTimestamp();
+    const actor = user?.name || user?.email || 'Sistema';
+
+    switch (category) {
+      case 'vehicle': {
+        const machinesSnap = await getDocs(query(collection(db, 'machines'), where('type', '==', oldName)));
+        machinesSnap.forEach(d => batch.update(d.ref, { type: newName, updatedAt: now }));
+        const fdcSnap = await getDocs(query(collection(db, 'field_data_collections'), where('machineType', '==', oldName)));
+        fdcSnap.forEach(d => batch.update(d.ref, { machineType: newName, updatedAt: now }));
+        break;
+      }
+      case 'equipment_component': {
+        const compSnap = await getDocs(query(collection(db, 'components'), where('type', '==', oldName)));
+        compSnap.forEach(d => batch.update(d.ref, { type: newName, updatedAt: now, updatedBy: actor }));
+        const loansSnap = await getDocs(query(collection(db, 'loans'), where('status', '==', 'Ativo')));
+        loansSnap.forEach(loanDoc => {
+          const loan = loanDoc.data();
+          const items = (loan.items || []).map((item: any) =>
+            item.componentType === oldName ? { ...item, componentType: newName } : item
+          );
+          batch.update(loanDoc.ref, { items, updatedAt: now, updatedBy: actor });
+        });
+        break;
+      }
+      case 'partner': {
+        const partnersSnap = await getDocs(query(collection(db, 'partners'), where('types', 'array-contains', oldName)));
+        for (const d of partnersSnap.docs) {
+          await updateDoc(d.ref, {
+            types: arrayRemove(oldName),
+            updatedAt: now,
+            updatedBy: actor
+          });
+          await updateDoc(d.ref, {
+            types: arrayUnion(newName),
+            updatedAt: now,
+            updatedBy: actor
+          });
+        }
+        return; // Already handled, skip batch.commit()
+      }
+      case 'service': {
+        const mvSnap = await getDocs(query(
+          collection(db, 'movements'),
+          where('action', '==', oldName),
+          where('status', 'in', ['Aberta', 'Agendada'])
+        ));
+        mvSnap.forEach(d => batch.update(d.ref, { action: newName, updatedAt: now }));
+        const mtSnap = await getDocs(query(collection(db, 'maintenances'), where('serviceType', '==', oldName)));
+        mtSnap.forEach(d => batch.update(d.ref, { serviceType: newName, updatedAt: now, updatedBy: actor }));
+        break;
+      }
+    }
+
+    await batch.commit();
+  };
+
   const handleUpdateRegisteredType = async (id: string, updates: Partial<Omit<RegisteredType, 'id' | 'updatedAt' | 'updatedBy'>>) => {
+    // Detect rename and propagate across referencing collections
+    if (updates.name) {
+      const current = typeRegistry.find(t => t.id === id);
+      if (current && current.name !== updates.name) {
+        if (isDemoMode) {
+          // Demo mode: propagate in-memory
+          const oldName = current.name;
+          const newName = updates.name;
+          const cat = current.category;
+          if (cat === 'vehicle') {
+            setMachines(prev => prev.map(m => m.type === oldName ? { ...m, type: newName as any } : m));
+            setFieldDataCollections(prev => prev.map(f => f.machineType === oldName ? { ...f, machineType: newName as any } : f));
+          } else if (cat === 'equipment_component') {
+            setComponents(prev => prev.map(c => c.type === oldName ? { ...c, type: newName } : c));
+            setLoans(prev => prev.map(l => ({
+              ...l,
+              items: l.items.map(i => i.componentType === oldName ? { ...i, componentType: newName } : i)
+            })));
+          } else if (cat === 'partner') {
+            setPartners(prev => prev.map(p => ({
+              ...p,
+              types: p.types.map(t => t === oldName ? newName as any : t)
+            })));
+          } else if (cat === 'service') {
+            setMovements(prev => prev.map(mv =>
+              mv.action === oldName && (mv.status === 'Aberta' || mv.status === 'Agendada')
+                ? { ...mv, action: newName as any } : mv
+            ));
+            setMaintenances(prev => prev.map(m => m.serviceType === oldName ? { ...m, serviceType: newName } : m));
+          }
+        } else {
+          await propagateTypeName(current.category, current.name, updates.name);
+        }
+      }
+    }
+
     if (isDemoMode) {
       const updatedList = typeRegistry.map(t => t.id === id ? { ...t, ...updates, updatedAt: new Date().toISOString(), updatedBy: user?.name || 'Sistema' } : t);
       setTypeRegistry(updatedList);
@@ -1528,7 +1638,7 @@ export default function App() {
       case 'equipment_component':
         return components.filter(c => c.type === name).length
           + loans.filter(l => l.status === 'Ativo' && l.items.some(i => i.componentType === name)).length;
-      case 'equipment_machine':
+      case 'vehicle':
         return machines.filter(m => m.type === name).length
           + fieldDataCollections.filter(f => f.machineType === name).length;
       case 'service':
@@ -3396,7 +3506,7 @@ export default function App() {
             fieldDataCollections={fieldDataCollections}
             role={user.role}
             initialTypeFilter={machinePresetFilter?.machineType}
-            machineTypes={getActiveTypes('equipment_machine') as MachineType[]}
+            machineTypes={getActiveTypes('vehicle') as MachineType[]}
             onAddMachine={handleAddMachine}
             onEditMachine={handleEditMachine}
             onDeleteMachine={handleDeleteMachine}

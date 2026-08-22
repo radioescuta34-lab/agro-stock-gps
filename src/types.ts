@@ -280,7 +280,7 @@ export interface MaintenanceProvider {
 }
 
 // Dynamic type registry (managed in Settings > Cadastro)
-export type RegisteredTypeCategory = 'partner' | 'equipment_component' | 'equipment_machine' | 'service';
+export type RegisteredTypeCategory = 'partner' | 'vehicle' | 'equipment_component' | 'service';
 
 export interface RegisteredType {
   id: string;

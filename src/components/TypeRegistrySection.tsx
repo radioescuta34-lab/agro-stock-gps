@@ -1,27 +1,27 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { RegisteredType, RegisteredTypeCategory } from '../types';
 import { PROTECTED_TYPE_NAMES } from '../constants/typeRegistry';
 import { useNotifications } from './NotificationProvider';
 import {
   Briefcase,
+  ChevronRight,
   Cpu,
-  Tractor,
-  Wrench,
-  Search,
-  Plus,
-  Edit2,
-  Trash2,
-  X,
-  Power,
-  ShieldCheck,
-  CheckCircle2,
-  Tag,
+  Edit,
+  Info,
   Layers,
-  Zap,
-  Info
+  MoreVertical,
+  Plus,
+  Search,
+  ShieldCheck,
+  SlidersHorizontal,
+  Trash2,
+  Tractor,
+  X,
+  Zap
 } from 'lucide-react';
 
-type RegistryTab = 'partner' | 'equipment' | 'service';
+type RegistryTab = 'partner' | 'vehicle' | 'equipment_component' | 'service';
 
 interface TypeRegistrySectionProps {
   typeRegistry: RegisteredType[];
@@ -31,63 +31,35 @@ interface TypeRegistrySectionProps {
   getTypeUsageCount: (category: RegisteredTypeCategory, name: string) => number;
 }
 
-const TABS: { key: RegistryTab; label: string; icon: ReactNode; shortLabel: string }[] = [
-  { key: 'partner', label: 'Tipos de Parceiro', icon: <Briefcase className="h-3.5 w-3.5" />, shortLabel: 'Parceiro' },
-  { key: 'equipment', label: 'Tipos de Equipamento', icon: <Layers className="h-3.5 w-3.5" />, shortLabel: 'Equipamento' },
-  { key: 'service', label: 'Tipos de Serviço', icon: <Zap className="h-3.5 w-3.5" />, shortLabel: 'Serviço' },
+const TABS: { key: RegistryTab; label: string; shortLabel: string; icon: ReactNode }[] = [
+  { key: 'partner', label: 'Parceiro', shortLabel: 'Parceiro', icon: <Briefcase className="h-4 w-4" /> },
+  { key: 'vehicle', label: 'Veículo', shortLabel: 'Veículo', icon: <Tractor className="h-4 w-4" /> },
+  { key: 'equipment_component', label: 'Componente GPS', shortLabel: 'GPS', icon: <Cpu className="h-4 w-4" /> },
+  { key: 'service', label: 'Serviço', shortLabel: 'Serviço', icon: <Zap className="h-4 w-4" /> }
 ];
 
-const CATEGORY_META: Record<RegisteredTypeCategory, {
-  title: string;
-  description: string;
-  icon: ReactNode;
-  gradient: string;
-  iconBg: string;
-  example: string;
-  emptyTitle: string;
-  emptyHint: string;
-}> = {
-  partner: {
-    title: 'Tipos de Parceiro',
-    description: 'Classificação dos parceiros cadastrados no sistema.',
-    icon: <Briefcase className="h-5 w-5" />,
-    gradient: 'from-emerald-500/10 via-emerald-500/5 to-transparent',
-    iconBg: 'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-500/25',
-    example: 'Ex.: Assistência Técnica Autorizada',
-    emptyTitle: 'Nenhum tipo de parceiro cadastrado',
-    emptyHint: 'Cadastre tipos para classificar parceiros como assistência técnica, prestador de serviço e recebedor de empréstimo.',
-  },
-  equipment_component: {
-    title: 'Componentes GPS',
-    description: 'Tipos de equipamentos GPS do estoque.',
-    icon: <Cpu className="h-5 w-5" />,
-    gradient: 'from-blue-500/10 via-blue-500/5 to-transparent',
-    iconBg: 'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/25',
-    example: 'Ex.: Sensor de Ângulo',
-    emptyTitle: 'Nenhum tipo de componente cadastrado',
-    emptyHint: 'Cadastre tipos como Antena/Receptor, Monitor/Display, Controladora, Motor de Passo e outros.',
-  },
-  equipment_machine: {
-    title: 'Máquinas / Frota',
-    description: 'Tipos de máquinas da frota.',
-    icon: <Tractor className="h-5 w-5" />,
-    gradient: 'from-amber-500/10 via-amber-500/5 to-transparent',
-    iconBg: 'bg-gradient-to-br from-amber-500 to-amber-600 text-white shadow-lg shadow-amber-500/25',
-    example: 'Ex.: Trator Agrícola',
-    emptyTitle: 'Nenhum tipo de máquina cadastrado',
-    emptyHint: 'Cadastre tipos como Trator, Colhedora, Pulverizador e outros utilizados na frota.',
-  },
-  service: {
-    title: 'Tipos de Serviço',
-    description: 'Ações das Ordens de Serviço e serviços de manutenção.',
-    icon: <Wrench className="h-5 w-5" />,
-    gradient: 'from-violet-500/10 via-violet-500/5 to-transparent',
-    iconBg: 'bg-gradient-to-br from-violet-500 to-violet-600 text-white shadow-lg shadow-violet-500/25',
-    example: 'Ex.: Calibração de Offset',
-    emptyTitle: 'Nenhum tipo de serviço cadastrado',
-    emptyHint: 'Cadastre ações como Instalação, Remoção, Manutenção, Calibração e outros.',
-  },
+const TAB_DESKTOP_LABELS: Record<RegistryTab, string> = {
+  partner: 'Parceiro',
+  vehicle: 'Veículo',
+  equipment_component: 'Componente GPS',
+  service: 'Serviço'
 };
+
+const CATEGORY_META: Record<RegisteredTypeCategory, { title: string; badge: string; example: string }> = {
+  partner: { title: 'Tipos de Parceiro', badge: 'Parceiro', example: 'Ex.: Assistência Técnica Autorizada' },
+  vehicle: { title: 'Tipos de Veículo', badge: 'Veículo', example: 'Ex.: Trator Agrícola' },
+  equipment_component: { title: 'Componentes GPS', badge: 'Componente GPS', example: 'Ex.: Sensor de Ângulo' },
+  service: { title: 'Tipos de Serviço', badge: 'Serviço', example: 'Ex.: Calibração de Offset' }
+};
+
+const STATUS_FILTER_OPTIONS: { key: 'active' | 'inactive' | 'all'; label: string }[] = [
+  { key: 'active', label: 'Ativos' },
+  { key: 'inactive', label: 'Inativos' },
+  { key: 'all', label: 'Todos os status' }
+];
+
+const statusFilterLabel = (filter: 'active' | 'inactive' | 'all') =>
+  filter === 'active' ? 'Ativos' : filter === 'inactive' ? 'Inativos' : 'Todos';
 
 export default function TypeRegistrySection({
   typeRegistry = [],
@@ -96,21 +68,31 @@ export default function TypeRegistrySection({
   onDeleteType,
   getTypeUsageCount
 }: TypeRegistrySectionProps) {
-  const { confirmDialog } = useNotifications();
+  const { confirmDialog, showToast } = useNotifications();
   const [activeTab, setActiveTab] = useState<RegistryTab>('partner');
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | 'all'>('all');
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [formMode, setFormMode] = useState<'add' | 'edit'>('add');
   const [formCategory, setFormCategory] = useState<RegisteredTypeCategory>('partner');
   const [selectedType, setSelectedType] = useState<RegisteredType | null>(null);
   const [typeName, setTypeName] = useState('');
+  const [typeActive, setTypeActive] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
+  const [formError, setFormError] = useState('');
+  const [deleteMenuOpen, setDeleteMenuOpen] = useState(false);
+  const deleteMenuRef = useRef<HTMLDivElement>(null);
 
-  const visibleCategories: RegisteredTypeCategory[] = activeTab === 'equipment'
-    ? ['equipment_component', 'equipment_machine']
-    : [activeTab];
+  const visibleCategories: RegisteredTypeCategory[] = [activeTab];
+
+  useEffect(() => {
+    if (!isFormOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [isFormOpen]);
 
   useEffect(() => {
     if (!isFormOpen) return;
@@ -121,6 +103,17 @@ export default function TypeRegistrySection({
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isFormOpen, loading]);
 
+  useEffect(() => {
+    if (!deleteMenuOpen) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (deleteMenuRef.current && !deleteMenuRef.current.contains(event.target as Node)) {
+        setDeleteMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, [deleteMenuOpen]);
+
   const isProtected = (t: RegisteredType) =>
     (PROTECTED_TYPE_NAMES[t.category] || []).includes(t.name);
 
@@ -128,17 +121,19 @@ export default function TypeRegistrySection({
     setFormMode('add');
     setSelectedType(null);
     setTypeName('');
-    setError(null);
+    setTypeActive(true);
+    setFormError('');
     setIsFormOpen(false);
+    setDeleteMenuOpen(false);
   };
 
-  const startAdd = (category: RegisteredTypeCategory) => {
+  const startAdd = () => {
     setFormMode('add');
-    setFormCategory(category);
+    setFormCategory(activeTab);
     setSelectedType(null);
     setTypeName('');
-    setError(null);
-    setSuccess(null);
+    setTypeActive(true);
+    setFormError('');
     setIsFormOpen(true);
   };
 
@@ -147,19 +142,20 @@ export default function TypeRegistrySection({
     setFormCategory(t.category);
     setSelectedType(t);
     setTypeName(t.name);
-    setError(null);
-    setSuccess(null);
+    setTypeActive(t.active);
+    setFormError('');
     setIsFormOpen(true);
+    setDeleteMenuOpen(false);
   };
 
   const handleSave = async () => {
     const trimmed = typeName.trim();
     if (!trimmed) {
-      setError('Informe o nome do tipo.');
+      setFormError('Informe o nome do tipo.');
       return;
     }
     if (trimmed.length > 64) {
-      setError('O nome deve ter no máximo 64 caracteres.');
+      setFormError('O nome deve ter no máximo 64 caracteres.');
       return;
     }
     const duplicate = typeRegistry.some(t =>
@@ -167,37 +163,23 @@ export default function TypeRegistrySection({
       t.name.toLowerCase() === trimmed.toLowerCase()
     );
     if (duplicate) {
-      setError('Já existe um tipo com esse nome nesta lista.');
+      setFormError('Já existe um tipo com esse nome nesta lista.');
       return;
     }
 
     setLoading(true);
-    setError(null);
+    setFormError('');
     try {
       if (formMode === 'add') {
         await onAddType?.(formCategory, trimmed);
-        setSuccess('Tipo cadastrado com sucesso!');
+        showToast('success', 'Tipo cadastrado com sucesso.');
       } else if (selectedType) {
-        await onUpdateType?.(selectedType.id, { name: trimmed });
-        setSuccess('Tipo atualizado com sucesso!');
+        await onUpdateType?.(selectedType.id, { name: trimmed, active: typeActive });
+        showToast('success', 'Tipo atualizado com sucesso.');
       }
       closeForm();
     } catch (err: any) {
-      setError(err.message || 'Erro ao salvar o tipo.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleToggleActive = async (t: RegisteredType) => {
-    setLoading(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      await onUpdateType?.(t.id, { active: !t.active });
-      setSuccess(t.active ? `"${t.name}" foi desativado.` : `"${t.name}" foi reativado.`);
-    } catch (err: any) {
-      setError(err.message || 'Erro ao alterar o status do tipo.');
+      setFormError(err.message || 'Erro ao salvar o tipo.');
     } finally {
       setLoading(false);
     }
@@ -218,361 +200,476 @@ export default function TypeRegistrySection({
     if (!confirmed) return;
 
     setLoading(true);
-    setError(null);
-    setSuccess(null);
     try {
       await onDeleteType?.(t.id);
-      setSuccess('Tipo excluído com sucesso.');
+      showToast('success', 'Tipo excluído com sucesso.');
+      closeForm();
     } catch (err: any) {
-      setError(err.message || 'Erro ao excluir o tipo.');
+      showToast('error', err.message || 'Erro ao excluir o tipo.');
     } finally {
       setLoading(false);
     }
   };
 
-  const filterByName = (list: RegisteredType[]) =>
-    list.filter(t => t.name.toLowerCase().includes(searchTerm.toLowerCase()));
+  const tabItems = useMemo(
+    () => typeRegistry.filter(t => visibleCategories.includes(t.category)),
+    [typeRegistry, activeTab]
+  );
 
-  const renderRow = (t: RegisteredType) => {
+  const filteredItems = useMemo(() =>
+    tabItems
+      .filter(t => {
+        const query = searchTerm.trim().toLocaleLowerCase('pt-BR');
+        const matchesSearch = !query || t.name.toLocaleLowerCase('pt-BR').includes(query);
+        const matchesStatus = statusFilter === 'all' || (statusFilter === 'active' ? t.active : !t.active);
+        return matchesSearch && matchesStatus;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+  [tabItems, searchTerm, statusFilter]);
+
+  const requestRename = (t: RegisteredType) => {
+    startEdit(t);
+  };
+
+  const renderCard = (t: RegisteredType) => {
+    const meta = CATEGORY_META[t.category];
     const usage = getTypeUsageCount?.(t.category, t.name) ?? 0;
     const inUse = usage > 0;
     const protectedType = isProtected(t);
-    const meta = CATEGORY_META[t.category];
 
     return (
       <div
         key={t.id}
-        className={`group relative flex items-center justify-between gap-3 rounded-xl border p-3.5 transition-all duration-200 sm:p-4 ${
-          t.active
-            ? 'border-slate-200/80 bg-white hover:border-slate-300 hover:shadow-md hover:shadow-slate-100'
-            : 'border-slate-200/60 bg-slate-50/80'
+        role="button"
+        tabIndex={0}
+        aria-label={`Renomear tipo ${t.name}`}
+        onClick={() => requestRename(t)}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            requestRename(t);
+          }
+        }}
+        className={`group cursor-pointer rounded-2xl border p-4 text-left shadow-sm transition-all hover:border-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
+          t.active ? 'border-slate-200 bg-white' : 'border-slate-200 bg-slate-50/80'
         }`}
       >
-        {/* Subtle left accent for active items */}
-        {t.active && (
-          <div className="absolute left-0 top-1/2 -translate-y-1/2 h-8 w-[3px] rounded-full bg-gradient-to-b from-emerald-400 to-emerald-600 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
-        )}
-
-        <div className="min-w-0 pl-1">
-          <div className="flex items-center gap-2.5">
-            <span className={`text-[13px] font-bold tracking-tight ${t.active ? 'text-slate-800' : 'text-slate-400 line-through decoration-slate-300'}`}>
-              {t.name}
-            </span>
-            {!t.active && (
-              <span className="inline-flex items-center text-[8px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-widest bg-slate-200/80 text-slate-500">
-                Inativo
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${t.active ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+              <p className={`truncate text-xs font-bold ${t.active ? 'text-slate-900' : 'text-slate-500 line-through decoration-slate-300'}`}>
+                {t.name}
+              </p>
+              {!t.active && (
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold text-slate-500">Inativo</span>
+              )}
+              {protectedType && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">
+                  <ShieldCheck className="h-2.5 w-2.5" />
+                  Padrão
+                </span>
+              )}
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px]">
+              <span className={inUse ? 'font-medium text-amber-600' : 'text-slate-400'}>
+                {inUse
+                  ? `${usage} ${usage === 1 ? 'registro vinculado' : 'registros vinculados'}`
+                  : 'Sem registros vinculados'}
               </span>
+            </div>
+          </div>
+
+          <ChevronRight className="h-4 w-4 shrink-0 text-slate-300 transition-colors group-hover:text-slate-400" />
+        </div>
+      </div>
+    );
+  };
+
+  const desktopGrid = 'grid-cols-[minmax(240px,2fr)_minmax(150px,1fr)_36px]';
+
+  const renderDesktopRow = (t: RegisteredType) => {
+    const usage = getTypeUsageCount?.(t.category, t.name) ?? 0;
+    const inUse = usage > 0;
+    const protectedType = isProtected(t);
+
+    return (
+      <div
+        key={t.id}
+        role="button"
+        tabIndex={0}
+        aria-label={`Renomear tipo ${t.name}`}
+        onClick={() => requestRename(t)}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            requestRename(t);
+          }
+        }}
+        className="cursor-pointer px-5 py-3.5 transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500"
+      >
+        <div className={`grid items-center gap-4 ${desktopGrid}`}>
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <p className={`truncate text-xs font-bold ${t.active ? 'text-slate-900' : 'text-slate-500 line-through decoration-slate-300'}`}>
+              {t.name}
+            </p>
+            {!t.active && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold text-slate-500">Inativo</span>
             )}
             {protectedType && (
-              <span className="inline-flex items-center gap-1 text-[8px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-widest bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/60">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">
                 <ShieldCheck className="h-2.5 w-2.5" />
                 Padrão
               </span>
             )}
           </div>
-          <p className={`mt-1.5 text-[10px] font-medium ${inUse ? 'text-amber-600' : 'text-slate-400'}`}>
-            {inUse ? (
-              <span className="flex items-center gap-1">
-                <Tag className="h-2.5 w-2.5" />
-                {usage} {usage === 1 ? 'registro vinculado' : 'registros vinculados'}
-              </span>
-            ) : (
-              'Sem registros vinculados'
-            )}
-          </p>
-        </div>
 
-        <div className="flex items-center gap-1 shrink-0 ml-4">
-          <button
-            onClick={() => startEdit(t)}
-            disabled={loading || inUse}
-            aria-label={`Editar ${t.name}`}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 transition-all duration-150 hover:bg-slate-100 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-20"
-            title={inUse ? 'Tipo em uso não pode ser renomeado' : 'Renomear tipo'}
-          >
-            <Edit2 className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={() => handleToggleActive(t)}
-            disabled={loading}
-            aria-label={t.active ? `Desativar ${t.name}` : `Reativar ${t.name}`}
-            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
-              t.active
-                ? 'text-slate-300 hover:bg-amber-50 hover:text-amber-500'
-                : 'text-emerald-400 hover:bg-emerald-50 hover:text-emerald-600'
-            }`}
-            title={t.active ? 'Desativar tipo' : 'Reativar tipo'}
-          >
-            <Power className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={() => handleDeleteClick(t)}
-            disabled={loading || inUse || protectedType}
-            aria-label={`Excluir ${t.name}`}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 transition-all duration-150 hover:bg-rose-50 hover:text-rose-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 disabled:cursor-not-allowed disabled:opacity-20"
-            title={
-              protectedType
-                ? 'Tipo padrão do sistema não pode ser excluído'
-                : inUse
-                  ? 'Tipo em uso — apenas desativação é permitida'
-                  : 'Excluir tipo'
-            }
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
-    );
-  };
+          <span className={`text-[10px] font-medium ${inUse ? 'text-amber-600' : 'text-slate-400'}`}>
+            {inUse
+              ? `${usage} ${usage === 1 ? 'registro vinculado' : 'registros vinculados'}`
+              : 'Sem registros vinculados'}
+          </span>
 
-  const renderPanel = (category: RegisteredTypeCategory) => {
-    const meta = CATEGORY_META[category];
-    const items = filterByName(typeRegistry.filter(t => t.category === category)).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-    const activeCount = items.filter(t => t.active).length;
-    const inactiveCount = items.length - activeCount;
-
-    return (
-      <div key={category} className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm hover:shadow-md transition-shadow duration-300">
-        {/* Gradient header */}
-        <div className={`relative bg-gradient-to-r ${meta.gradient} border-b border-slate-100 px-5 py-4 sm:px-6`}>
-          {/* Decorative circle */}
-          <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-white/30 blur-xl" />
-
-          <div className="relative flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3.5">
-              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${meta.iconBg} transition-transform duration-200 group-hover:scale-105`}>
-                {meta.icon}
-              </span>
-              <div>
-                <h3 className="text-[13px] font-extrabold tracking-tight text-slate-900">{meta.title}</h3>
-                <div className="mt-0.5 flex items-center gap-2">
-                  <span className="text-[11px] font-semibold text-slate-500">
-                    {items.length} {items.length === 1 ? 'tipo' : 'tipos'}
-                  </span>
-                  {inactiveCount > 0 && (
-                    <>
-                      <span className="text-slate-300">·</span>
-                      <span className="text-[10px] font-semibold text-slate-400">
-                        {inactiveCount} {inactiveCount === 1 ? 'inativo' : 'inativos'}
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => startAdd(category)}
-              className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-emerald-500/20 transition-all duration-200 hover:from-emerald-700 hover:to-emerald-600 hover:shadow-lg hover:shadow-emerald-500/30 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 active:translate-y-0 sm:w-auto"
-            >
-              <Plus className="h-4 w-4" />
-              Adicionar tipo
-            </button>
+          <div className="flex justify-end">
+            <ChevronRight className="h-4 w-4 shrink-0 text-slate-300 transition-colors group-hover:text-slate-400" />
           </div>
         </div>
-
-        <div className="p-4 sm:p-5">
-          <p className="mb-4 text-[11px] leading-relaxed text-slate-500">{meta.description}</p>
-
-          {items.length === 0 ? (
-            <div className="relative overflow-hidden rounded-xl border border-dashed border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100/50 py-10">
-              {/* Decorative dots */}
-              <div className="absolute right-4 top-4 grid grid-cols-3 gap-1 opacity-20">
-                {[...Array(9)].map((_, i) => (
-                  <div key={i} className="h-1 w-1 rounded-full bg-slate-400" />
-                ))}
-              </div>
-
-              <div className="relative flex flex-col items-center px-4">
-                <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${meta.iconBg} opacity-40`}>
-                  {meta.icon}
-                </div>
-                <p className="mt-3 text-xs font-bold text-slate-600">{meta.emptyTitle}</p>
-                <p className="mt-1.5 max-w-xs text-center text-[10px] leading-relaxed text-slate-400">{meta.emptyHint}</p>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-2.5">{items.map(renderRow)}</div>
-          )}
-        </div>
       </div>
     );
   };
 
-  const totalInTab = useMemo(
-    () => typeRegistry.filter(t => visibleCategories.includes(t.category)).length,
-    [typeRegistry, visibleCategories]
-  );
+  const hasActiveFilters = Boolean(searchTerm.trim()) || statusFilter !== 'all';
 
   return (
-    <div className="space-y-4">
-      {/* Success / Error */}
-      {success && (
-        <div className="flex items-center gap-2.5 rounded-xl border border-emerald-200/80 bg-gradient-to-r from-emerald-50 to-emerald-50/60 p-3.5 text-xs font-bold text-emerald-800 shadow-sm shadow-emerald-100">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-emerald-100">
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-          </span>
-          <span className="whitespace-pre-line">{success}</span>
+    <div className="space-y-4" id="type-registry-section">
+      {/* Header */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-bold text-slate-900">Cadastro de tipos</h1>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-500">
+                {filteredItems.length} {filteredItems.length === 1 ? 'tipo' : 'tipos'}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Padronize as classificações usadas nos formulários de parceiros, equipamentos e serviços.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={startAdd}
+            className="flex min-h-10 shrink-0 items-center gap-1.5 self-start rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+          >
+            <Plus className="h-4 w-4" />
+            Adicionar
+          </button>
         </div>
-      )}
 
-      {!isFormOpen && error && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">
-          {error}
+        {/* Category tabs */}
+        <div className="mt-4 grid grid-cols-4 gap-1 rounded-xl bg-slate-100 p-1" role="tablist" aria-label="Categorias de cadastro">
+          {TABS.map(tab => {
+            const isActive = activeTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => {
+                  setActiveTab(tab.key);
+                  setSearchTerm('');
+                  setStatusFilter('all');
+                  setMobileSearchOpen(false);
+                  setMobileFiltersOpen(false);
+                }}
+                className={`flex min-h-10 items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-bold transition ${
+                  isActive
+                    ? 'bg-white text-emerald-700 shadow-sm ring-1 ring-slate-200'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {tab.icon}
+                <span className="hidden sm:inline">{TAB_DESKTOP_LABELS[tab.key]}</span>
+                <span className="sm:hidden">{tab.shortLabel}</span>
+              </button>
+            );
+          })}
         </div>
-      )}
 
-      {/* Tabs - premium pill style */}
-      <div role="tablist" aria-label="Categorias de cadastro" className="relative grid grid-cols-3 gap-1 rounded-2xl border border-slate-200/80 bg-gradient-to-b from-slate-50 to-white p-1 shadow-inner">
-        {TABS.map(tab => {
-          const isActive = activeTab === tab.key;
-          return (
+        {/* Mobile search/filters toggles */}
+        <div className="mt-3 flex items-center gap-2 sm:hidden">
+          <button
+            type="button"
+            onClick={() => { setMobileSearchOpen(open => !open); setMobileFiltersOpen(false); }}
+            aria-label="Buscar tipos"
+            aria-expanded={mobileSearchOpen}
+            className={`flex h-10 w-10 items-center justify-center rounded-xl border transition-colors ${
+              mobileSearchOpen || searchTerm
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                : 'border-slate-200 text-slate-500'
+            }`}
+          >
+            <Search className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => { setMobileFiltersOpen(open => !open); setMobileSearchOpen(false); }}
+            aria-label="Filtrar tipos por status"
+            aria-expanded={mobileFiltersOpen}
+            className={`relative flex h-10 w-10 items-center justify-center rounded-xl border transition-colors ${
+              mobileFiltersOpen || statusFilter !== 'all'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                : 'border-slate-200 text-slate-500'
+            }`}
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+            {statusFilter !== 'all' && <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-emerald-600" />}
+          </button>
+
+          {!mobileFiltersOpen && statusFilter !== 'all' && (
             <button
-              key={tab.key}
               type="button"
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => { setActiveTab(tab.key); setSearchTerm(''); }}
-              className={`relative flex items-center justify-center gap-1.5 min-h-[42px] rounded-xl px-2 py-2 text-[11px] font-bold transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
-                isActive
-                  ? 'bg-white text-emerald-700 shadow-md shadow-slate-200/60 ring-1 ring-slate-200/50'
-                  : 'text-slate-500 hover:text-slate-700 hover:bg-white/50'
-              }`}
+              onClick={() => setStatusFilter('all')}
+              className="flex min-h-7 w-fit items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 text-[11px] font-semibold text-emerald-700"
             >
-              {tab.icon}
-              <span className="hidden sm:inline">{tab.label}</span>
-              <span className="sm:hidden">{tab.shortLabel}</span>
+              {statusFilterLabel(statusFilter)} <X className="h-3 w-3" />
             </button>
-          );
-        })}
-      </div>
-
-      {/* Search */}
-      <div className="relative group">
-        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-          <Search className="h-4 w-4 text-slate-400 group-focus-within:text-emerald-500 transition-colors duration-200" />
+          )}
         </div>
-        <input
-          type="text"
-          placeholder="Filtrar tipos..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="block min-h-11 w-full rounded-xl border border-slate-200/80 bg-white py-2.5 pl-10 pr-3 text-xs font-medium text-slate-700 placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all duration-200 shadow-sm"
-        />
+
+        {mobileSearchOpen && (
+          <div className="relative mt-3 sm:hidden">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              autoFocus
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Buscar tipo por nome"
+              aria-label="Buscar tipos"
+              className="min-h-10 w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-10 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                aria-label="Limpar busca"
+                className="absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 hover:bg-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        )}
+
+        {mobileFiltersOpen && (
+          <div className="mt-3 rounded-xl bg-slate-50 p-2 sm:hidden">
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+              className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              aria-label="Filtrar tipos por status"
+            >
+              {STATUS_FILTER_OPTIONS.map(option => (
+                <option key={option.key} value={option.key}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </section>
+
+      {/* Desktop filters */}
+      <div className="hidden items-center gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:flex">
+        <div className="relative min-w-0 flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Buscar tipo por nome..."
+            aria-label="Buscar tipos"
+            id="search-types-input"
+            className="min-h-10 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-xs outline-none transition focus:border-emerald-400"
+          />
+        </div>
+        <select
+          value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)}
+          className="min-h-10 max-w-44 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 outline-none focus:border-emerald-400"
+          aria-label="Filtrar tipos por status"
+          id="filter-types-status-select"
+        >
+          <option value="all">Todos os status</option>
+          <option value="active">Ativos</option>
+          <option value="inactive">Inativos</option>
+        </select>
       </div>
 
-      {/* Empty tab state */}
-      {totalInTab === 0 && searchTerm === '' && (
-        <div className="rounded-xl border border-slate-200/60 bg-gradient-to-r from-slate-50 to-white p-3.5">
-          <p className="text-[11px] font-medium text-slate-500 leading-relaxed">
-            Nenhum tipo registrado ainda para esta categoria. Os valores padrão do sistema continuam sendo usados nos formulários.
+      {/* List */}
+      {filteredItems.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
+          <Layers className="mx-auto h-8 w-8 text-slate-300" />
+          <h2 className="mt-3 text-sm font-bold text-slate-700">
+            {hasActiveFilters ? 'Nenhum tipo encontrado' : `Nenhum tipo em ${TABS.find(tab => tab.key === activeTab)?.label.toLowerCase()}`}
+          </h2>
+          <p className="mt-1 text-xs text-slate-500">
+            {hasActiveFilters
+              ? 'Ajuste a busca ou os filtros para encontrar o tipo.'
+              : 'Os valores padrão do sistema continuam sendo usados nos formulários. Use "Adicionar" para cadastrar um novo tipo.'}
           </p>
         </div>
+      ) : (
+        <>
+          {/* Desktop list */}
+          <div className="hidden overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm md:block" id="types-list-desktop">
+            <div className={`grid items-center gap-4 border-b border-slate-200 bg-slate-50/70 px-5 py-3 text-[9px] font-extrabold uppercase tracking-[0.12em] text-slate-400 ${desktopGrid}`}>
+              <span>Tipo</span>
+              <span>Uso</span>
+              <span />
+            </div>
+            <div className="divide-y divide-slate-100">
+              {filteredItems.map(renderDesktopRow)}
+            </div>
+          </div>
+
+          {/* Mobile cards */}
+          <div className="grid grid-cols-1 gap-3 md:hidden" id="types-list">
+            {filteredItems.map(renderCard)}
+          </div>
+        </>
       )}
 
-      {/* Panels */}
-      <div className="space-y-4">
-        {visibleCategories.map(renderPanel)}
-      </div>
-
-      {/* Modal */}
-      {isFormOpen && (
-        <div
-          className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/60 p-0 backdrop-blur-sm sm:items-center sm:p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="type-form-title"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !loading) closeForm();
-          }}
-        >
-          <div className="w-full overflow-hidden rounded-t-3xl border border-slate-200/80 bg-white shadow-2xl sm:max-w-md sm:rounded-3xl">
-            {/* Modal header with accent */}
-            <div className="relative overflow-hidden border-b border-slate-100 px-6 py-5">
-              <div className={`absolute inset-0 bg-gradient-to-r ${CATEGORY_META[formCategory].gradient}`} />
-              <div className="absolute -right-4 -top-4 h-20 w-20 rounded-full bg-white/30 blur-xl" />
-
-              <div className="relative flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3.5">
-                  <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${CATEGORY_META[formCategory].iconBg}`}>
-                    {formMode === 'add' ? <Plus className="h-5 w-5" /> : <Edit2 className="h-5 w-5" />}
-                  </span>
-                  <div>
-                    <h2 id="type-form-title" className="text-sm font-extrabold text-slate-900 tracking-tight">
-                      {formMode === 'add' ? `Novo tipo` : 'Renomear tipo'}
-                    </h2>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
-                      {formMode === 'add'
-                        ? `Adicionar em ${CATEGORY_META[formCategory].title}`
-                        : 'Atualize o nome exibido nos formulários'}
-                    </p>
-                  </div>
+      {/* Add/rename form modal */}
+      {isFormOpen && createPortal(
+        <div className="fixed inset-0 z-[75] flex items-end justify-center sm:items-center sm:p-4">
+          <button
+            type="button"
+            aria-label="Fechar formulário"
+            className="absolute inset-0 cursor-default bg-slate-950/55 backdrop-blur-[1px]"
+            onClick={() => !loading && closeForm()}
+          />
+          <div className="relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-2xl">
+            <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                  {formMode === 'add' ? <Plus className="h-5 w-5" /> : <Edit className="h-5 w-5" />}
+                </span>
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 sm:text-lg">
+                    {formMode === 'add' ? 'Novo tipo' : 'Renomear tipo'}
+                  </h2>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {formMode === 'add'
+                      ? CATEGORY_META[formCategory].title
+                      : 'Atualize o nome exibido nos formulários.'}
+                  </p>
                 </div>
+              </div>
+              <div className="flex items-center gap-1">
+                {formMode === 'edit' && selectedType && !isProtected(selectedType) && (
+                  <div className="relative" ref={deleteMenuRef}>
+                    <button
+                      type="button"
+                      onClick={() => setDeleteMenuOpen(open => !open)}
+                      disabled={loading}
+                      aria-label="Mais opções"
+                      aria-expanded={deleteMenuOpen}
+                      className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50"
+                    >
+                      <MoreVertical className="h-5 w-5" />
+                    </button>
+                    {deleteMenuOpen && (
+                      <div className="absolute right-0 top-full z-10 mt-1 w-40 rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+                        <button
+                          type="button"
+                          disabled={loading}
+                          onClick={() => {
+                            setDeleteMenuOpen(false);
+                            void handleDeleteClick(selectedType);
+                          }}
+                          className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-50 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Excluir
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <button
                   type="button"
-                  onClick={closeForm}
+                  onClick={() => !loading && closeForm()}
                   disabled={loading}
-                  aria-label="Fechar formulário"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-all duration-150 hover:bg-white/80 hover:text-slate-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50"
+                  aria-label="Fechar"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-5 w-5" />
                 </button>
               </div>
-            </div>
+            </header>
 
-            <form
-              onSubmit={(e) => { e.preventDefault(); handleSave(); }}
-              className="p-6"
-            >
-              {error && (
-                <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700">
-                  {error}
-                </div>
-              )}
-
-              <label className="block">
-                <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">
+            <form onSubmit={(event) => { event.preventDefault(); void handleSave(); }} className="flex min-h-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-slate-50/50 px-4 py-5 sm:px-6">
+                <label className="block text-xs font-bold text-slate-700">
                   Nome do tipo <span className="text-rose-500">*</span>
-                </span>
-                <input
-                  autoFocus
-                  type="text"
-                  value={typeName}
-                  maxLength={64}
-                  onChange={(e) => { setTypeName(e.target.value); setError(null); }}
-                  placeholder={CATEGORY_META[formCategory].example}
-                  className="mt-2 block min-h-12 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-800 placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all duration-200"
-                />
-              </label>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={typeName}
+                    maxLength={64}
+                    onChange={(event) => { setTypeName(event.target.value); if (formError) setFormError(''); }}
+                    aria-invalid={Boolean(formError)}
+                    placeholder={CATEGORY_META[formCategory].example}
+                    className={`mt-1.5 block min-h-11 w-full rounded-xl border bg-white px-3.5 text-sm font-normal outline-none transition ${
+                      formError
+                        ? 'border-rose-400 ring-2 ring-rose-100'
+                        : 'border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10'
+                    }`}
+                  />
+                  {formError && <span className="mt-1.5 block text-[10px] font-semibold text-rose-600">{formError}</span>}
+                </label>
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={typeActive}
+                    onChange={(e) => setTypeActive(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className="text-xs font-bold text-slate-700">Tipo ativo</span>
+                </label>
+              </div>
 
-              <div className="mt-6 grid grid-cols-1 gap-3 min-[380px]:grid-cols-2">
+              <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-slate-200 bg-white px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
                 <button
                   type="button"
-                  onClick={closeForm}
                   disabled={loading}
-                  className="min-h-12 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-700 transition-all duration-200 hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={closeForm}
+                  className="min-h-11 rounded-xl border border-slate-200 px-4 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="min-h-12 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 px-4 py-3 text-xs font-bold text-white shadow-md shadow-emerald-500/20 transition-all duration-200 hover:from-emerald-700 hover:to-emerald-600 hover:shadow-lg hover:shadow-emerald-500/30 disabled:cursor-not-allowed disabled:from-emerald-300 disabled:to-emerald-300 disabled:shadow-none"
+                  className="min-h-11 rounded-xl bg-emerald-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {formMode === 'add' ? 'Cadastrar tipo' : 'Salvar alterações'}
+                  {loading ? 'Salvando...' : formMode === 'add' ? 'Cadastrar tipo' : 'Salvar alterações'}
                 </button>
-              </div>
+              </footer>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {/* Subtle footer hint */}
+      {/* Footer hint */}
       <div className="flex items-center gap-1.5 px-1 pt-1">
         <Info className="h-3 w-3 shrink-0 text-slate-300" />
-        <span className="text-[10px] text-slate-400 leading-relaxed">
-          Tipos desativados somem dos formulários, mas registros existentes mantêm o valor. Em uso = só desativação.
+        <span className="text-[10px] leading-relaxed text-slate-400">
+          Tipos desativados somem dos formulários, mas registros existentes mantêm o valor.
         </span>
       </div>
     </div>

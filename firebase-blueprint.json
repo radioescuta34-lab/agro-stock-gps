@@ -171,7 +171,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "category": { "type": "string", "enum": ["partner", "equipment_component", "equipment_machine", "service"] },
+        "category": { "type": "string", "enum": ["partner", "vehicle", "equipment_component", "service"] },
         "name": { "type": "string" },
         "active": { "type": "boolean" },
         "updatedAt": { "type": "string", "format": "date-time" },

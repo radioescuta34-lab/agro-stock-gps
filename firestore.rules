@@ -271,7 +271,7 @@ service cloud.firestore {
     // Validate RegisteredType (Settings > Cadastro > Tipos)
     function isValidRegisteredType(t) {
       return t.id is string && t.id.size() <= 128
-        && (t.category == 'partner' || t.category == 'equipment_component' || t.category == 'equipment_machine' || t.category == 'service')
+        && (t.category == 'partner' || t.category == 'vehicle' || t.category == 'equipment_component' || t.category == 'service')
         && t.name is string && t.name.size() <= 64
         && t.active is bool;
     }
