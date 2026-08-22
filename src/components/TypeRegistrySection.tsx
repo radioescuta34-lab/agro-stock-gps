@@ -17,7 +17,8 @@ import {
   CheckCircle2,
   Tag,
   Layers,
-  Zap
+  Zap,
+  Info
 } from 'lucide-react';
 
 type RegistryTab = 'partner' | 'equipment' | 'service';
@@ -406,22 +407,6 @@ export default function TypeRegistrySection({
 
   return (
     <div className="space-y-4">
-      {/* Info banner - refined */}
-      <div className="relative overflow-hidden rounded-xl border border-blue-100 bg-gradient-to-r from-blue-50 via-blue-50/80 to-blue-50/40 p-3.5">
-        <div className="absolute -right-4 -top-4 h-16 w-16 rounded-full bg-blue-100/40 blur-xl" />
-        <div className="relative flex items-start gap-3">
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-600">
-            <ShieldCheck className="h-3.5 w-3.5" />
-          </span>
-          <div className="min-w-0">
-            <p className="text-[11px] font-bold text-blue-900">Regras de cadastro</p>
-            <p className="mt-0.5 text-[10px] leading-relaxed text-blue-600/80">
-              Tipos desativados somem dos formulários, mas registros existentes mantêm o valor. Tipos em uso só podem ser desativados.
-            </p>
-          </div>
-        </div>
-      </div>
-
       {/* Success / Error */}
       {success && (
         <div className="flex items-center gap-2.5 rounded-xl border border-emerald-200/80 bg-gradient-to-r from-emerald-50 to-emerald-50/60 p-3.5 text-xs font-bold text-emerald-800 shadow-sm shadow-emerald-100">
@@ -582,6 +567,14 @@ export default function TypeRegistrySection({
           </div>
         </div>
       )}
+
+      {/* Subtle footer hint */}
+      <div className="flex items-center gap-1.5 px-1 pt-1">
+        <Info className="h-3 w-3 shrink-0 text-slate-300" />
+        <span className="text-[10px] text-slate-400 leading-relaxed">
+          Tipos desativados somem dos formulários, mas registros existentes mantêm o valor. Em uso = só desativação.
+        </span>
+      </div>
     </div>
   );
 }
