@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FieldDataCollection, Machine, MachineType, MovementLog, MovementStatus, UserRole } from '../types';
 import { useNotifications } from './NotificationProvider';
@@ -48,8 +48,26 @@ export default function MachinesTab({
 
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>(initialTypeFilter || 'all');
+  const [brandFilter, setBrandFilter] = useState('all');
+  const [modelFilter, setModelFilter] = useState('all');
+  const [fleetFilter, setFleetFilter] = useState('all');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [mobileTypeOpen, setMobileTypeOpen] = useState(false);
+
+  const uniqueBrands = useMemo(() => {
+    const brands = machines.map(m => m.brand).filter(Boolean);
+    return Array.from(new Set(brands)).sort();
+  }, [machines]);
+
+  const uniqueModels = useMemo(() => {
+    const models = machines.map(m => m.model).filter(Boolean);
+    return Array.from(new Set(models)).sort();
+  }, [machines]);
+
+  const uniqueFleets = useMemo(() => {
+    const fleets = machines.map(m => m.fleet).filter(Boolean) as string[];
+    return Array.from(new Set(fleets)).sort();
+  }, [machines]);
 
   const [isAdding, setIsAdding] = useState(false);
   const [editingMachine, setEditingMachine] = useState<Machine | null>(null);
@@ -234,7 +252,10 @@ export default function MachinesTab({
                           m.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           (m.fleet || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesType = typeFilter === 'all' ? true : m.type === typeFilter;
-    return matchesSearch && matchesType;
+    const matchesBrand = brandFilter === 'all' ? true : m.brand === brandFilter;
+    const matchesModel = modelFilter === 'all' ? true : m.model === modelFilter;
+    const matchesFleet = fleetFilter === 'all' ? true : m.fleet === fleetFilter;
+    return matchesSearch && matchesType && matchesBrand && matchesModel && matchesFleet;
   });
 
   const getMachineMovements = (machine: Machine) => movements
@@ -310,20 +331,44 @@ export default function MachinesTab({
     <div className="space-y-4 sm:space-y-6" id="machines-tab">
 
       {/* Active preset filter chip (arrived from dashboard card) */}
-      {typeFilter !== 'all' && (
+      {(typeFilter !== 'all' || brandFilter !== 'all' || modelFilter !== 'all' || fleetFilter !== 'all') && (
         <div className="hidden items-center justify-between gap-3 bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-3 animate-fade-in md:flex">
-          <div className="flex items-center gap-2 text-xs text-emerald-800 font-semibold">
+          <div className="flex items-center gap-2 text-xs text-emerald-800 font-semibold flex-wrap">
             <Filter className="h-4 w-4 text-emerald-600 shrink-0" />
-            Filtro ativo: {typeFilter}
+            Filtros ativos:
+            {typeFilter !== 'all' && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                Tipo: {typeFilter}
+                <button onClick={() => setTypeFilter('all')} className="hover:text-emerald-900"><X className="h-3 w-3" /></button>
+              </span>
+            )}
+            {brandFilter !== 'all' && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">
+                Marca: {brandFilter}
+                <button onClick={() => setBrandFilter('all')} className="hover:text-blue-900"><X className="h-3 w-3" /></button>
+              </span>
+            )}
+            {modelFilter !== 'all' && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                Modelo: {modelFilter}
+                <button onClick={() => setModelFilter('all')} className="hover:text-amber-900"><X className="h-3 w-3" /></button>
+              </span>
+            )}
+            {fleetFilter !== 'all' && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-700">
+                Frente: {fleetFilter}
+                <button onClick={() => setFleetFilter('all')} className="hover:text-purple-900"><X className="h-3 w-3" /></button>
+              </span>
+            )}
             <span className="text-emerald-600 font-bold">({filteredMachines.length} máquina{filteredMachines.length === 1 ? '' : 's'})</span>
           </div>
           <button
-            onClick={() => setTypeFilter('all')}
+            onClick={() => { setTypeFilter('all'); setBrandFilter('all'); setModelFilter('all'); setFleetFilter('all'); }}
             className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-white border border-emerald-200 text-emerald-700 rounded-xl text-[10px] font-bold hover:bg-emerald-100 transition-all cursor-pointer"
-            title="Limpar filtro e mostrar todas as máquinas"
+            title="Limpar todos os filtros"
           >
             <X className="h-3.5 w-3.5" />
-            Limpar filtro
+            Limpar filtros
           </button>
         </div>
       )}
@@ -370,16 +415,18 @@ export default function MachinesTab({
               setMobileTypeOpen(open => !open);
               setMobileSearchOpen(false);
             }}
-            aria-label={mobileTypeOpen ? 'Fechar filtro de tipo' : 'Filtrar por tipo'}
+            aria-label={mobileTypeOpen ? 'Fechar filtros' : 'Filtrar veículos'}
             aria-expanded={mobileTypeOpen}
             className={`relative flex h-10 w-10 items-center justify-center rounded-xl border transition-colors md:hidden ${
-              mobileTypeOpen || typeFilter !== 'all'
+              mobileTypeOpen || typeFilter !== 'all' || brandFilter !== 'all' || modelFilter !== 'all' || fleetFilter !== 'all'
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                 : 'border-slate-200 text-slate-500'
             }`}
           >
             <SlidersHorizontal className="h-4 w-4" />
-            {typeFilter !== 'all' && <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-emerald-600" />}
+            {(typeFilter !== 'all' || brandFilter !== 'all' || modelFilter !== 'all' || fleetFilter !== 'all') && (
+              <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-emerald-600" />
+            )}
           </button>
         </div>
 
@@ -404,29 +451,102 @@ export default function MachinesTab({
         )}
 
         {mobileTypeOpen && (
-          <div className="rounded-xl bg-slate-50 p-2 md:hidden">
-            <select
-              value={typeFilter}
-              onChange={(e) => {
-                setTypeFilter(e.target.value);
-                setMobileTypeOpen(false);
-              }}
-              className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              aria-label="Filtrar veículos por tipo"
-            >
-              <option value="all">Todos os veículos</option>
-              {machineTypes.map(t => <option key={t} value={t}>{t}s</option>)}
-            </select>
+          <div className="rounded-xl bg-slate-50 p-3 space-y-3 md:hidden">
+            <div>
+              <label className="text-[11px] text-slate-400 font-bold uppercase block mb-1">Tipo</label>
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                aria-label="Filtrar por tipo"
+              >
+                <option value="all">Todos</option>
+                {machineTypes.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] text-slate-400 font-bold uppercase block mb-1">Marca</label>
+              <select
+                value={brandFilter}
+                onChange={(e) => setBrandFilter(e.target.value)}
+                className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                aria-label="Filtrar por marca"
+              >
+                <option value="all">Todas</option>
+                {uniqueBrands.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] text-slate-400 font-bold uppercase block mb-1">Modelo</label>
+              <select
+                value={modelFilter}
+                onChange={(e) => setModelFilter(e.target.value)}
+                className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                aria-label="Filtrar por modelo"
+              >
+                <option value="all">Todos</option>
+                {uniqueModels.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[11px] text-slate-400 font-bold uppercase block mb-1">Frente</label>
+              <select
+                value={fleetFilter}
+                onChange={(e) => setFleetFilter(e.target.value)}
+                className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                aria-label="Filtrar por frente"
+              >
+                <option value="all">Todas</option>
+                {uniqueFleets.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+            {(typeFilter !== 'all' || brandFilter !== 'all' || modelFilter !== 'all' || fleetFilter !== 'all') && (
+              <button
+                type="button"
+                onClick={() => { setTypeFilter('all'); setBrandFilter('all'); setModelFilter('all'); setFleetFilter('all'); setMobileTypeOpen(false); }}
+                className="w-full flex items-center justify-center gap-1.5 py-2 bg-slate-200 text-slate-600 rounded-lg text-[11px] font-bold hover:bg-slate-300 transition-colors"
+              >
+                <X className="h-3.5 w-3.5" />
+                Limpar filtros
+              </button>
+            )}
           </div>
         )}
 
-        {!mobileTypeOpen && typeFilter !== 'all' && (
+        {typeFilter !== 'all' && (
           <button
             type="button"
             onClick={() => setTypeFilter('all')}
             className="flex min-h-7 w-fit items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 text-[11px] font-semibold text-emerald-700 md:hidden"
           >
             {typeFilter} <X className="h-3 w-3" />
+          </button>
+        )}
+        {brandFilter !== 'all' && (
+          <button
+            type="button"
+            onClick={() => setBrandFilter('all')}
+            className="flex min-h-7 w-fit items-center gap-1.5 rounded-full bg-blue-50 px-2.5 text-[11px] font-semibold text-blue-700 md:hidden"
+          >
+            {brandFilter} <X className="h-3 w-3" />
+          </button>
+        )}
+        {modelFilter !== 'all' && (
+          <button
+            type="button"
+            onClick={() => setModelFilter('all')}
+            className="flex min-h-7 w-fit items-center gap-1.5 rounded-full bg-amber-50 px-2.5 text-[11px] font-semibold text-amber-700 md:hidden"
+          >
+            {modelFilter} <X className="h-3 w-3" />
+          </button>
+        )}
+        {fleetFilter !== 'all' && (
+          <button
+            type="button"
+            onClick={() => setFleetFilter('all')}
+            className="flex min-h-7 w-fit items-center gap-1.5 rounded-full bg-purple-50 px-2.5 text-[11px] font-semibold text-purple-700 md:hidden"
+          >
+            {fleetFilter} <X className="h-3 w-3" />
           </button>
         )}
       </div>
@@ -666,42 +786,193 @@ export default function MachinesTab({
       )}
 
       {/* Filter panel */}
-      <div className="hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:flex md:flex-row md:gap-4">
-        <div className="flex-1 relative rounded-xl shadow-sm">
-          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-            <Search className="h-4 w-4 text-slate-400" />
+      <div className="hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:block">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-4">
+          <div className="flex-1 relative rounded-xl shadow-sm">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <Search className="h-4 w-4 text-slate-400" />
+            </div>
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="block w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-xs"
+              placeholder="Buscar por prefixo..."
+              id="search-machines-input"
+            />
           </div>
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="block w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-xs"
-            placeholder="Buscar veículos por prefixo, marca ou modelo..."
-            id="search-machines-input"
-          />
-        </div>
 
-        <div className="w-full md:w-56 flex items-center gap-2">
-          <span className="text-[11px] text-slate-400 font-bold whitespace-nowrap uppercase">Tipo:</span>
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className="block w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-xs font-semibold focus:outline-none"
-            id="filter-machine-type-select"
-          >
-            <option value="all">Todos os Veículos</option>
-            {machineTypes.map(t => <option key={t} value={t}>{t}s</option>)}
-          </select>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:w-auto">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-400 font-bold whitespace-nowrap uppercase">Tipo:</span>
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                className="block w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-xs font-semibold focus:outline-none"
+                id="filter-machine-type-select"
+              >
+                <option value="all">Todos</option>
+                {machineTypes.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-400 font-bold whitespace-nowrap uppercase">Marca:</span>
+              <select
+                value={brandFilter}
+                onChange={(e) => setBrandFilter(e.target.value)}
+                className="block w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-xs font-semibold focus:outline-none"
+                id="filter-machine-brand-select"
+              >
+                <option value="all">Todas</option>
+                {uniqueBrands.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-400 font-bold whitespace-nowrap uppercase">Modelo:</span>
+              <select
+                value={modelFilter}
+                onChange={(e) => setModelFilter(e.target.value)}
+                className="block w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-xs font-semibold focus:outline-none"
+                id="filter-machine-model-select"
+              >
+                <option value="all">Todos</option>
+                {uniqueModels.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-400 font-bold whitespace-nowrap uppercase">Frente:</span>
+              <select
+                value={fleetFilter}
+                onChange={(e) => setFleetFilter(e.target.value)}
+                className="block w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-xs font-semibold focus:outline-none"
+                id="filter-machine-fleet-select"
+              >
+                <option value="all">Todas</option>
+                {uniqueFleets.map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {(typeFilter !== 'all' || brandFilter !== 'all' || modelFilter !== 'all' || fleetFilter !== 'all') && (
+            <button
+              type="button"
+              onClick={() => { setTypeFilter('all'); setBrandFilter('all'); setModelFilter('all'); setFleetFilter('all'); }}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-600 rounded-xl text-[11px] font-bold hover:bg-slate-200 transition-colors cursor-pointer"
+            >
+              <X className="h-3.5 w-3.5" />
+              Limpar filtros
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Machines grid */}
-      {filteredMachines.length === 0 ? (
+      {/* Empty state */}
+      {filteredMachines.length === 0 && (
         <div className="bg-white p-12 text-center border border-slate-200 rounded-2xl text-slate-400 text-sm">
           Nenhum veículo cadastrado corresponde aos critérios de busca.
         </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="machines-grid-list">
+      )}
+
+      {/* Desktop: table list */}
+      {filteredMachines.length > 0 && (
+        <div className="hidden md:block bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden" id="machines-table-list">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-slate-100 bg-slate-50/80">
+                <th className="text-left px-5 py-3 font-bold text-slate-500 uppercase tracking-wider">Prefixo</th>
+                <th className="text-left px-5 py-3 font-bold text-slate-500 uppercase tracking-wider">Tipo</th>
+                <th className="text-left px-5 py-3 font-bold text-slate-500 uppercase tracking-wider">Marca</th>
+                <th className="text-left px-5 py-3 font-bold text-slate-500 uppercase tracking-wider">Modelo</th>
+                <th className="text-left px-5 py-3 font-bold text-slate-500 uppercase tracking-wider">Frota / Frente</th>
+                <th className="text-center px-5 py-3 font-bold text-slate-500 uppercase tracking-wider">Histórico</th>
+                <th className="text-right px-5 py-3 font-bold text-slate-500 uppercase tracking-wider">Detalhes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredMachines.map((mac) => {
+                let typeColor = 'bg-slate-100 text-slate-700';
+                if (mac.type === 'Trator') typeColor = 'bg-emerald-50 text-emerald-800 border-emerald-200';
+                if (mac.type === 'Colhedora') typeColor = 'bg-amber-50 text-amber-800 border-amber-200';
+                if (mac.type === 'Pulverizador') typeColor = 'bg-blue-50 text-blue-800 border-blue-200';
+                const serviceHistory = getMachineMovements(mac);
+                const collectionHistory = getMachineCollections(mac);
+                const historyCount = serviceHistory.length + collectionHistory.length;
+
+                return (
+                  <tr
+                    key={mac.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Abrir detalhes e histórico de ${mac.prefix}`}
+                    onClick={() => {
+                      setMachineDetailTab('summary');
+                      setHistoryFilter('all');
+                      setHistoryMachine(mac);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setMachineDetailTab('summary');
+                        setHistoryFilter('all');
+                        setHistoryMachine(mac);
+                      }
+                    }}
+                    className="border-b border-slate-100 last:border-b-0 hover:bg-emerald-50/40 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500"
+                  >
+                    <td className="px-5 py-3.5">
+                      <span className="font-bold text-sm text-slate-900">{mac.prefix}</span>
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <span className={`inline-block text-[10px] font-bold px-2 py-1 rounded-full border ${typeColor}`}>
+                        {mac.type}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3.5 text-slate-700 font-medium">{mac.brand}</td>
+                    <td className="px-5 py-3.5 text-slate-700 font-medium">{mac.model}</td>
+                    <td className="px-5 py-3.5">
+                      {mac.fleet ? (
+                        <span className="inline-block bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-md font-bold text-[10px] border border-emerald-100">
+                          {mac.fleet}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 italic">Sem vinculo</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5 text-center">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setMachineDetailTab('history');
+                          setHistoryFilter('all');
+                          setHistoryMachine(mac);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                        aria-label={`Ver historico completo de ${mac.prefix}`}
+                      >
+                        <History className="h-3.5 w-3.5" />
+                        {historyCount === 0 ? '\u2014' : `${historyCount}`}
+                      </button>
+                    </td>
+                    <td className="px-5 py-3.5 text-right">
+                      <span className="text-[11px] font-semibold text-emerald-600 hover:text-emerald-800 transition-colors">
+                        Ver detalhes
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Mobile: card grid */}
+      {filteredMachines.length > 0 && (
+        <div className="grid grid-cols-1 gap-4 md:hidden" id="machines-grid-list">
           {filteredMachines.map((mac) => {
             let typeColor = 'bg-slate-100 text-slate-800';
             if (mac.type === 'Trator') typeColor = 'bg-emerald-50 text-emerald-800 border-emerald-100';
@@ -712,11 +983,11 @@ export default function MachinesTab({
             const historyCount = serviceHistory.length + collectionHistory.length;
 
             return (
-              <div 
-                key={mac.id} 
+              <div
+                key={mac.id}
                 role="button"
                 tabIndex={0}
-                aria-label={`Abrir detalhes e histórico de ${mac.prefix}`}
+                aria-label={`Abrir detalhes e historico de ${mac.prefix}`}
                 onClick={() => {
                   setMachineDetailTab('summary');
                   setHistoryFilter('all');
@@ -752,13 +1023,13 @@ export default function MachinesTab({
                       <span className="text-slate-400 font-medium">Modelo:</span> {mac.model}
                     </p>
                     <p className="text-slate-600 flex items-center gap-1.5">
-                      <span className="text-slate-400 font-medium">Frota/Frente:</span> 
+                      <span className="text-slate-400 font-medium">Frota/Frente:</span>
                       {mac.fleet ? (
                         <span className="bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded-md font-bold text-[10px] border border-emerald-100">
                           {mac.fleet}
                         </span>
                       ) : (
-                        <span className="text-slate-400 italic">Sem vínculo</span>
+                        <span className="text-slate-400 italic">Sem vinculo</span>
                       )}
                     </p>
                   </div>
@@ -774,10 +1045,10 @@ export default function MachinesTab({
                       setHistoryMachine(mac);
                     }}
                     className="flex min-h-8 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-                    aria-label={`Ver histórico completo de ${mac.prefix}`}
+                    aria-label={`Ver historico completo de ${mac.prefix}`}
                   >
                     <History className="h-3.5 w-3.5" />
-                    {historyCount === 0 ? 'Sem histórico' : `${historyCount} evento${historyCount === 1 ? '' : 's'}`}
+                    {historyCount === 0 ? 'Sem historico' : `${historyCount} evento${historyCount === 1 ? '' : 's'}`}
                   </button>
 
                   <span className="text-[10px] font-semibold text-slate-400 transition-colors group-hover:text-slate-600">
