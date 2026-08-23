@@ -20,7 +20,6 @@ import {
   ArrowRight,
   Key,
   Clock,
-  Calendar,
   Shield,
   Kanban
 } from 'lucide-react';
@@ -137,7 +136,6 @@ export default function Dashboard({
 
   // 3. Calculations: Field Data Collection Overview
   const currentWeekId = getISOWeekId(new Date());
-  const activeWeekLabel = getWeekFormattedLabel(currentWeekId);
 
   const fleetNamesSet = new Set(machines.map(m => m.fleet?.trim() ? m.fleet.trim() : 'Sem Frente Atribuída'));
   const totalFrentes = fleetNamesSet.size;
@@ -165,9 +163,9 @@ export default function Dashboard({
         <div className="bg-slate-900 px-6 py-4 flex justify-between items-center text-white">
           <div className="flex items-center gap-2.5">
             <Cpu className="h-5 w-5 text-emerald-400" />
-            <h2 className="text-md font-bold tracking-tight">1. Visão Geral do Inventário de Componentes</h2>
+            <h2 className="text-md font-bold tracking-tight">Visão Geral dos Equipamentos</h2>
           </div>
-          {totalComponents === 0 && onSeedData && isAdminOrTech ? (
+          {totalComponents === 0 && onSeedData && isAdminOrTech && (
             <button
               onClick={onSeedData}
               className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm"
@@ -176,10 +174,6 @@ export default function Dashboard({
               <Cpu className="h-3.5 w-3.5" />
               Popular Banco de Dados de Teste
             </button>
-          ) : (
-            <span className="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/20 px-2.5 py-0.5 rounded-full font-bold">
-              {totalComponents} Hardwares Cadastrados
-            </span>
           )}
         </div>
 
@@ -342,11 +336,8 @@ export default function Dashboard({
         <div className="bg-indigo-950 px-6 py-4 flex justify-between items-center text-white">
           <div className="flex items-center gap-2.5">
             <Key className="h-5 w-5 text-indigo-400" />
-            <h2 className="text-md font-bold tracking-tight">2. Visão Geral de Licenças</h2>
+            <h2 className="text-md font-bold tracking-tight">Visão Geral de Licenças</h2>
           </div>
-          <span className="text-xs bg-indigo-500/20 text-indigo-300 border border-indigo-500/20 px-2.5 py-0.5 rounded-full font-bold">
-            {totalLicenses} Contratos / Chaves de Ativação
-          </span>
         </div>
 
         <div className="p-6 space-y-6">
@@ -434,13 +425,7 @@ export default function Dashboard({
         <div className="bg-slate-900 px-6 py-4 flex flex-col sm:flex-row justify-between items-start sm:items-center text-white gap-2">
           <div className="flex items-center gap-2.5">
             <Activity className="h-5 w-5 text-emerald-400" />
-            <h2 className="text-md font-bold tracking-tight">3. Visão Geral do Recolhimento de Dados de Campo</h2>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-3 py-1 rounded-full font-bold flex items-center gap-1.5">
-              <Calendar className="h-3.5 w-3.5" />
-              {activeWeekLabel} ({currentWeekId})
-            </span>
+            <h2 className="text-md font-bold tracking-tight">Visão Geral Recolhimento de Dados</h2>
           </div>
         </div>
 
