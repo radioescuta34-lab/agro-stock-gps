@@ -3538,6 +3538,7 @@ export default function App() {
             currentUserId={user.uid}
             currentUserName={user.name}
             extraServiceActions={getActiveTypes('service').filter(a => !CORE_SERVICE_ACTIONS.includes(a))}
+            companyProfile={companyProfile}
             onAddMovement={handleAddMovement}
             onUpdateMovement={handleUpdateMovement}
             onDeleteMovement={handleDeleteMovement}

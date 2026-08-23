@@ -90,7 +90,7 @@ export default function AppNotificationCenter({
   const [open, setOpen] = useState(false);
   const [tickets, setTickets] = useState<SupportTicketSummary[]>([]);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
-  const [pushState, setPushState] = useState<'idle' | 'loading' | 'enabled' | 'denied' | 'unavailable'>('idle');
+  const [pushState, setPushState] = useState<'idle' | 'loading' | 'enabled' | 'denied' | 'unavailable' | 'error'>('idle');
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const storageKey = `agro_stock_gps_notification_reads_${user.uid}`;
@@ -234,8 +234,9 @@ export default function AppNotificationCenter({
     try {
       const state = await subscribeDeviceToPush(user);
       setPushState(state === 'subscribed' ? 'enabled' : state);
-    } catch {
-      setPushState('unavailable');
+    } catch (error) {
+      console.error('Falha ao ativar Web Push:', error);
+      setPushState('error');
     }
   };
 
@@ -275,11 +276,11 @@ export default function AppNotificationCenter({
           <div className="min-w-0 flex-1">
             <p className="text-xs font-bold text-slate-800">Alertas neste dispositivo</p>
             <p className="mt-0.5 text-[10px] leading-relaxed text-slate-600">
-              {pushState === 'denied' ? 'A permissão está bloqueada nas configurações do navegador.' : pushState === 'unavailable' ? 'Instale o app ou abra por HTTPS para ativar alertas nativos.' : 'Receba avisos mesmo quando o Agro Stock estiver fechado.'}
+              {pushState === 'denied' ? 'A permissão está bloqueada nas configurações do navegador.' : pushState === 'unavailable' ? 'Instale o app ou abra por HTTPS para ativar alertas nativos.' : pushState === 'error' ? 'Não foi possível registrar o dispositivo. O servidor pode não ter Web Push configurado — tente novamente.' : 'Receba avisos mesmo quando o Agro Stock estiver fechado.'}
             </p>
-            {(pushState === 'idle' || pushState === 'loading') && (
+            {(pushState === 'idle' || pushState === 'loading' || pushState === 'error') && (
               <button disabled={pushState === 'loading'} onClick={activatePush} className="mt-2 text-[10px] font-extrabold text-emerald-700 hover:text-emerald-800 disabled:opacity-60">
-                {pushState === 'loading' ? 'Ativando…' : 'Ativar notificações'}
+                {pushState === 'loading' ? 'Ativando…' : pushState === 'error' ? 'Tentar novamente' : 'Ativar notificações'}
               </button>
             )}
           </div>

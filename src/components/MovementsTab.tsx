@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   AutopilotComponent, 
+  CompanyProfile,
   Machine, 
   MovementAction, 
   MovementLog, 
@@ -22,10 +23,13 @@ import {
   Clock,
   SlidersHorizontal,
   Edit,
-  Trash2
+  Trash2,
+  ChevronDown,
+  Download
 } from 'lucide-react';
 import FieldDataKanban from './FieldDataKanban';
 import { useNotifications } from './NotificationProvider';
+import { generateOsPdf } from '../utils/osPdf';
 
 interface MovementsTabProps {
   movements: MovementLog[];
@@ -36,6 +40,7 @@ interface MovementsTabProps {
   currentUserId: string;
   currentUserName: string;
   extraServiceActions?: string[];
+  companyProfile?: CompanyProfile | null;
   onAddMovement: (log: Omit<MovementLog, 'id' | 'technicianId' | 'technicianName' | 'createdAt'>) => Promise<void>;
   onUpdateMovement?: (movement: MovementLog, updates: Partial<MovementLog>) => Promise<void>;
   onDeleteMovement?: (movement: MovementLog) => Promise<void>;
@@ -70,6 +75,7 @@ export default function MovementsTab({
   currentUserId,
   currentUserName,
   extraServiceActions = [],
+  companyProfile,
   onAddMovement,
   onUpdateMovement,
   onDeleteMovement,
@@ -95,6 +101,9 @@ export default function MovementsTab({
   const [editingMove, setEditingMove] = useState<MovementLog | null>(null);
   const [selectedMove, setSelectedMove] = useState<MovementLog | null>(null);
   const [detailMenuOpen, setDetailMenuOpen] = useState(false);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [showDownloadModal, setShowDownloadModal] = useState(false);
+  const [downloadOption, setDownloadOption] = useState<'os' | 'os-historico'>('os');
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const [confirmingAction, setConfirmingAction] = useState<string | null>(null);
@@ -160,6 +169,10 @@ export default function MovementsTab({
       document.removeEventListener('keydown', closeOnEscape);
     };
   }, [selectedMove]);
+
+  useEffect(() => {
+    setHistoryExpanded(false);
+  }, [selectedMove?.id]);
 
   useEffect(() => {
     if (!isAdding && !editingMove && !selectedMove) return;
@@ -1113,33 +1126,50 @@ export default function MovementsTab({
                 )}
 
                 <div>
-                  <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-3">Histórico da O.S.</p>
-                  <ol className="space-y-3">
-                    {(selectedMove.history || []).map((h, i) => (
-                      <li key={i} className="flex gap-3">
-                        <div className="flex flex-col items-center">
-                          <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 mt-1" />
-                          {i < (selectedMove.history?.length || 0) - 1 && <span className="w-px flex-1 bg-slate-200 mt-1" />}
-                        </div>
-                        <div className="pb-1">
-                          <p className="text-sm font-semibold text-slate-800">{h.action}</p>
-                          {h.detail && <p className="text-xs text-slate-500 mt-0.5">{h.detail}</p>}
-                          <p className="text-[11px] text-slate-400 mt-0.5">
-                            {formatDateTime(h.timestamp)} · {h.actorName}
-                          </p>
-                        </div>
-                      </li>
-                    ))}
-                    {(selectedMove.history || []).length === 0 && (
-                      <p className="text-xs text-slate-400">Sem histórico registrado.</p>
-                    )}
-                  </ol>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryExpanded(open => !open)}
+                    aria-expanded={historyExpanded}
+                    className="group flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg py-1 text-left transition-colors hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <span className="text-[10px] uppercase font-medium text-slate-400 tracking-wider group-hover:text-slate-500">Histórico da O.S.</span>
+                      {(selectedMove.history || []).length > 0 && (
+                        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-400">
+                          {selectedMove.history?.length}
+                        </span>
+                      )}
+                    </span>
+                    <ChevronDown className={`h-3 w-3 shrink-0 text-slate-300 transition-transform duration-200 group-hover:text-slate-400 ${historyExpanded ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {historyExpanded && (
+                    <ol className="mt-2 space-y-2">
+                      {(selectedMove.history || []).map((h, i) => (
+                        <li key={i} className="flex gap-2.5">
+                          <div className="flex flex-col items-center">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 mt-1.5" />
+                            {i < (selectedMove.history?.length || 0) - 1 && <span className="w-px flex-1 bg-slate-100 mt-1" />}
+                          </div>
+                          <div className="pb-0.5 min-w-0">
+                            <p className="text-xs font-medium text-slate-600">{h.action}</p>
+                            {h.detail && <p className="text-[11px] leading-snug text-slate-400 mt-0.5">{h.detail}</p>}
+                            <p className="text-[10px] text-slate-300 mt-0.5">
+                              {formatDateTime(h.timestamp)} · {h.actorName}
+                            </p>
+                          </div>
+                        </li>
+                      ))}
+                      {(selectedMove.history || []).length === 0 && (
+                        <p className="text-[10px] text-slate-300">Sem histórico registrado.</p>
+                      )}
+                    </ol>
+                  )}
                 </div>
               </div>
 
-              {availableTransitions(selectedMove).some(t => t.status !== 'Cancelada') && (
-                <div className="ios-safe-action-bar grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 bg-white px-4 pt-3 sm:flex sm:justify-end">
-                  {availableTransitions(selectedMove).filter(t => t.status !== 'Cancelada').map(t => (
+              <div className="ios-safe-action-bar grid shrink-0 grid-cols-2 gap-2 border-t border-slate-100 bg-white px-4 pt-3 sm:flex sm:justify-end">
+                {availableTransitions(selectedMove).filter(t => t.status !== 'Cancelada').map(t => (
                     <button
                       key={t.status}
                       disabled={confirmingAction === selectedMove.id + t.status}
@@ -1163,8 +1193,85 @@ export default function MovementsTab({
                       {t.label}
                     </button>
                   ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDetailMenuOpen(false);
+                    setDownloadOption('os');
+                    setShowDownloadModal(true);
+                  }}
+                  aria-label="Baixar ordem de serviço em PDF"
+                  title="Baixar O.S."
+                  className="col-span-2 flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-emerald-600 bg-white px-3 py-2 text-xs font-bold text-emerald-700 transition-colors hover:bg-emerald-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 sm:col-span-1"
+                >
+                  <Download className="h-4 w-4" />
+                  Baixar O.S.
+                </button>
+              </div>
+             </div>
+           </div>
+         )}
+
+        {/* OS PDF download options modal */}
+        {selectedMove && showDownloadModal && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-950/55 backdrop-blur-[1px]" onClick={() => setShowDownloadModal(false)} />
+            <div className="relative w-full max-w-xs rounded-2xl bg-white p-5 shadow-2xl">
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Baixar O.S.</h4>
+                  <p className="mt-0.5 text-xs text-slate-500">Escolha o formato do PDF</p>
                 </div>
-              )}
+                <button
+                  type="button"
+                  onClick={() => setShowDownloadModal(false)}
+                  aria-label="Fechar seleção de impressão"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div role="radiogroup" aria-label="Formato de impressão da O.S." className="space-y-2">
+                {[
+                  { value: 'os' as const, label: 'O.S.', hint: 'Documento enxuto, sem histórico' },
+                  { value: 'os-historico' as const, label: 'O.S. com Histórico', hint: 'Inclui todos os eventos da O.S.' }
+                ].map(option => {
+                  const selected = downloadOption === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => setDownloadOption(option.value)}
+                      className={`flex w-full cursor-pointer items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
+                        selected ? 'border-emerald-500 bg-emerald-50/60' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border-2 transition-colors ${selected ? 'border-emerald-600' : 'border-slate-300'}`}>
+                        {selected && <span className="h-2 w-2 rounded-full bg-emerald-600" />}
+                      </span>
+                      <span className="min-w-0">
+                        <span className={`block text-xs font-bold ${selected ? 'text-emerald-800' : 'text-slate-700'}`}>{option.label}</span>
+                        <span className="block text-[11px] text-slate-400">{option.hint}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDownloadModal(false);
+                  generateOsPdf(selectedMove, companyProfile, downloadOption === 'os-historico');
+                }}
+                className="mt-4 flex min-h-10 w-full cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+              >
+                <Download className="h-4 w-4" />
+                Gerar PDF
+              </button>
             </div>
           </div>
         )}

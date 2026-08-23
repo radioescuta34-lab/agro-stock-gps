@@ -14,6 +14,7 @@ import {
   Inbox,
   Search,
   ChevronDown,
+  ChevronRight,
   Clock3,
   Send,
   CircleCheckBig,
@@ -337,14 +338,319 @@ function SupportAttachmentPreview({ ticketId, attachment, user }: {
   );
 }
 
+function TicketDetailModal({
+  user,
+  ticket,
+  scrollToLatest,
+  onClose,
+  replyDraft,
+  onReplyDraftChange,
+  replyAttachments,
+  onAddReplyFiles,
+  onRemoveReplyAttachment,
+  onSubmitReply,
+  replying,
+  replyError
+}: {
+  user: UserProfile;
+  ticket: TrackedTicket;
+  scrollToLatest: boolean;
+  onClose: () => void;
+  replyDraft: string;
+  onReplyDraftChange: (value: string) => void;
+  replyAttachments: SupportAttachment[];
+  onAddReplyFiles: (files: File[]) => void;
+  onRemoveReplyAttachment: (attachmentId: string) => void;
+  onSubmitReply: () => void;
+  replying: boolean;
+  replyError?: string;
+}) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const status = STATUS_META[ticket.status];
+  const prio = PRIORIDADES.find((p) => p.value === ticket.prioridade);
+  const currentStep = status?.step || 1;
+  const isClosed = ticket.status === 'Concluído';
+  const messageCount = (ticket.comments?.length || 0) + (ticket.descricao ? 1 : 0);
+  const lastComment = ticket.comments?.[ticket.comments.length - 1];
+  const latestActivityAt = lastComment?.createdAt || ticket.updatedAt || ticket.createdAt;
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    closeButtonRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!scrollToLatest) return;
+    const timer = window.setTimeout(() => {
+      document.getElementById(`ticket-last-update-${ticket.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [scrollToLatest, ticket.id]);
+
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/60 backdrop-blur-sm animate-fade-in sm:items-center sm:p-6"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`ticket-dialog-title-${ticket.id}`}
+        className="flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-slate-200 bg-white shadow-2xl animate-slide-up sm:max-h-[85vh] sm:max-w-2xl sm:rounded-3xl"
+      >
+        <div className="flex shrink-0 items-start gap-3 border-b border-slate-100 px-4 py-4 sm:px-6">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+              <h2 id={`ticket-dialog-title-${ticket.id}`} className="min-w-0 text-sm font-extrabold text-slate-900 sm:text-base">{ticket.titulo}</h2>
+              <span className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${statusBadgeClasses(ticket.status)}`}>
+                {status?.label || ticket.status}
+              </span>
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+              <span className="font-mono font-semibold text-slate-600 notranslate">{ticket.id}</span>
+              <span aria-hidden="true" className="text-slate-300">•</span>
+              <span>{formatTicketDate(ticket.createdAt)}</span>
+              {prio && (
+                <>
+                  <span aria-hidden="true" className="text-slate-300">•</span>
+                  <span className="inline-flex items-center gap-1.5"><span className={`h-1.5 w-1.5 rounded-full ${prio.dot}`} />Prioridade {prio.label.toLocaleLowerCase('pt-BR')}</span>
+                </>
+              )}
+            </div>
+          </div>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={onClose}
+            className="-mr-1 -mt-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            aria-label="Fechar detalhes do chamado"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/70 px-4 py-4 sm:px-6 ios-safe-action-bar">
+          <div className="relative px-1 pb-1" aria-label={`Andamento: ${status?.label || ticket.status}`}>
+            <div className="absolute left-[12.5%] right-[12.5%] top-3.5 h-0.5 overflow-hidden rounded-full bg-slate-200" aria-hidden="true">
+              <span
+                className="block h-full rounded-full bg-emerald-500 transition-[width] duration-300"
+                style={{ width: `${((currentStep - 1) / Math.max(TICKET_STEPS.length - 1, 1)) * 100}%` }}
+              />
+            </div>
+            <div className="relative grid grid-cols-4 gap-1">
+              {TICKET_STEPS.map((step, index) => {
+                const current = index === currentStep - 1;
+                const completed = index < currentStep - 1 || (ticket.status === 'Concluído' && current);
+                return (
+                  <div
+                    key={step}
+                    className="flex min-w-0 flex-col items-center text-center"
+                    aria-current={current ? 'step' : undefined}
+                  >
+                    <div className={`relative z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 transition-colors ${completed ? 'border-emerald-500 bg-emerald-500 text-white' : current ? 'border-emerald-500 bg-white text-emerald-600 ring-4 ring-emerald-500/10' : 'border-slate-200 bg-slate-50 text-slate-400'}`}>
+                      {completed ? (
+                        <Check className="h-3.5 w-3.5 stroke-[3]" />
+                      ) : current ? (
+                        <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                      ) : (
+                        <span className="text-[9px] font-extrabold">{index + 1}</span>
+                      )}
+                    </div>
+                    <p className={`mt-2 text-[9px] font-bold leading-tight sm:text-[10px] ${current ? 'text-emerald-700' : completed ? 'text-slate-600' : 'text-slate-400'}`}>{step}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <section className="mt-5 border-t border-slate-200 pt-4" aria-label="Conversa do chamado">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <MessageSquareText className="h-4 w-4 text-emerald-600" />
+                <h3 className="text-xs font-extrabold text-slate-800">Conversa</h3>
+              </div>
+              <div className="text-right text-[11px] text-slate-400">
+                <span>{messageCount} {messageCount === 1 ? 'mensagem' : 'mensagens'}</span>
+                {latestActivityAt && <span className="ml-1.5">· Atualizado {formatRelativeDate(latestActivityAt)}</span>}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {ticket.descricao && (
+                <div className="w-full rounded-2xl border border-emerald-100 border-l-4 border-l-emerald-500 bg-white px-4 py-4 shadow-sm">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                    <span className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-emerald-700">Solicitação original</span>
+                    <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-500">
+                      <span className="font-bold text-slate-700">{ticket.autorNome || 'Você'}</span>
+                      <span>via Agro Stock</span>
+                      <span aria-hidden="true" className="text-slate-300">•</span>
+                      <span>{formatTicketDate(ticket.createdAt)}</span>
+                    </div>
+                  </div>
+                  <p className="mt-3 whitespace-pre-line break-words text-sm leading-relaxed text-slate-700">{ticket.descricao}</p>
+                </div>
+              )}
+
+              {(ticket.comments || []).map((comment, commentIndex) => {
+                const fromApp = comment.source === 'app';
+                const isLastComment = commentIndex === (ticket.comments?.length || 0) - 1;
+                const isGenericCustomerName = normalizeSupportDisplayName(comment.authorName) === 'cliente';
+                const displayAuthorName = fromApp && isGenericCustomerName
+                  ? (ticket.autorNome || user.name || 'Cliente')
+                  : (comment.authorName || (fromApp ? ticket.autorNome || user.name || 'Cliente' : 'Equipe de suporte'));
+                return (
+                  <div
+                    key={comment.id}
+                    id={isLastComment ? `ticket-last-update-${ticket.id}` : undefined}
+                    className={`${fromApp ? 'ml-auto rounded-tr-md border-emerald-100 bg-emerald-50/80 sm:max-w-[78%]' : 'mr-auto rounded-tl-md border-slate-200 bg-white sm:max-w-[78%]'} max-w-[92%] rounded-2xl border px-4 py-3.5 shadow-sm`}
+                  >
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
+                      <span className={`font-extrabold ${fromApp ? 'text-emerald-800' : 'text-slate-700'}`}>{displayAuthorName}</span>
+                      <span className={fromApp ? 'text-emerald-600' : 'text-slate-500'}>{fromApp ? 'via Agro Stock' : '· Suporte'}</span>
+                      <span aria-hidden="true" className="text-slate-300">•</span>
+                      <span className={fromApp ? 'text-emerald-600' : 'text-slate-400'}>{formatTicketDate(comment.createdAt)}</span>
+                    </div>
+                    <p className="mt-1.5 whitespace-pre-line break-words text-sm leading-relaxed text-slate-700">{comment.text}</p>
+                    {comment.attachments && comment.attachments.length > 0 && (
+                      <div className="mt-2 grid max-w-sm grid-cols-2 gap-2">
+                        {comment.attachments.map((attachment) => (
+                          <SupportAttachmentPreview key={`${comment.id}-${attachment.id || attachment.url}`} ticketId={ticket.id} attachment={attachment} user={user} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {!ticket.descricao && (!ticket.comments || ticket.comments.length === 0) && (
+                <p className="rounded-xl border border-dashed border-slate-200 px-3 py-5 text-center text-xs text-slate-400">Nenhuma mensagem registrada.</p>
+              )}
+            </div>
+
+            {typeof ticket.anexosEnviados === 'number' && ticket.anexosEnviados > 0 && (
+              <div className="mt-4 flex justify-end border-t border-slate-200 pt-3 text-[11px] text-slate-500">
+                <span className="inline-flex items-center gap-1"><Paperclip className="h-3 w-3" />{ticket.anexosEnviados} {ticket.anexosEnviados === 1 ? 'anexo' : 'anexos'}</span>
+              </div>
+            )}
+          </section>
+
+          {isClosed ? (
+            <div id={`ticket-last-update-${ticket.id}`} className="mt-4 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3.5" role="status">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-emerald-600 shadow-sm ring-1 ring-emerald-100">
+                <CircleCheckBig className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 pt-0.5">
+                <p className="text-xs font-extrabold text-emerald-900">Conversa encerrada</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-emerald-700">Este chamado foi concluído e permanece disponível somente para consulta. Para uma nova solicitação, abra outro chamado.</p>
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        {!isClosed ? (
+          <div className="shrink-0 border-t border-slate-100 bg-white px-4 py-3 sm:px-6 ios-safe-action-bar">
+            <div className="rounded-xl border border-slate-200 bg-white p-2 shadow-sm focus-within:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-500/10">
+              {replyAttachments.length > 0 && (
+                <div className="mb-2 flex gap-2 overflow-x-auto px-1 pb-1">
+                  {replyAttachments.map((attachment) => (
+                    <div key={attachment.id} className="relative h-20 w-24 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                      {attachment.previewUrl && <img src={attachment.previewUrl} alt={attachment.filename} className="h-full w-full object-cover" />}
+                      <button
+                        type="button"
+                        onClick={() => onRemoveReplyAttachment(attachment.id)}
+                        className="absolute right-1 top-1 rounded-full bg-slate-900/75 p-1 text-white"
+                        aria-label={`Remover ${attachment.filename}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <label htmlFor={`reply-${ticket.id}`} className="sr-only">Responder ao chamado {ticket.id}</label>
+              <textarea
+                id={`reply-${ticket.id}`}
+                value={replyDraft}
+                onChange={(event) => onReplyDraftChange(event.target.value.slice(0, 2000))}
+                onPaste={(event) => {
+                  const clipboardItems = Array.from(event.clipboardData.items) as DataTransferItem[];
+                  const imageFiles = clipboardItems
+                    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+                    .map((item) => item.getAsFile())
+                    .filter((file): file is File => Boolean(file));
+                  if (imageFiles.length === 0) return;
+                  event.preventDefault();
+                  onAddReplyFiles(imageFiles);
+                }}
+                rows={2}
+                placeholder="Escreva uma resposta para a equipe de suporte..."
+                className="max-h-40 min-h-16 w-full resize-y border-0 bg-transparent px-2 py-1.5 text-sm leading-relaxed text-slate-700 outline-none placeholder:text-slate-400"
+              />
+              <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-1 pt-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    id={`reply-files-${ticket.id}`}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    multiple
+                    className="hidden"
+                    onChange={(event) => {
+                      onAddReplyFiles(Array.from(event.target.files || []));
+                      event.target.value = '';
+                    }}
+                  />
+                  <label
+                    htmlFor={`reply-files-${ticket.id}`}
+                    className={`inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition ${replying || replyAttachments.length >= MAX_REPLY_FILES ? 'pointer-events-none text-slate-300' : 'text-slate-500 hover:bg-slate-100 hover:text-emerald-700'}`}
+                    title="Anexar captura de tela"
+                  >
+                    <Paperclip className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Anexar imagem</span>
+                  </label>
+                  <span className="hidden text-[9px] text-slate-400 lg:inline">ou cole com Ctrl+V</span>
+                  <span className="text-[9px] text-slate-400">{replyDraft.length}/2000</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={onSubmitReply}
+                  disabled={replying || (!replyDraft.trim() && replyAttachments.length === 0)}
+                  className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-[11px] font-extrabold text-white transition hover:bg-emerald-700 disabled:pointer-events-none disabled:bg-slate-300"
+                >
+                  {replying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                  Enviar resposta
+                </button>
+              </div>
+            </div>
+            {replyError && <p className="mt-2 text-[11px] font-medium text-rose-600" role="alert">{replyError}</p>}
+          </div>
+        ) : null}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function MeusChamados({ user, focusTicketId, onFocusConsumed }: { user: UserProfile; focusTicketId?: string | null; onFocusConsumed?: () => void }) {
   const [tickets, setTickets] = useState<TrackedTicket[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'todos' | 'abertos' | 'concluidos'>('abertos');
-  const [expandedTicket, setExpandedTicket] = useState<string | null>(null);
-  const [highlightTicketId, setHighlightTicketId] = useState<string | null>(null);
+  const [selectedTicket, setSelectedTicket] = useState<{ id: string; scrollToLatest: boolean } | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [replyAttachments, setReplyAttachments] = useState<Record<string, SupportAttachment[]>>({});
   const [replyingTicket, setReplyingTicket] = useState<string | null>(null);
@@ -389,26 +695,16 @@ function MeusChamados({ user, focusTicketId, onFocusConsumed }: { user: UserProf
   useEffect(() => {
     if (!focusTicketId || loading || !tickets) return;
     const target = tickets.find((ticket) => ticket.id === focusTicketId);
-    if (!target) {
-      onFocusConsumed?.();
-      return;
-    }
+    onFocusConsumed?.();
+    if (!target) return;
     setStatusFilter(target.status === 'Concluído' ? 'concluidos' : 'abertos');
     setQuery('');
-    setExpandedTicket(focusTicketId);
-    setHighlightTicketId(focusTicketId);
-    onFocusConsumed?.();
-    const scrollTimer = window.setTimeout(() => {
-      const scrollTarget = document.getElementById(`ticket-last-update-${focusTicketId}`)
-        || document.getElementById(`ticket-card-${focusTicketId}`);
-      scrollTarget?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 180);
-    const highlightTimer = window.setTimeout(() => setHighlightTicketId(null), 4000);
-    return () => {
-      window.clearTimeout(scrollTimer);
-      window.clearTimeout(highlightTimer);
-    };
+    setSelectedTicket({ id: focusTicketId, scrollToLatest: true });
   }, [focusTicketId, loading, tickets, onFocusConsumed]);
+
+  const activeTicket = selectedTicket
+    ? (tickets || []).find((ticket) => ticket.id === selectedTicket.id) || null
+    : null;
 
   const visibleTickets = (tickets || []).filter((ticket) => {
     const normalizedQuery = query.trim().toLocaleLowerCase('pt-BR');
@@ -525,34 +821,27 @@ function MeusChamados({ user, focusTicketId, onFocusConsumed }: { user: UserProf
 
   const renderTicket = (t: TrackedTicket) => {
     const prio = PRIORIDADES.find((p) => p.value === t.prioridade);
-    const status = STATUS_META[t.status];
-    const currentStep = status?.step || 1;
-    const isExpanded = expandedTicket === t.id;
-    const messageCount = (t.comments?.length || 0) + (t.descricao ? 1 : 0);
     const lastComment = t.comments?.[t.comments.length - 1];
     const latestText = lastComment?.text || t.descricao || '';
     const latestActivityAt = lastComment?.createdAt || t.updatedAt || t.createdAt;
-    const isClosed = t.status === 'Concluído';
     const waitingForCustomer = t.status !== 'Concluído' && lastComment?.source === 'trello';
     const responsibilityLabel = waitingForCustomer ? 'Aguardando você' : 'Aguardando suporte';
     return (
       <article
         key={t.id}
-        id={`ticket-card-${t.id}`}
-        className={`overflow-hidden rounded-2xl border bg-white shadow-sm transition-[border-color,box-shadow] hover:shadow-md ${highlightTicketId === t.id ? 'border-emerald-300 ring-2 ring-emerald-400 shadow-md' : 'border-slate-200 hover:border-slate-300 hover:shadow-md'}`}
+        className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-[border-color,box-shadow] hover:border-slate-300 hover:shadow-md"
       >
         <button
           type="button"
-          onClick={() => setExpandedTicket(isExpanded ? null : t.id)}
+          onClick={() => setSelectedTicket({ id: t.id, scrollToLatest: false })}
           className="flex w-full items-start gap-3 p-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-500 sm:items-center sm:px-5"
-          aria-expanded={isExpanded}
-          aria-controls={`ticket-${t.id}`}
+          aria-haspopup="dialog"
         >
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
               <span className="min-w-0 truncate text-sm font-extrabold text-slate-900 sm:text-[15px]">{t.titulo}</span>
               <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${statusBadgeClasses(t.status)}`}>
-                {status?.label || t.status}
+                {STATUS_META[t.status]?.label || t.status}
               </span>
               {t.status !== 'Concluído' && (
                 <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold ${waitingForCustomer ? 'bg-amber-50 text-amber-700' : 'bg-sky-50 text-sky-700'}`}>
@@ -572,7 +861,7 @@ function MeusChamados({ user, focusTicketId, onFocusConsumed }: { user: UserProf
                 </>
               )}
             </div>
-            {!isExpanded && latestText && (
+            {latestText && (
               <div className="mt-2 flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                 <p className="truncate text-xs leading-relaxed text-slate-600">{clampPreview(latestText)}</p>
                 <div className="flex shrink-0 items-center gap-2 text-[11px] text-slate-400">
@@ -583,202 +872,8 @@ function MeusChamados({ user, focusTicketId, onFocusConsumed }: { user: UserProf
               </div>
             )}
           </div>
-          <ChevronDown className={`mt-1 h-4 w-4 shrink-0 text-slate-400 transition-transform sm:mt-0 ${isExpanded ? 'rotate-180' : ''}`} />
+          <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-slate-400 transition-transform hover:translate-x-0.5 sm:mt-0" />
         </button>
-
-        {isExpanded && (
-          <div id={`ticket-${t.id}`} className="border-t border-slate-100 bg-slate-50/70 px-4 py-4 sm:px-5">
-            <div className="relative px-1 pb-1" aria-label={`Andamento: ${status?.label || t.status}`}>
-              <div className="absolute left-[12.5%] right-[12.5%] top-3.5 h-0.5 overflow-hidden rounded-full bg-slate-200" aria-hidden="true">
-                <span
-                  className="block h-full rounded-full bg-emerald-500 transition-[width] duration-300"
-                  style={{ width: `${((currentStep - 1) / Math.max(TICKET_STEPS.length - 1, 1)) * 100}%` }}
-                />
-              </div>
-              <div className="relative grid grid-cols-4 gap-1">
-              {TICKET_STEPS.map((step, index) => {
-                const current = index === currentStep - 1;
-                const completed = index < currentStep - 1 || (t.status === 'Concluído' && current);
-                return (
-                  <div
-                    key={step}
-                    className="flex min-w-0 flex-col items-center text-center"
-                    aria-current={current ? 'step' : undefined}
-                  >
-                    <div className={`relative z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 transition-colors ${completed ? 'border-emerald-500 bg-emerald-500 text-white' : current ? 'border-emerald-500 bg-white text-emerald-600 ring-4 ring-emerald-500/10' : 'border-slate-200 bg-slate-50 text-slate-400'}`}>
-                      {completed ? (
-                        <Check className="h-3.5 w-3.5 stroke-[3]" />
-                      ) : current ? (
-                        <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                      ) : (
-                        <span className="text-[9px] font-extrabold">{index + 1}</span>
-                      )}
-                    </div>
-                    <p className={`mt-2 text-[9px] font-bold leading-tight sm:text-[10px] ${current ? 'text-emerald-700' : completed ? 'text-slate-600' : 'text-slate-400'}`}>{step}</p>
-                  </div>
-                );
-              })}
-              </div>
-            </div>
-
-            <section className="mt-5 border-t border-slate-200 pt-4" aria-label="Conversa do chamado">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <MessageSquareText className="h-4 w-4 text-emerald-600" />
-                  <h3 className="text-xs font-extrabold text-slate-800">Conversa</h3>
-                </div>
-                <div className="text-right text-[11px] text-slate-400">
-                  <span>{messageCount} {messageCount === 1 ? 'mensagem' : 'mensagens'}</span>
-                  {latestActivityAt && <span className="ml-1.5">· Atualizado {formatRelativeDate(latestActivityAt)}</span>}
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                {t.descricao && (
-                  <div className="w-full rounded-2xl border border-emerald-100 border-l-4 border-l-emerald-500 bg-white px-4 py-4 shadow-sm">
-                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-                      <span className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-emerald-700">Solicitação original</span>
-                      <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-500">
-                        <span className="font-bold text-slate-700">{t.autorNome || 'Você'}</span>
-                        <span>via Agro Stock</span>
-                        <span aria-hidden="true" className="text-slate-300">•</span>
-                        <span>{formatTicketDate(t.createdAt)}</span>
-                      </div>
-                    </div>
-                    <p className="mt-3 whitespace-pre-line break-words text-sm leading-relaxed text-slate-700">{t.descricao}</p>
-                  </div>
-                )}
-
-                {(t.comments || []).map((comment, commentIndex) => {
-                  const fromApp = comment.source === 'app';
-                  const isLastComment = commentIndex === (t.comments?.length || 0) - 1;
-                  const isGenericCustomerName = normalizeSupportDisplayName(comment.authorName) === 'cliente';
-                  const displayAuthorName = fromApp && isGenericCustomerName
-                    ? (t.autorNome || user.name || 'Cliente')
-                    : (comment.authorName || (fromApp ? t.autorNome || user.name || 'Cliente' : 'Equipe de suporte'));
-                  return (
-                    <div
-                      key={comment.id}
-                      id={isLastComment ? `ticket-last-update-${t.id}` : undefined}
-                      className={`${fromApp ? 'ml-auto rounded-tr-md border-emerald-100 bg-emerald-50/80 sm:max-w-[78%]' : 'mr-auto rounded-tl-md border-slate-200 bg-white sm:max-w-[78%]'} max-w-[92%] rounded-2xl border px-4 py-3.5 shadow-sm`}
-                    >
-                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px]">
-                        <span className={`font-extrabold ${fromApp ? 'text-emerald-800' : 'text-slate-700'}`}>{displayAuthorName}</span>
-                        <span className={fromApp ? 'text-emerald-600' : 'text-slate-500'}>{fromApp ? 'via Agro Stock' : '· Suporte'}</span>
-                        <span aria-hidden="true" className="text-slate-300">•</span>
-                        <span className={fromApp ? 'text-emerald-600' : 'text-slate-400'}>{formatTicketDate(comment.createdAt)}</span>
-                      </div>
-                      <p className="mt-1.5 whitespace-pre-line break-words text-sm leading-relaxed text-slate-700">{comment.text}</p>
-                      {comment.attachments && comment.attachments.length > 0 && (
-                        <div className="mt-2 grid max-w-sm grid-cols-2 gap-2">
-                          {comment.attachments.map((attachment) => (
-                            <SupportAttachmentPreview key={`${comment.id}-${attachment.id || attachment.url}`} ticketId={t.id} attachment={attachment} user={user} />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {!t.descricao && (!t.comments || t.comments.length === 0) && (
-                  <p className="rounded-xl border border-dashed border-slate-200 px-3 py-5 text-center text-xs text-slate-400">Nenhuma mensagem registrada.</p>
-                )}
-              </div>
-
-              {isClosed ? (
-                <div id={`ticket-last-update-${t.id}`} className="mt-4 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3.5" role="status">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-emerald-600 shadow-sm ring-1 ring-emerald-100">
-                    <CircleCheckBig className="h-4 w-4" />
-                  </span>
-                  <div className="min-w-0 pt-0.5">
-                    <p className="text-xs font-extrabold text-emerald-900">Conversa encerrada</p>
-                    <p className="mt-0.5 text-[11px] leading-relaxed text-emerald-700">Este chamado foi concluído e permanece disponível somente para consulta. Para uma nova solicitação, abra outro chamado.</p>
-                  </div>
-                </div>
-              ) : (
-              <div className="mt-4 rounded-xl border border-slate-200 bg-white p-2 shadow-sm focus-within:border-emerald-300 focus-within:ring-2 focus-within:ring-emerald-500/10">
-                {(replyAttachments[t.id] || []).length > 0 && (
-                  <div className="mb-2 flex gap-2 overflow-x-auto px-1 pb-1">
-                    {(replyAttachments[t.id] || []).map((attachment) => (
-                      <div key={attachment.id} className="relative h-20 w-24 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-                        {attachment.previewUrl && <img src={attachment.previewUrl} alt={attachment.filename} className="h-full w-full object-cover" />}
-                        <button
-                          type="button"
-                          onClick={() => setReplyAttachments((current) => ({ ...current, [t.id]: (current[t.id] || []).filter((item) => item.id !== attachment.id) }))}
-                          className="absolute right-1 top-1 rounded-full bg-slate-900/75 p-1 text-white"
-                          aria-label={`Remover ${attachment.filename}`}
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <label htmlFor={`reply-${t.id}`} className="sr-only">Responder ao chamado {t.id}</label>
-                <textarea
-                  id={`reply-${t.id}`}
-                  value={replyDrafts[t.id] || ''}
-                  onChange={(event) => setReplyDrafts((current) => ({ ...current, [t.id]: event.target.value.slice(0, 2000) }))}
-                  onPaste={(event) => {
-                    const clipboardItems = Array.from(event.clipboardData.items) as DataTransferItem[];
-                    const imageFiles = clipboardItems
-                      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
-                      .map((item) => item.getAsFile())
-                      .filter((file): file is File => Boolean(file));
-                    if (imageFiles.length === 0) return;
-                    event.preventDefault();
-                    void handleReplyFiles(t.id, imageFiles);
-                  }}
-                  rows={2}
-                  placeholder="Escreva uma resposta para a equipe de suporte..."
-                  className="max-h-40 min-h-16 w-full resize-y border-0 bg-transparent px-2 py-1.5 text-sm leading-relaxed text-slate-700 outline-none placeholder:text-slate-400"
-                />
-                <div className="flex items-center justify-between gap-3 border-t border-slate-100 px-1 pt-2">
-                  <div className="flex items-center gap-2">
-                    <input
-                      id={`reply-files-${t.id}`}
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp,image/gif"
-                      multiple
-                      className="hidden"
-                      onChange={(event) => {
-                        void handleReplyFiles(t.id, Array.from(event.target.files || []));
-                        event.target.value = '';
-                      }}
-                    />
-                    <label
-                      htmlFor={`reply-files-${t.id}`}
-                      className={`inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition ${replyingTicket === t.id || (replyAttachments[t.id] || []).length >= MAX_REPLY_FILES ? 'pointer-events-none text-slate-300' : 'text-slate-500 hover:bg-slate-100 hover:text-emerald-700'}`}
-                      title="Anexar captura de tela"
-                    >
-                      <Paperclip className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Anexar imagem</span>
-                    </label>
-                    <span className="hidden text-[9px] text-slate-400 lg:inline">ou cole com Ctrl+V</span>
-                    <span className="text-[9px] text-slate-400">{(replyDrafts[t.id] || '').length}/2000</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => submitReply(t.id)}
-                    disabled={replyingTicket === t.id || (!(replyDrafts[t.id] || '').trim() && (replyAttachments[t.id] || []).length === 0)}
-                    className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-[11px] font-extrabold text-white transition hover:bg-emerald-700 disabled:pointer-events-none disabled:bg-slate-300"
-                  >
-                    {replyingTicket === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                    Enviar resposta
-                  </button>
-                </div>
-              </div>
-              )}
-              {!isClosed && replyErrors[t.id] && <p className="mt-2 text-[11px] font-medium text-rose-600" role="alert">{replyErrors[t.id]}</p>}
-            </section>
-
-            {typeof t.anexosEnviados === 'number' && t.anexosEnviados > 0 && (
-              <div className="mt-4 flex justify-end border-t border-slate-200 pt-3 text-[11px] text-slate-500">
-                <span className="inline-flex items-center gap-1"><Paperclip className="h-3 w-3" />{t.anexosEnviados} {t.anexosEnviados === 1 ? 'anexo' : 'anexos'}</span>
-              </div>
-            )}
-          </div>
-        )}
       </article>
     );
   };
@@ -870,6 +965,23 @@ function MeusChamados({ user, focusTicketId, onFocusConsumed }: { user: UserProf
             </div>
           )}
         </div>
+      )}
+
+      {activeTicket && selectedTicket && (
+        <TicketDetailModal
+          user={user}
+          ticket={activeTicket}
+          scrollToLatest={selectedTicket.scrollToLatest}
+          onClose={() => setSelectedTicket(null)}
+          replyDraft={replyDrafts[activeTicket.id] || ''}
+          onReplyDraftChange={(value) => setReplyDrafts((current) => ({ ...current, [activeTicket.id]: value }))}
+          replyAttachments={replyAttachments[activeTicket.id] || []}
+          onAddReplyFiles={(files) => void handleReplyFiles(activeTicket.id, files)}
+          onRemoveReplyAttachment={(attachmentId) => setReplyAttachments((current) => ({ ...current, [activeTicket.id]: (current[activeTicket.id] || []).filter((item) => item.id !== attachmentId) }))}
+          onSubmitReply={() => void submitReply(activeTicket.id)}
+          replying={replyingTicket === activeTicket.id}
+          replyError={replyErrors[activeTicket.id]}
+        />
       )}
     </div>
   );
