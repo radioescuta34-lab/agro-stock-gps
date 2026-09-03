@@ -1,6 +1,12 @@
+import { createEquipmentAvailabilityResolver } from '../utils/equipmentAvailability';
+import type { MovementLog, ComponentMaintenance, Machine } from '../types';
+import { StorageSelect } from './StorageControls';
+import type { Location } from '../types';
 import React, { useEffect, useState } from 'react';
 import { AutopilotComponent, ThirdParty, ComponentLoan, LoanedItem, UserRole, CompanyProfile } from '../types';
 import { useNotifications } from './NotificationProvider';
+import HelpGuideModal from './HelpGuideModal';
+import type { HelpGuideStep } from './HelpGuideModal';
 import { 
   Plus, 
   Search, 
@@ -26,11 +32,19 @@ import {
   Sparkles,
   ClipboardCheck,
   Building,
-  History
+  History,
+  HelpCircle
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 
+const contractItems = (loan: ComponentLoan) => Array.from(new Map([...loan.items, ...(loan.returnedItems || [])].map(item => [item.componentId, item])).values());
+
 interface LoansTabProps {
+  movements?: MovementLog[];
+  maintenances?: ComponentMaintenance[];
+  machines?: Machine[];
+  locations?: Location[];
+  defaultLocationId?: string;
   components: AutopilotComponent[];
   thirdParties: ThirdParty[];
   loans: ComponentLoan[];
@@ -40,12 +54,13 @@ interface LoansTabProps {
   focusLoanId?: string | null;
   onFocusConsumed?: () => void;
   onAddLoan: (loan: Omit<ComponentLoan, 'id' | 'contractNumber' | 'createdAt' | 'updatedAt' | 'updatedBy'>) => Promise<void>;
-  onReturnLoan: (id: string) => Promise<void>;
-  onPartialReturnLoan: (id: string, returnedItemIds: string[]) => Promise<void>;
+  onReturnLoan: (id: string, locationId: string) => Promise<void>;
+  onPartialReturnLoan: (id: string, returnedItemIds: string[], locationId: string) => Promise<void>;
   onDeleteLoan: (id: string) => Promise<void>;
 }
 
 export default function LoansTab({
+  locations = [], defaultLocationId = '', movements = [], maintenances = [], machines = [],
   components,
   thirdParties,
   loans,
@@ -73,7 +88,9 @@ export default function LoansTab({
   const [viewingContract, setViewingContract] = useState<ComponentLoan | null>(null);
 
   // Custom confirmation modals
+  const [returnLocationId, setReturnLocationId] = useState(defaultLocationId);
   const [loanToReturn, setLoanToReturn] = useState<ComponentLoan | null>(null);
+  useEffect(() => { if (loanToReturn) setReturnLocationId(defaultLocationId); }, [loanToReturn?.id]);
   const [isPartialMode, setIsPartialMode] = useState(false);
   const [selectedPartialItemIds, setSelectedPartialItemIds] = useState<Record<string, boolean>>({});
   const [loanToDelete, setLoanToDelete] = useState<ComponentLoan | null>(null);
@@ -90,6 +107,7 @@ export default function LoansTab({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shareSuccess, setShareSuccess] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Overdue calculation
   const todayStr = new Date().toISOString().split('T')[0];
@@ -227,7 +245,8 @@ export default function LoansTab({
   const statsReturnedCount = historyEntries.filter(e => e.status === 'Devolvido').length;
 
   // Helper lists
-  const availableComponents = components.filter(c => c.status === 'Disponível');
+  const operational = createEquipmentAvailabilityResolver({ movements, loans, maintenances, machines, locations });
+  const availableComponents = components.filter(c => operational(c).availableForUse);
 
   // Resets
   const resetLoanForm = () => {
@@ -314,7 +333,8 @@ export default function LoansTab({
   const handleConfirmReturnLoan = async (id: string) => {
     try {
       setLoading(true);
-      await onReturnLoan(id);
+      if (!returnLocationId) throw new Error('Selecione o local de recebimento.');
+      await onReturnLoan(id, returnLocationId);
       setLoanToReturn(null);
       setIsPartialMode(false);
       setSelectedPartialItemIds({});
@@ -334,7 +354,8 @@ export default function LoansTab({
     }
     try {
       setLoading(true);
-      await onPartialReturnLoan(id, returnedIds);
+      if (!returnLocationId) throw new Error('Selecione o local de recebimento.');
+      await onPartialReturnLoan(id, returnedIds, returnLocationId);
       setLoanToReturn(null);
       setIsPartialMode(false);
       setSelectedPartialItemIds({});
@@ -360,7 +381,7 @@ export default function LoansTab({
 
   // Share text builder (WhatsApp, Slack, email compatible)
   const handleShareContract = (loan: ComponentLoan) => {
-    const itemsText = loan.items.map((it, idx) => `${idx + 1}. [${it.componentBrand}] ${it.componentName} (S/N: ${it.componentSerial})`).join('\n');
+    const itemsText = contractItems(loan).map((it, idx) => `${idx + 1}. [${it.componentBrand}] ${it.componentName} (S/N: ${it.componentSerial})`).join('\n');
     const shareText = `*TERMO DE EMPRÉSTIMO DE EQUIPAMENTOS*\n` +
       `*Registro nº:* ${loan.contractNumber}\n` +
       `*Responsável:* ${loan.thirdPartyName}\n` +
@@ -497,7 +518,7 @@ export default function LoansTab({
     doc.setFontSize(8.5);
     doc.setTextColor(51, 65, 85);
     
-    loan.items.forEach((item, index) => {
+    contractItems(loan).forEach((item, index) => {
       doc.line(margin, y, pageWidth - margin, y);
       doc.text(String(index + 1).padStart(2, '0'), margin + 3, y + 4.5);
       doc.text(`${item.componentName} [${item.componentType}]`, margin + 12, y + 4.5);
@@ -569,11 +590,44 @@ export default function LoansTab({
   const filteredLoans = loans.filter(l => {
     const matchesSearch = l.thirdPartyName.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           l.contractNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          l.items.some(it => it.componentSerial.toLowerCase().includes(searchTerm.toLowerCase()) || it.componentName.toLowerCase().includes(searchTerm.toLowerCase()));
+                          contractItems(l).some(it => it.componentSerial.toLowerCase().includes(searchTerm.toLowerCase()) || it.componentName.toLowerCase().includes(searchTerm.toLowerCase()));
     
     const matchesStatus = statusFilter === 'all' || l.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
+
+  const steps: HelpGuideStep[] = [
+    {
+      title: 'Visão geral',
+      description: 'O Módulo de Empréstimos registra a retirada temporária de equipamentos de GPS agrícola para parceiros e responsáveis externos. Nesta tela você controla o que está em campo, acompanha prazos e formaliza termos de empréstimo.',
+      icon: Handshake,
+      accent: 'bg-emerald-600 text-white',
+    },
+    {
+      title: 'Criar um empréstimo',
+      description: 'Clique em "Novo Empréstimo" para abrir o formulário. Selecione o parceiro recebedor, defina as datas de retirada e devolução, e adicione os componentes disponíveis do estoque ao lote. Um termo formal é gerado automaticamente.',
+      icon: Plus,
+      accent: 'bg-slate-900 text-white',
+    },
+    {
+      title: 'Acompanhar prazos',
+      description: 'Os cartões de empréstimo ativos mostram a data prevista de retorno. Indicadores no topo destacam quantos vencem em breve (amarelo) e quantos estão atrasados (vermelho), facilitando a cobrança de devoluções.',
+      icon: Calendar,
+      accent: 'bg-amber-600 text-white',
+    },
+    {
+      title: 'Devolução de equipamentos',
+      description: 'Use o botão "Receber" do cartão para confirmar a devolução total. Se apenas parte dos itens voltar, escolha "Devolver parcial" e marque somente os componentes devolvidos — os demais continuam sob posse do parceiro. Escolha o local de recebimento: somente os itens devolvidos ficam disponíveis nesse armazenamento.',
+      icon: CheckCircle2,
+      accent: 'bg-blue-600 text-white',
+    },
+    {
+      title: 'Histórico e termo',
+      description: 'Na aba "Histórico" você consulta todo o registro de envios e devoluções com filtros por categoria e status. Em "Ver Termo" é possível visualizar, baixar em PDF, compartilhar ou imprimir o documento oficial do empréstimo.',
+      icon: History,
+      accent: 'bg-violet-600 text-white',
+    },
+  ];
 
   return (
     <div className="space-y-4" id="loans-module-root">
@@ -644,6 +698,15 @@ export default function LoansTab({
 
         {/* Right Controls */}
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            onClick={() => setHelpOpen(true)}
+            aria-label="Ajuda sobre empréstimos"
+            title="Como usar esta tela"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+          >
+            <HelpCircle className="h-5 w-5" />
+          </button>
+
           {subTab === 'loans' && (
             <>
               <button
@@ -1345,7 +1408,7 @@ export default function LoansTab({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 text-slate-700">
-                        {viewingContract.items.map((item, idx) => (
+                        {contractItems(viewingContract).map((item, idx) => (
                           <tr key={idx} className="hover:bg-slate-50/20">
                             <td className="py-2 px-3 border-r border-slate-200 text-slate-500 font-bold">{(idx + 1).toString().padStart(2, '0')}</td>
                             <td className="py-2 px-3 border-r border-slate-200 font-bold">{item.componentName} ({item.componentType})</td>
@@ -1418,7 +1481,7 @@ export default function LoansTab({
       {/* Custom Confirmation Modal for Devolução (Receber) */}
       {loanToReturn && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in" id="loan-return-confirm-modal">
-          <div className="bg-white rounded-3xl border border-emerald-100 shadow-2xl max-w-md w-full overflow-hidden transform transition-all scale-100">
+          <div className="bg-white rounded-3xl border border-emerald-100 shadow-2xl max-w-md w-full max-h-[90dvh] overflow-y-auto overscroll-contain transform transition-all scale-100">
             <div className={`${isPartialMode ? 'bg-amber-50/50 border-b border-slate-100' : 'bg-emerald-50/50 border-b border-slate-100'} p-6 flex items-start gap-4`}>
               <div className={`h-10 w-10 ${isPartialMode ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'} rounded-full flex items-center justify-center shrink-0`}>
                 <CheckCircle2 className="h-5 w-5" />
@@ -1440,6 +1503,7 @@ export default function LoansTab({
               <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 space-y-2">
                 <div className="text-[11px] text-slate-400 font-bold uppercase tracking-wider">Detalhes do Termo</div>
                 <div className="text-xs text-slate-700 font-bold">Registro: {loanToReturn.contractNumber}</div>
+                <StorageSelect locations={locations} value={returnLocationId} onChange={setReturnLocationId} defaultId={defaultLocationId} />
                 <div className="text-xs text-slate-700">Responsável: <strong>{loanToReturn.thirdPartyName}</strong></div>
                 <div className="text-xs text-slate-700">Empresa: <strong>{loanToReturn.thirdPartyCompany}</strong></div>
               </div>
@@ -1622,10 +1686,17 @@ export default function LoansTab({
               >
                 Sim, Excluir Registro
               </button>
-            </div>
-          </div>
-        </div>
-     )}
+             </div>
+           </div>
+         </div>
+      )}
+
+      <HelpGuideModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        title="Como usar o Módulo de Empréstimos"
+        steps={steps}
+      />
    </div>
   );
 }

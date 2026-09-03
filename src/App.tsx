@@ -49,7 +49,8 @@ import {
   MovementStatus,
   MovementHistoryEntry,
   RegisteredType,
-  RegisteredTypeCategory
+  RegisteredTypeCategory,
+  Location
 } from './types';
 import { DEFAULT_REGISTERED_TYPES, DEFAULT_TYPE_NAMES, CORE_SERVICE_ACTIONS } from './constants/typeRegistry';
 import AuthScreen from './components/AuthScreen';
@@ -76,6 +77,11 @@ import { buildFieldDataReport, sendFieldDataAlertEmail } from './utils/fieldData
 import { getOverdueLoans, sendLoansAlertEmail } from './utils/loansAlerts';
 import { getOverdueMaintenances, getCompletedMaintenances, sendMaintenanceAlertEmail } from './utils/maintenanceAlerts';
 import { getIdleComponents, sendIdleComponentsAlertEmail } from './utils/idleComponentsAlerts';
+import { planStorageCommand, storageCommandKey, type StorageCommand, type StorageState } from './utils/storageModel';
+import { executeStorageCommand } from './utils/storageRepository';
+import type { StorageSettings, LocationEvent } from './types';
+import StorageLocationsTab from './components/StorageLocationsTab';
+import { getNextOsNumber } from './utils/osCounter';
 import { isCampoAlertDue, isLoansAlertDue, getTodayStr } from './utils/automationUtils';
 import { getISOWeekId } from './utils/dateUtils';
 import { 
@@ -112,23 +118,7 @@ const DEFAULT_COMPANY_PROFILE: CompanyProfile = {
   updatedBy: 'Sistema'
 };
 
-const getComponentPlacementAfterOS = (
-  movement: Pick<MovementLog, 'action' | 'machinePrefix'>,
-  currentStatus: ComponentStatus,
-  currentMachine: string
-): { status: ComponentStatus; currentMachine: string } => {
-  switch (movement.action) {
-    case 'Instalação':
-      return { status: 'Em Uso', currentMachine: movement.machinePrefix };
-    case 'Remoção':
-      return { status: 'Disponível', currentMachine: '' };
-    case 'Manutenção':
-      return { status: 'Manutenção', currentMachine: '' };
-    case 'Calibração':
-    default:
-      return { status: currentStatus, currentMachine };
-  }
-};
+
 
 export default function App() {
   const { showToast } = useNotifications();
@@ -149,6 +139,14 @@ export default function App() {
   const [maintenances, setMaintenances] = useState<ComponentMaintenance[]>([]);
   const [providers, setProviders] = useState<MaintenanceProvider[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [storageSettings, setStorageSettings] = useState<StorageSettings>({ defaultLocationId: '', revision: 0 });
+  const [locationEvents, setLocationEvents] = useState<LocationEvent[]>([]);
+  const [storageFilter, setStorageFilter] = useState<string>();
+  const storageBusy = useRef(false);
+  const storageOperationIds = useRef(new Map<string, string>());
+  const storageStateRef = useRef<StorageState>(null);
+  storageStateRef.current = { components, machines, movements, loans, maintenances, partners, locations, settings: storageSettings };
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(DEFAULT_COMPANY_PROFILE);
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
   const [fieldDataCollections, setFieldDataCollections] = useState<FieldDataCollection[]>([]);
@@ -674,6 +672,11 @@ export default function App() {
             type: data.type || '',
             status: data.status || 'Disponível',
             currentMachine: data.currentMachine || '',
+            currentLocationId: data.currentLocationId || undefined,
+            currentMachineId: data.currentMachineId || undefined,
+            placementVersion: data.placementVersion,
+            active: data.active,
+            deletedAt: data.deletedAt,
             updatedAt: data.updatedAt,
             updatedBy: data.updatedBy || ''
           });
@@ -699,6 +702,7 @@ export default function App() {
             model: data.model || '',
             brand: data.brand || '',
             fleet: data.fleet || '',
+            active: data.active,
             updatedAt: data.updatedAt
           });
         });
@@ -735,7 +739,10 @@ export default function App() {
             completedAt: data.completedAt,
             cancelledAt: data.cancelledAt,
             updatedAt: data.updatedAt,
-            updatedBy: data.updatedBy
+            updatedBy: data.updatedBy,
+            locationId: data.locationId || undefined,
+            componentIds: data.componentIds || undefined,
+            primaryComponentId: data.primaryComponentId || undefined
           });
         });
         setMovements(list);
@@ -852,6 +859,9 @@ export default function App() {
             thirdPartyDocument: data.thirdPartyDocument || '',
             thirdPartyCompany: data.thirdPartyCompany || '',
             items: data.items || [],
+            returnedItems: data.returnedItems || [],
+            locationId: data.locationId,
+            returnLocationId: data.returnLocationId,
             loanDate: data.loanDate || '',
             estimatedReturnDate: data.estimatedReturnDate || '',
             actualReturnDate: data.actualReturnDate || '',
@@ -886,6 +896,10 @@ export default function App() {
             componentType: data.componentType || '',
             sentDate: data.sentDate || '',
             returnDate: data.returnDate || '',
+            locationId: data.locationId,
+            returnLocationId: data.returnLocationId,
+            osNumber: data.osNumber,
+            serviceType: data.serviceType,
             providerId: data.providerId || '',
             providerName: data.providerName || '',
             issueDescription: data.issueDescription || '',
@@ -959,6 +973,34 @@ export default function App() {
         setPartners(list);
       },
       (error) => handleFirestoreError(error, OperationType.LIST, 'partners')
+    );
+
+    // Locations Listener
+    const unsubLocations = onSnapshot(
+      collection(db, 'locations'),
+      (snapshot) => {
+        const list: Location[] = [];
+        snapshot.forEach((d) => {
+          const data = d.data();
+          list.push({
+            id: d.id,
+            name: data.name || '',
+            kind: data.kind || 'INTERNAL',
+            code: data.code || '',
+            partnerId: data.partnerId || undefined,
+            address: data.address || undefined,
+            contactPerson: data.contactPerson || undefined,
+            phone: data.phone || undefined,
+            email: data.email || undefined,
+            isActive: data.active !== false,
+            notes: data.notes || undefined,
+            updatedAt: data.updatedAt,
+            updatedBy: data.updatedBy || ''
+          });
+        });
+        setLocations(list);
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'locations')
     );
 
     // Type Registry Listener
@@ -1051,10 +1093,20 @@ export default function App() {
       unsubMaintenances();
       unsubProviders();
       unsubPartners();
+      unsubLocations();
       unsubTypeRegistry();
       unsubCompany();
       unsubUsers();
     };
+  }, [user, isDemoMode]);
+
+  // No automatic seed/backfill: legacy destinations require explicit review.
+  useEffect(() => {
+    if (!user || isDemoMode) return;
+    const fail = () => showToast('error', 'Publique as regras de armazenamento antes de usar os novos fluxos.');
+    const settings = onSnapshot(doc(db, 'storage_settings', 'main'), snapshot => setStorageSettings(snapshot.exists() ? snapshot.data() as StorageSettings : { defaultLocationId: '', revision: 0 }), fail);
+    const events = onSnapshot(collection(db, 'location_events'), snapshot => setLocationEvents(snapshot.docs.map(item => ({ ...item.data(), id: item.id }) as LocationEvent)), fail);
+    return () => { settings(); events(); };
   }, [user, isDemoMode]);
 
   // Background auto-elevation for endriuse@hotmail.com
@@ -1100,6 +1152,7 @@ export default function App() {
     const localUsers = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}users`);
     const localFieldData = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}field_data_collections`);
     const localTypeRegistry = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}type_registry`);
+    const localLocations = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}locations`);
  
     if (localComponents) setComponents(JSON.parse(localComponents));
     if (localMachines) setMachines(JSON.parse(localMachines));
@@ -1110,6 +1163,13 @@ export default function App() {
     if (localMaintenances) setMaintenances(JSON.parse(localMaintenances));
     if (localProviders) setProviders(JSON.parse(localProviders));
     if (localPartners) setPartners(JSON.parse(localPartners));
+    if (localLocations) setLocations(JSON.parse(localLocations));
+    const storedDestinations = localStorage.getItem(LOCAL_STORAGE_KEY_PREFIX + 'storage_state');
+    if (storedDestinations) {
+      const saved = JSON.parse(storedDestinations);
+      setComponents(saved.components); setLocations(saved.locations); setMovements(saved.movements);
+      setLoans(saved.loans); setMaintenances(saved.maintenances); setStorageSettings(saved.settings); setLocationEvents(saved.events);
+    }
     if (localFieldData) setFieldDataCollections(JSON.parse(localFieldData));
     if (localTypeRegistry) {
       // Normalize legacy category: equipment_machine → vehicle
@@ -1169,9 +1229,14 @@ export default function App() {
   }, [isDemoMode]);
 
   // Sync demo mode states to localStorage
-  const saveDemoData = (type: 'components' | 'machines' | 'movements' | 'licenses' | 'third_parties' | 'loans' | 'maintenances' | 'providers' | 'partners' | 'company_profile' | 'users' | 'field_data_collections' | 'type_registry', data: any) => {
+  const saveDemoData = (type: 'components' | 'machines' | 'movements' | 'licenses' | 'third_parties' | 'loans' | 'maintenances' | 'providers' | 'partners' | 'company_profile' | 'users' | 'field_data_collections' | 'type_registry' | 'locations', data: any) => {
     if (!isDemoMode) return;
     localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}${type}`, JSON.stringify(data));
+    const stored = localStorage.getItem(LOCAL_STORAGE_KEY_PREFIX + 'storage_state');
+    if (stored && ['components', 'locations', 'movements', 'loans', 'maintenances'].includes(type)) {
+      const state = JSON.parse(stored); state[type] = data;
+      localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + 'storage_state', JSON.stringify(state));
+    }
   };
 
   // Login handler
@@ -1390,75 +1455,80 @@ export default function App() {
   };
 
   // Add Component (Firestore or Demo)
+  const runStorage = async (command: StorageCommand) => {
+    if (!user) throw new Error('Entre novamente no sistema.');
+    if (storageBusy.current) throw new Error('Aguarde a operação em andamento.');
+    storageBusy.current = true;
+    const key = storageCommandKey(command);
+    const operationId = storageOperationIds.current.get(key) || crypto.randomUUID();
+    storageOperationIds.current.set(key, operationId);
+    // Keep entity identity stable when retrying a creation after an uncertain response.
+    if (command.type === 'component' && !command.editing) command = { ...command, component: { ...command.component, id: operationId } };
+    if (command.type === 'order' && !command.editing) command = { ...command, order: { ...command.order, id: operationId } };
+    if (command.type === 'loan') command = { ...command, loan: { ...command.loan, id: operationId } };
+    if (command.type === 'maintenance') command = { ...command, maintenance: { ...command.maintenance, id: operationId } };
+    const actor = { id: user.uid, name: user.name || user.email || 'Usuário', role: user.role };
+    try {
+      if (isDemoMode) {
+        const state = storageStateRef.current!;
+        const plan = planStorageCommand(state, command, actor, operationId, new Date().toISOString());
+        const next = { ...state, settings: plan.settings };
+        for (const change of plan.changes) {
+          (next as any)[change.collection] = (next as any)[change.collection].filter((item: any) => item.id !== change.id);
+          if (change.data) (next as any)[change.collection].push(change.data);
+        }
+        const events = [...locationEvents, ...plan.events];
+        localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + 'storage_state', JSON.stringify({ components: next.components, locations: next.locations, movements: next.movements, loans: next.loans, maintenances: next.maintenances, settings: next.settings, events }));
+        storageStateRef.current = next;
+        setComponents(next.components); setLocations(next.locations); setMovements(next.movements);
+        setLoans(next.loans); setMaintenances(next.maintenances); setStorageSettings(next.settings); setLocationEvents(events);
+      } else await executeStorageCommand(db, command, actor, operationId);
+      storageOperationIds.current.delete(key);
+    } catch (error) {
+      showToast('error', error instanceof Error ? error.message : 'Não foi possível salvar. Nenhuma movimentação foi aplicada.');
+      throw error;
+    } finally { storageBusy.current = false; }
+  };
   const handleAddComponent = async (comp: Omit<AutopilotComponent, 'id' | 'updatedAt' | 'updatedBy'>) => {
-    const timestampStr = new Date().toISOString();
-    if (isDemoMode) {
-      const newComp: AutopilotComponent = {
-        ...comp,
-        id: 'demo_comp_' + Math.random().toString(36).substr(2, 9),
-        updatedAt: timestampStr,
-        updatedBy: user?.name || 'Sistema'
-      };
-      const updatedList = [...components, newComp];
-      setComponents(updatedList);
-      saveDemoData('components', updatedList);
-    } else {
-      try {
-        const docRef = doc(collection(db, 'components'));
-        await setDoc(docRef, {
-          ...comp,
-          id: docRef.id,
-          updatedAt: serverTimestamp(),
-          updatedBy: user?.name || user?.email || 'Sistema'
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, 'components');
-      }
-    }
+    await runStorage({ type: 'component', editing: false, component: { ...comp, id: crypto.randomUUID(), updatedAt: new Date().toISOString(), updatedBy: user?.name || '' } });
+  };
+  const handleEditComponent = async (id: string, updates: Partial<AutopilotComponent>) => {
+    const previous = components.find(item => item.id === id);
+    if (!previous) throw new Error('Equipamento não encontrado.');
+    await runStorage({ type: 'component', editing: true, component: { ...previous, ...updates } });
   };
 
-  // Edit Component (Firestore or Demo)
-  const handleEditComponent = async (id: string, updates: Partial<AutopilotComponent>) => {
+  const handleDeleteComponent = async (id: string) => {
+    const comp = components.find(c => c.id === id);
+    const compName = comp ? `${comp.name} (S/N ${comp.serialNumber})` : 'equipamento';
+
+    const hasActiveOS = movements.some(movement =>
+      (!['Concluída', 'Cancelada'].includes(movement.status || 'Aberta')) &&
+      (movement.componentId === id || (movement.componentIds || []).includes(id))
+    );
+    if (hasActiveOS) throw new Error(`O equipamento ${compName} possui uma O.S. em aberto/atendimento. Conclua ou cancele antes de excluir.`);
+
+    const hasActiveMaintenance = maintenances.some(mnt => mnt.componentId === id && mnt.status === 'Em Manutenção');
+    if (hasActiveMaintenance) throw new Error(`O equipamento ${compName} está em manutenção ativa. Finalize antes de excluir.`);
+
     const timestampStr = new Date().toISOString();
     if (isDemoMode) {
-      const updatedList = components.map(c => {
-        if (c.id === id) {
-          return {
-            ...c,
-            ...updates,
-            updatedAt: timestampStr,
-            updatedBy: user?.name || 'Sistema'
-          };
-        }
-        return c;
-      });
+      const updatedList = components.map(c => c.id === id
+        ? { ...c, active: false, deletedAt: timestampStr, updatedAt: timestampStr }
+        : c);
       setComponents(updatedList);
       saveDemoData('components', updatedList);
     } else {
       try {
-        const docRef = doc(db, 'components', id);
-        await updateDoc(docRef, {
-          ...updates,
+        await updateDoc(doc(db, 'components', id), {
+          active: false,
+          deletedAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
           updatedBy: user?.name || user?.email || 'Sistema'
         });
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `components/${id}`);
-      }
-    }
-  };
-
-  // Delete Component (Firestore or Demo)
-  const handleDeleteComponent = async (id: string) => {
-    if (isDemoMode) {
-      const updatedList = components.filter(c => c.id !== id);
-      setComponents(updatedList);
-      saveDemoData('components', updatedList);
-    } else {
-      try {
-        await deleteDoc(doc(db, 'components', id));
-      } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `components/${id}`);
+        throw err;
       }
     }
   };
@@ -1787,230 +1857,54 @@ export default function App() {
 
   // Delete Machine (Firestore or Demo)
   const handleDeleteMachine = async (id: string) => {
+    const machine = machines.find(m => m.id === id);
+    const prefix = machine?.prefix || '';
+    const inUse = components.find(c =>
+      c.status === 'Em Uso' &&
+      (c.currentMachineId === id || (c.currentMachine === prefix))
+    );
+    if (inUse) {
+      throw new Error(`A máquina ${prefix || 'selecionada'} está em uso pelo equipamento ${inUse.name} (S/N ${inUse.serialNumber}). Remova ou conclua a O.S. antes de excluir.`);
+    }
+
+    const timestampStr = new Date().toISOString();
     if (isDemoMode) {
-      const updatedList = machines.filter(m => m.id !== id);
+      const updatedList = machines.map(m => m.id === id
+        ? { ...m, active: false, deletedAt: timestampStr, updatedAt: timestampStr }
+        : m);
       setMachines(updatedList);
       saveDemoData('machines', updatedList);
     } else {
       try {
-        await deleteDoc(doc(db, 'machines', id));
+        await updateDoc(doc(db, 'machines', id), {
+          active: false,
+          deletedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
       } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `machines/${id}`);
+        handleFirestoreError(err, OperationType.UPDATE, `machines/${id}`);
+        throw err;
       }
     }
   };
 
   // Add Movement & Auto-Update Component State (Seamless integration)
   const handleAddMovement = async (log: Omit<MovementLog, 'id' | 'technicianId' | 'technicianName' | 'createdAt'>) => {
-    const timestampStr = new Date().toISOString();
-    const actorName = user?.name || 'Técnico';
-    
-    // Find target component
-    const comp = components.find(c => c.id === log.componentId);
-    if (!comp) throw new Error('Equipamento GPS correspondente não foi localizado.');
-    const hasActiveOrder = movements.some(movement =>
-      movement.componentId === log.componentId &&
-      !['Concluída', 'Cancelada'].includes(movement.status || 'Aberta')
-    );
-    if (hasActiveOrder) throw new Error('Este equipamento já possui uma O.S. em aberto ou em atendimento.');
-
-    // Compute next OS number (sequential)
-    const maxOs = movements.reduce((max, m) => Math.max(max, m.osNumber || 0), 0);
-    const osNumber = maxOs + 1;
-    const history: MovementHistoryEntry[] = [{
-      timestamp: timestampStr,
-      actorName,
-      action: 'O.S. criada',
-      detail: `Tipo: ${log.action} · Equipamento: ${log.componentName} (S/N ${log.componentSerial})`
-    }];
-
-    if (isDemoMode) {
-      // 1. Create movement
-      const newMove: MovementLog = {
-        ...log,
-        id: 'demo_move_' + Math.random().toString(36).substr(2, 9),
-        technicianId: user?.uid || 'demo_tech',
-        technicianName: user?.name || 'Técnico Demo',
-        createdAt: timestampStr,
-        osNumber,
-        status: 'Aberta',
-        history,
-        updatedAt: timestampStr,
-        updatedBy: actorName
-      };
-
-      const updatedMovements = [...movements, newMove];
-      setMovements(updatedMovements);
-      saveDemoData('movements', updatedMovements);
-
-    } else {
-      try {
-        const moveRef = doc(collection(db, 'movements'));
-        await setDoc(moveRef, {
-          ...log,
-          id: moveRef.id,
-          technicianId: user?.uid || 'system',
-          technicianName: user?.name || 'Técnico',
-          createdAt: serverTimestamp(),
-          osNumber,
-          status: 'Aberta',
-          history,
-          updatedAt: serverTimestamp(),
-          updatedBy: actorName
-        });
-
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, 'movements');
-        throw err;
-      }
-    }
+    const osNumber = isDemoMode ? movements.reduce((max, item) => Math.max(max, item.osNumber || 0), 0) + 1
+      : await getNextOsNumber(db, () => movements.reduce((max, item) => Math.max(max, item.osNumber || 0), 0));
+    const now = new Date().toISOString();
+    await runStorage({ type: 'order', editing: false, order: { ...log, id: crypto.randomUUID(), osNumber, status: 'Aberta',
+      technicianId: user?.uid || '', technicianName: user?.name || '', createdAt: now, updatedAt: now, updatedBy: user?.name || '',
+      history: [{ timestamp: now, actorName: user?.name || '', action: 'O.S. criada' }] } });
   };
-
-  // Transition an Order of Service lifecycle status (append history, preserve audit trail)
-  const handleTransitionOSStatus = async (movement: MovementLog, nextStatus: MovementStatus, actionLabel: string, detail?: string) => {
-    const timestampStr = new Date().toISOString();
-    const actorName = user?.name || user?.email || 'Técnico';
-
-    const history = movement.history || [];
-    const normalizedDetail = detail?.trim();
-    const entry: MovementHistoryEntry = {
-      timestamp: timestampStr,
-      actorName,
-      action: actionLabel,
-      ...(normalizedDetail ? { detail: normalizedDetail } : {})
-    };
-
-    const currentStatus = movement.status || 'Aberta';
-    const allowedTransitions: Record<MovementStatus, MovementStatus[]> = {
-      'Aberta': ['Agendada', 'Em Atendimento', 'Cancelada'],
-      'Agendada': ['Aberta', 'Em Atendimento', 'Cancelada'],
-      'Em Atendimento': ['Agendada', 'Concluída', 'Cancelada'],
-      'Concluída': [],
-      'Cancelada': []
-    };
-    if (!allowedTransitions[currentStatus].includes(nextStatus)) {
-      throw new Error(`Não é possível alterar uma O.S. de ${currentStatus} para ${nextStatus}.`);
-    }
-
-    const payload: Record<string, any> = {
-      status: nextStatus,
-      history: [...history, entry],
-      updatedAt: timestampStr,
-      updatedBy: actorName
-    };
-
-    if (nextStatus === 'Concluída') payload.completedAt = timestampStr;
-    if (nextStatus === 'Cancelada') payload.cancelledAt = timestampStr;
-
-    if (isDemoMode) {
-      const updated = movements.map(m => m.id === movement.id ? { ...m, ...payload } : m);
-      setMovements(updated);
-      saveDemoData('movements', updated);
-
-      if (nextStatus === 'Concluída') {
-        const updatedComponents = components.map(component => {
-          if (component.id !== movement.componentId) return component;
-          const placement = getComponentPlacementAfterOS(movement, component.status, component.currentMachine || '');
-          return { ...component, ...placement, updatedAt: timestampStr, updatedBy: actorName };
-        });
-        setComponents(updatedComponents);
-        saveDemoData('components', updatedComponents);
-      }
-      return;
-    }
-
-    try {
-      const ref = doc(db, 'movements', movement.id);
-      const batch = writeBatch(db);
-      batch.update(ref, { ...payload, updatedAt: serverTimestamp() });
-
-      if (nextStatus === 'Concluída') {
-        const component = components.find(item => item.id === movement.componentId);
-        if (!component) throw new Error('O equipamento vinculado à O.S. não foi encontrado.');
-        const placement = getComponentPlacementAfterOS(movement, component.status, component.currentMachine || '');
-        batch.update(doc(db, 'components', movement.componentId), {
-          ...placement,
-          updatedAt: serverTimestamp(),
-          updatedBy: actorName
-        });
-      }
-
-      await batch.commit();
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `movements/${movement.id}`);
-      throw err;
-    }
+  const handleTransitionOSStatus = async (movement: MovementLog, nextStatus: MovementStatus, actionLabel: string, detail?: string, locationId?: string) => {
+    await runStorage({ type: 'transition', id: movement.id, status: nextStatus, action: actionLabel, detail, locationId });
   };
-
   const handleUpdateMovement = async (movement: MovementLog, updates: Partial<MovementLog>) => {
-    const status = movement.status || 'Aberta';
-    if (!['Aberta', 'Agendada'].includes(status)) {
-      throw new Error('Somente O.S. abertas ou agendadas podem ser editadas.');
-    }
-    if (!updates.componentId || !components.some(component => component.id === updates.componentId)) {
-      throw new Error('Selecione um equipamento válido para a O.S.');
-    }
-    const hasConflictingOrder = movements.some(item =>
-      item.id !== movement.id &&
-      item.componentId === updates.componentId &&
-      !['Concluída', 'Cancelada'].includes(item.status || 'Aberta')
-    );
-    if (hasConflictingOrder) throw new Error('O equipamento selecionado já possui outra O.S. ativa.');
-    if (updates.action === 'Instalação' && (!updates.machineId || !updates.machinePrefix)) {
-      throw new Error('Selecione o veículo de destino da instalação.');
-    }
-
-    const timestampStr = new Date().toISOString();
-    const actorName = user?.name || user?.email || 'Técnico';
-    const payload: Partial<MovementLog> = {
-      ...updates,
-      status: status as MovementStatus,
-      history: [...(movement.history || []), {
-        timestamp: timestampStr,
-        actorName,
-        action: 'Dados da O.S. atualizados'
-      }],
-      updatedAt: timestampStr,
-      updatedBy: actorName
-    };
-
-    if (isDemoMode) {
-      const updatedMovements = movements.map(item => item.id === movement.id ? { ...item, ...payload } : item);
-      setMovements(updatedMovements);
-      saveDemoData('movements', updatedMovements);
-      return;
-    }
-
-    try {
-      await updateDoc(doc(db, 'movements', movement.id), { ...payload, updatedAt: serverTimestamp() });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `movements/${movement.id}`);
-      throw err;
-    }
+    await runStorage({ type: 'order', editing: true, order: { ...movement, ...updates,
+      history: [...(movement.history || []), { timestamp: new Date().toISOString(), actorName: user?.name || '', action: 'Dados da O.S. atualizados' }] } });
   };
-
-  const handleDeleteMovement = async (movement: MovementLog) => {
-    const status = movement.status || 'Aberta';
-    const isAdmin = user?.role === 'administrador' || user?.role === 'ADMINISTRADOR';
-    if (!isAdmin) throw new Error('Somente administradores podem excluir ordens de serviço.');
-    if (!['Aberta', 'Agendada'].includes(status)) {
-      throw new Error('Somente O.S. abertas ou agendadas podem ser excluídas. Use o cancelamento para preservar o histórico operacional.');
-    }
-
-    if (isDemoMode) {
-      const updatedMovements = movements.filter(item => item.id !== movement.id);
-      setMovements(updatedMovements);
-      saveDemoData('movements', updatedMovements);
-      return;
-    }
-
-    try {
-      await deleteDoc(doc(db, 'movements', movement.id));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `movements/${movement.id}`);
-      throw err;
-    }
-  };
+  const handleDeleteMovement = async (movement: MovementLog) => { await runStorage({ type: 'deleteOrder', id: movement.id }); };
 
   // Materialize a weekly snapshot so pending machines remain auditable after the week ends.
   const handleEnsureFieldDataWeek = async (weekMachines: Machine[], targetWeekId: string) => {
@@ -2218,304 +2112,15 @@ export default function App() {
 
   // Create Loan & Update Components to Em Uso with Comodato details (Firestore or Demo)
   const handleAddLoan = async (loan: Omit<ComponentLoan, 'id' | 'contractNumber' | 'createdAt' | 'updatedAt' | 'updatedBy'>) => {
-    const timestamp = new Date().toISOString();
-    const contractNum = 'CO-2026-' + Math.floor(1000 + Math.random() * 9000);
-    const newId = 'loan_' + Math.random().toString(36).substr(2, 9);
-
-    if (isDemoMode) {
-      const newLoan: ComponentLoan = {
-        ...loan,
-        id: newId,
-        contractNumber: contractNum,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        updatedBy: user?.name || 'Sistema'
-      };
-
-      const updatedLoans = [...loans, newLoan];
-      setLoans(updatedLoans);
-      saveDemoData('loans', updatedLoans);
-
-      const newMovements = [...movements];
-      const updatedComponents = components.map(comp => {
-        const loanedItem = loan.items.find(it => it.componentId === comp.id);
-        if (loanedItem) {
-          newMovements.push({
-            id: 'demo_move_' + Math.random().toString(36).substr(2, 9),
-            componentId: comp.id,
-            componentSerial: comp.serialNumber,
-            componentName: comp.name,
-            machinePrefix: `Empréstimo: ${loan.thirdPartyName}`,
-            action: 'Instalação',
-            technicianId: user?.uid || 'demo_tech',
-            technicianName: user?.name || 'Técnico Demo',
-            date: timestamp,
-            notes: `Saída em empréstimo no termo ${contractNum}.`,
-            createdAt: timestamp
-          });
-
-          return {
-            ...comp,
-            status: 'Em Uso',
-            currentMachine: `Empréstimo: ${loan.thirdPartyName}`,
-            updatedAt: timestamp,
-            updatedBy: user?.name || 'Técnico Demo'
-          };
-        }
-        return comp;
-      });
-
-      setComponents(updatedComponents);
-      saveDemoData('components', updatedComponents);
-
-      setMovements(newMovements);
-      saveDemoData('movements', newMovements);
-    } else {
-      try {
-        const ref = doc(collection(db, 'loans'));
-        await setDoc(ref, {
-          ...loan,
-          id: ref.id,
-          contractNumber: contractNum,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          updatedBy: user?.name || user?.email || 'Sistema'
-        });
-
-        for (const item of loan.items) {
-          await updateDoc(doc(db, 'components', item.componentId), {
-            status: 'Em Uso',
-            currentMachine: `Empréstimo: ${loan.thirdPartyName}`,
-            updatedAt: serverTimestamp(),
-            updatedBy: user?.name || user?.email || 'Sistema'
-          });
-
-          const moveRef = doc(collection(db, 'movements'));
-          await setDoc(moveRef, {
-            componentId: item.componentId,
-            componentSerial: item.componentSerial,
-            componentName: item.componentName,
-            machinePrefix: `Empréstimo: ${loan.thirdPartyName}`,
-            action: 'Instalação',
-            technicianId: user?.uid || 'system',
-            technicianName: user?.name || 'Sistema',
-            date: timestamp,
-            notes: `Saída em empréstimo no termo ${contractNum}.`,
-            createdAt: serverTimestamp()
-          });
-        }
-      } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, 'loans');
-      }
-    }
+    const now = new Date().toISOString();
+    await runStorage({ type: 'loan', loan: { ...loan, id: crypto.randomUUID(), contractNumber: 'CO-' + new Date().getFullYear() + '-' + crypto.randomUUID().slice(0, 8).toUpperCase(), createdAt: now, updatedAt: now, updatedBy: user?.name || '' } });
   };
-
-  // Return Loan & Release Components back to Available (Firestore or Demo)
-  const handleReturnLoan = async (id: string) => {
-    const timestamp = new Date().toISOString();
-    const todayStr = timestamp.split('T')[0];
-
-    const targetLoan = loans.find(l => l.id === id);
-    if (!targetLoan) return;
-
-    if (isDemoMode) {
-      const updatedLoans = loans.map(l => {
-        if (l.id === id) {
-          return {
-            ...l,
-            status: 'Devolvido' as const,
-            actualReturnDate: todayStr,
-            updatedAt: timestamp,
-            updatedBy: user?.name || 'Sistema'
-          };
-        }
-        return l;
-      });
-      setLoans(updatedLoans);
-      saveDemoData('loans', updatedLoans);
-
-      const newMovements = [...movements];
-      const updatedComponents = components.map(comp => {
-        const loanedItem = targetLoan.items.find(it => it.componentId === comp.id);
-        if (loanedItem) {
-          newMovements.push({
-            id: 'demo_move_' + Math.random().toString(36).substr(2, 9),
-            componentId: comp.id,
-            componentSerial: comp.serialNumber,
-            componentName: comp.name,
-            machinePrefix: `Empréstimo: ${targetLoan.thirdPartyName}`,
-            action: 'Remoção',
-            technicianId: user?.uid || 'demo_tech',
-            technicianName: user?.name || 'Técnico Demo',
-            date: timestamp,
-            notes: `Retorno de empréstimo do termo ${targetLoan.contractNumber}.`,
-            createdAt: timestamp
-          });
-
-          return {
-            ...comp,
-            status: 'Disponível',
-            currentMachine: '',
-            updatedAt: timestamp,
-            updatedBy: user?.name || 'Técnico Demo'
-          };
-        }
-        return comp;
-      });
-
-      setComponents(updatedComponents);
-      saveDemoData('components', updatedComponents);
-
-      setMovements(newMovements);
-      saveDemoData('movements', newMovements);
-    } else {
-      try {
-        await updateDoc(doc(db, 'loans', id), {
-          status: 'Devolvido',
-          actualReturnDate: todayStr,
-          updatedAt: serverTimestamp(),
-          updatedBy: user?.name || user?.email || 'Sistema'
-        });
-
-        for (const item of targetLoan.items) {
-          await updateDoc(doc(db, 'components', item.componentId), {
-            status: 'Disponível',
-            currentMachine: '',
-            updatedAt: serverTimestamp(),
-            updatedBy: user?.name || user?.email || 'Sistema'
-          });
-
-          const moveRef = doc(collection(db, 'movements'));
-          await setDoc(moveRef, {
-            componentId: item.componentId,
-            componentSerial: item.componentSerial,
-            componentName: item.componentName,
-            machinePrefix: `Empréstimo: ${targetLoan.thirdPartyName}`,
-            action: 'Remoção',
-            technicianId: user?.uid || 'system',
-            technicianName: user?.name || 'Sistema',
-            date: timestamp,
-            notes: `Retorno de empréstimo do termo ${targetLoan.contractNumber}.`,
-            createdAt: serverTimestamp()
-          });
-        }
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `loans/${id}`);
-      }
-    }
-  };
-
-  // Return PARTIAL Loan & Release selected Components back to Available (Firestore or Demo)
-  const handlePartialReturnLoan = async (id: string, returnedItemIds: string[]) => {
-    const timestamp = new Date().toISOString();
-
-    const targetLoan = loans.find(l => l.id === id);
-    if (!targetLoan) return;
-
-    const itemsToReturn = targetLoan.items.filter(it => returnedItemIds.includes(it.componentId));
-    const itemsToKeep = targetLoan.items.filter(it => !returnedItemIds.includes(it.componentId));
-    const currentReturned = targetLoan.returnedItems || [];
-    const updatedReturned = [...currentReturned, ...itemsToReturn];
-
-    if (itemsToKeep.length === 0) {
-      await handleReturnLoan(id);
-      return;
-    }
-
-    const partialNotes = `\n[Devolução parcial em ${new Date().toLocaleDateString('pt-BR')} por ${user?.name || 'Sistema'}: Devolvido(s) ${itemsToReturn.map(it => `${it.componentName} (S/N: ${it.componentSerial})`).join(', ')}]`;
-    const newNotes = (targetLoan.notes || '') + partialNotes;
-
-    if (isDemoMode) {
-      const updatedLoans = loans.map(l => {
-        if (l.id === id) {
-          return {
-            ...l,
-            items: itemsToKeep,
-            returnedItems: updatedReturned,
-            notes: newNotes,
-            updatedAt: timestamp,
-            updatedBy: user?.name || 'Sistema'
-          };
-        }
-        return l;
-      });
-      setLoans(updatedLoans);
-      saveDemoData('loans', updatedLoans);
-
-      const newMovements = [...movements];
-      const updatedComponents = components.map(comp => {
-        const returnedItem = itemsToReturn.find(it => it.componentId === comp.id);
-        if (returnedItem) {
-          newMovements.push({
-            id: 'demo_move_' + Math.random().toString(36).substr(2, 9),
-            componentId: comp.id,
-            componentSerial: comp.serialNumber,
-            componentName: comp.name,
-            machinePrefix: `Empréstimo: ${targetLoan.thirdPartyName}`,
-            action: 'Remoção',
-            technicianId: user?.uid || 'demo_tech',
-            technicianName: user?.name || 'Técnico Demo',
-            date: timestamp,
-            notes: `Retorno parcial de empréstimo do termo ${targetLoan.contractNumber}.`,
-            createdAt: timestamp
-          });
-
-          return {
-            ...comp,
-            status: 'Disponível',
-            currentMachine: '',
-            updatedAt: timestamp,
-            updatedBy: user?.name || 'Técnico Demo'
-          };
-        }
-        return comp;
-      });
-
-      setComponents(updatedComponents);
-      saveDemoData('components', updatedComponents);
-
-      setMovements(newMovements);
-      saveDemoData('movements', newMovements);
-    } else {
-      try {
-        await updateDoc(doc(db, 'loans', id), {
-          items: itemsToKeep,
-          returnedItems: updatedReturned,
-          notes: newNotes,
-          updatedAt: serverTimestamp(),
-          updatedBy: user?.name || user?.email || 'Sistema'
-        });
-
-        for (const item of itemsToReturn) {
-          await updateDoc(doc(db, 'components', item.componentId), {
-            status: 'Disponível',
-            currentMachine: '',
-            updatedAt: serverTimestamp(),
-            updatedBy: user?.name || user?.email || 'Sistema'
-          });
-
-          const moveRef = doc(collection(db, 'movements'));
-          await setDoc(moveRef, {
-            componentId: item.componentId,
-            componentSerial: item.componentSerial,
-            componentName: item.componentName,
-            machinePrefix: `Empréstimo: ${targetLoan.thirdPartyName}`,
-            action: 'Remoção',
-            technicianId: user?.uid || 'system',
-            technicianName: user?.name || 'Sistema',
-            date: timestamp,
-            notes: `Retorno parcial de empréstimo do termo ${targetLoan.contractNumber}.`,
-            createdAt: serverTimestamp()
-          });
-        }
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `loans/${id}`);
-      }
-    }
-  };
+  const handleReturnLoan = async (id: string, locationId: string) => { await runStorage({ type: 'returnLoan', id, locationId }); };
+  const handlePartialReturnLoan = async (id: string, componentIds: string[], locationId: string) => { await runStorage({ type: 'returnLoan', id, componentIds, locationId }); };
 
   // Delete Loan (Firestore or Demo)
   const handleDeleteLoan = async (id: string) => {
+    if (loans.some(item => item.id === id && item.status === 'Ativo')) throw new Error('Registre a devolução antes de remover um empréstimo ativo.');
     if (isDemoMode) {
       const updated = loans.filter(l => l.id !== id);
       setLoans(updated);
@@ -2530,236 +2135,11 @@ export default function App() {
   };
 
   // Send to maintenance (Firestore or Demo)
-  const handleSendToMaintenance = async (maint: Omit<ComponentMaintenance, 'id' | 'updatedAt' | 'updatedBy'>) => {
-    const timestampStr = new Date().toISOString();
-    const updatedByStr = user?.name || user?.email || 'Sistema';
-
-    // 1. Update component status in local state/Firestore to "Manutenção"
-    await handleEditComponent(maint.componentId, {
-      status: 'Manutenção',
-      currentMachine: ''
-    });
-
-    // 2. Insert maintenance record
-    if (isDemoMode) {
-      const newMaint: ComponentMaintenance = {
-        ...maint,
-        id: 'demo_maint_' + Math.random().toString(36).substr(2, 9),
-        updatedAt: timestampStr,
-        updatedBy: updatedByStr
-      };
-      const updatedList = [...maintenances, newMaint];
-      setMaintenances(updatedList);
-      saveDemoData('maintenances', updatedList);
-    } else {
-      try {
-        const docRef = doc(collection(db, 'maintenances'));
-        await setDoc(docRef, {
-          ...maint,
-          id: docRef.id,
-          updatedAt: serverTimestamp(),
-          updatedBy: updatedByStr
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, 'maintenances');
-      }
-    }
-
-    // 3. Add movement log
-    const moveNotes = `Equipamento enviado para manutenção externa na empresa ${maint.providerName}. Motivo: ${maint.issueDescription}`;
-    const maxOs = movements.reduce((max, m) => Math.max(max, m.osNumber || 0), 0);
-    const moveOsNumber = maxOs + 1;
-    const moveActor = user?.name || user?.email || 'Sistema';
-    if (isDemoMode) {
-      const newMove: MovementLog = {
-        id: 'demo_move_' + Math.random().toString(36).substr(2, 9),
-        componentId: maint.componentId,
-        componentSerial: maint.componentSerial,
-        componentName: maint.componentName,
-        machinePrefix: 'Almoxarifado',
-        action: 'Manutenção',
-        technicianId: user?.uid || 'demo_user',
-        technicianName: user?.name || 'Sistema',
-        date: timestampStr,
-        notes: moveNotes,
-        createdAt: timestampStr,
-        osNumber: moveOsNumber,
-        status: 'Concluída',
-        history: [{ timestamp: timestampStr, actorName: moveActor, action: 'O.S. concluída', detail: 'Manutenção registrada pelo fluxo de manutenções.' }],
-        completedAt: timestampStr,
-        updatedAt: timestampStr,
-        updatedBy: moveActor
-      };
-      const updatedMoves = [...movements, newMove];
-      setMovements(updatedMoves);
-      saveDemoData('movements', updatedMoves);
-    } else {
-      try {
-        const docRef = doc(collection(db, 'movements'));
-        await setDoc(docRef, {
-          id: docRef.id,
-          componentId: maint.componentId,
-          componentSerial: maint.componentSerial,
-          componentName: maint.componentName,
-          machinePrefix: 'Almoxarifado',
-          action: 'Manutenção',
-          technicianId: user?.uid || 'user',
-          technicianName: user?.name || user?.email || 'Sistema',
-          date: serverTimestamp(),
-          notes: moveNotes,
-          createdAt: serverTimestamp(),
-          osNumber: moveOsNumber,
-          status: 'Concluída',
-          history: [{ timestamp: timestampStr, actorName: moveActor, action: 'O.S. concluída', detail: 'Manutenção registrada pelo fluxo de manutenções.' }],
-          completedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          updatedBy: moveActor
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, 'movements');
-      }
-    }
+  const handleSendToMaintenance = async (maintenance: Omit<ComponentMaintenance, 'id' | 'updatedAt' | 'updatedBy'>) => {
+    await runStorage({ type: 'maintenance', maintenance: { ...maintenance, id: crypto.randomUUID(), updatedAt: new Date().toISOString(), updatedBy: user?.name || '' } });
   };
-
-  // Return from maintenance (Firestore or Demo)
-  const handleReturnFromMaintenance = async (maintId: string, returnData: {
-    returnDate: string;
-    replacedParts: string;
-    servicesPerformed: string;
-    cost: number;
-    status: 'Concluído' | 'Sem Conserto';
-  }) => {
-    const timestampStr = new Date().toISOString();
-    const updatedByStr = user?.name || user?.email || 'Sistema';
-
-    // Find the maintenance record
-    const maintRecord = maintenances.find(m => m.id === maintId);
-    if (!maintRecord) return;
-
-    // 1. Update component status to "Disponível" (or keep as is if "Sem Conserto", e.g. "Descartado")
-    const newComponentStatus: ComponentStatus = returnData.status === 'Concluído' ? 'Disponível' : 'Descartado';
-    await handleEditComponent(maintRecord.componentId, {
-      status: newComponentStatus,
-      currentMachine: ''
-    });
-
-    // 2. Update maintenance record
-    if (isDemoMode) {
-      const updatedList = maintenances.map(m => {
-        if (m.id === maintId) {
-          return {
-            ...m,
-            ...returnData,
-            updatedAt: timestampStr,
-            updatedBy: updatedByStr
-          };
-        }
-        return m;
-      });
-      setMaintenances(updatedList);
-      saveDemoData('maintenances', updatedList);
-    } else {
-      try {
-        const docRef = doc(db, 'maintenances', maintId);
-        await updateDoc(docRef, {
-          ...returnData,
-          updatedAt: serverTimestamp(),
-          updatedBy: updatedByStr
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `maintenances/${maintId}`);
-      }
-    }
-
-    // 3. Add movement log for return
-    const moveNotes = returnData.status === 'Concluído' 
-      ? `Retorno de manutenção concluído (${maintRecord.providerName}). Serviços: ${returnData.servicesPerformed || 'Nenhum'}. Peças trocadas: ${returnData.replacedParts || 'Nenhuma'}.`
-      : `Equipamento retornado de manutenção SEM CONSERTO (${maintRecord.providerName}). Classificado como Descartado.`;
-    const maxOs = movements.reduce((max, m) => Math.max(max, m.osNumber || 0), 0);
-    const moveOsNumber = maxOs + 1;
-    const moveActor = user?.name || user?.email || 'Sistema';
-
-    if (isDemoMode) {
-      const newMove: MovementLog = {
-        id: 'demo_move_' + Math.random().toString(36).substr(2, 9),
-        componentId: maintRecord.componentId,
-        componentSerial: maintRecord.componentSerial,
-        componentName: maintRecord.componentName,
-        machinePrefix: 'Almoxarifado',
-        action: 'Manutenção',
-        technicianId: user?.uid || 'demo_user',
-        technicianName: user?.name || 'Sistema',
-        date: timestampStr,
-        notes: moveNotes,
-        createdAt: timestampStr,
-        osNumber: moveOsNumber,
-        status: 'Concluída',
-        history: [{ timestamp: timestampStr, actorName: moveActor, action: 'O.S. concluída', detail: 'Retorno de manutenção registrado pelo fluxo de manutenções.' }],
-        completedAt: timestampStr,
-        updatedAt: timestampStr,
-        updatedBy: moveActor
-      };
-      const updatedMoves = [...movements, newMove];
-      setMovements(updatedMoves);
-      saveDemoData('movements', updatedMoves);
-    } else {
-      try {
-        const docRef = doc(collection(db, 'movements'));
-        await setDoc(docRef, {
-          id: docRef.id,
-          componentId: maintRecord.componentId,
-          componentSerial: maintRecord.componentSerial,
-          componentName: maintRecord.componentName,
-          machinePrefix: 'Almoxarifado',
-          action: 'Manutenção',
-          technicianId: user?.uid || 'user',
-          technicianName: user?.name || user?.email || 'Sistema',
-          date: serverTimestamp(),
-          notes: moveNotes,
-          createdAt: serverTimestamp(),
-          osNumber: moveOsNumber,
-          status: 'Concluída',
-          history: [{ timestamp: timestampStr, actorName: moveActor, action: 'O.S. concluída', detail: 'Retorno de manutenção registrado pelo fluxo de manutenções.' }],
-          completedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          updatedBy: moveActor
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, 'movements');
-      }
-    }
-  };
-
-  // Add maintenance provider (assistance)
-  const handleAddProvider = async (providerData: Omit<MaintenanceProvider, 'id' | 'createdAt' | 'updatedAt' | 'updatedBy'>) => {
-    const timestampStr = new Date().toISOString();
-    const updatedByStr = user?.name || user?.email || 'Sistema';
-
-    if (isDemoMode) {
-      const newProvider: MaintenanceProvider = {
-        ...providerData,
-        id: 'demo_provider_' + Math.random().toString(36).substr(2, 9),
-        createdAt: timestampStr,
-        updatedAt: timestampStr,
-        updatedBy: updatedByStr
-      };
-      const updatedList = [...providers, newProvider];
-      setProviders(updatedList);
-      saveDemoData('providers', updatedList);
-    } else {
-      try {
-        const docRef = doc(collection(db, 'providers'));
-        await setDoc(docRef, {
-          ...providerData,
-          id: docRef.id,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-          updatedBy: updatedByStr
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, 'providers');
-      }
-    }
+  const handleReturnFromMaintenance = async (id: string, data: Pick<ComponentMaintenance, 'returnDate' | 'returnLocationId' | 'replacedParts' | 'servicesPerformed' | 'cost' | 'status'>) => {
+    await runStorage({ type: 'returnMaintenance', id, data });
   };
 
   const handleAddPartner = async (partnerData: Omit<Partner, 'id' | 'createdAt' | 'updatedAt' | 'updatedBy'>) => {
@@ -3097,6 +2477,7 @@ export default function App() {
   // Nav helper
   const navigateToTab = (tab: string, subtab?: string, preset?: DashboardNavPreset) => {
     setCurrentTab(tab);
+    setStorageFilter(undefined);
     setMovementsSubTab(subtab as 'os' | 'kanban' | undefined);
     setLicensePresetFilter(preset?.licenseFilter ?? null);
     setComponentPresetFilter(preset?.componentStatus || preset?.componentBrand ? preset : null);
@@ -3175,7 +2556,7 @@ export default function App() {
               <div className="relative" data-registrations-menu>
                 <button
                   onClick={() => setIsRegistrationsMenuOpen(open => !open)}
-                  className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-all ${isRegistrationsMenuOpen || ['components', 'partners', 'licenses', 'machines'].includes(currentTab) ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
+                  className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-all ${isRegistrationsMenuOpen || ['components', 'partners', 'licenses', 'machines', 'storage'].includes(currentTab) ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
                   id="registrations-menu-button"
                   aria-haspopup="menu"
                   aria-expanded={isRegistrationsMenuOpen}
@@ -3197,6 +2578,9 @@ export default function App() {
                     </button>
                     <button onClick={() => navigateToTab('machines')} role="menuitem" className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-colors ${currentTab === 'machines' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-200 hover:bg-slate-700/60 hover:text-white'}`}>
                       <Tractor className="h-4 w-4" /> Frota
+                    </button>
+                    <button onClick={() => navigateToTab('storage')} className="flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left text-xs font-semibold text-slate-200 hover:bg-slate-700/60">
+                      <Database className="h-4 w-4" /> Locais de armazenamento
                     </button>
                   </div>
                 )}
@@ -3344,10 +2728,10 @@ export default function App() {
               Dashboard
             </button>
 
-            <div data-registrations-menu className={`rounded-xl ${['components', 'partners', 'licenses', 'machines'].includes(currentTab) ? 'bg-slate-900/45' : ''}`}>
+            <div data-registrations-menu className={`rounded-xl ${['components', 'partners', 'licenses', 'machines', 'storage'].includes(currentTab) ? 'bg-slate-900/45' : ''}`}>
               <button
                 onClick={() => setIsRegistrationsMenuOpen(open => !open)}
-                className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-all ${['components', 'partners', 'licenses', 'machines'].includes(currentTab) ? 'text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
+                className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-all ${['components', 'partners', 'licenses', 'machines', 'storage'].includes(currentTab) ? 'text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
                 aria-expanded={isRegistrationsMenuOpen}
               >
                 <Database className="h-4 w-4" />
@@ -3368,6 +2752,9 @@ export default function App() {
                   <button onClick={() => navigateToTab('machines')} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs font-semibold ${currentTab === 'machines' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-400 hover:bg-slate-700/50 hover:text-white'}`}>
                     <Tractor className="h-4 w-4" /> Frota
                   </button>
+                    <button onClick={() => navigateToTab('storage')} className="flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left text-xs font-semibold text-slate-200 hover:bg-slate-700/60">
+                      <Database className="h-4 w-4" /> Locais de armazenamento
+                    </button>
                 </div>
               )}
             </div>
@@ -3447,6 +2834,10 @@ export default function App() {
           />
         )}
 
+        {currentTab === 'storage' && (
+          <StorageLocationsTab state={storageStateRef.current!} events={locationEvents} role={user.role} onCommand={runStorage}
+            onViewEquipment={id => { navigateToTab('components'); setStorageFilter(id); }} />
+        )}
         {currentTab === 'components' && (
           <ComponentsTab
             components={components}
@@ -3462,39 +2853,16 @@ export default function App() {
             onEditComponent={handleEditComponent}
             onDeleteComponent={handleDeleteComponent}
             maintenances={maintenances}
+            movements={movements}
+            locations={locations}
+            partners={partners}
+            defaultLocationId={storageSettings.defaultLocationId}
+            locationEvents={locationEvents}
+            initialLocationFilter={storageFilter}
+            onTransfer={(componentIds, locationId, notes) => runStorage({ type: 'transfer', componentIds, locationId, notes })}
+            licenses={licenses}
             onSendToMaintenance={handleSendToMaintenance}
             onReturnFromMaintenance={handleReturnFromMaintenance}
-            providers={[
-              ...providers,
-              ...partners
-                .filter(partner => partner.active && partner.types.includes('Assistência técnica'))
-                .map(partner => ({
-                  id: partner.id,
-                  name: partner.tradingName || partner.legalName,
-                  phone: partner.phone,
-                  email: partner.email,
-                  address: partner.address || '',
-                  contactPerson: partner.contactPerson || '',
-                  createdAt: partner.createdAt,
-                  updatedAt: partner.updatedAt,
-                  updatedBy: partner.updatedBy
-                }))
-            ]}
-            onAddProvider={async provider => handleAddPartner({
-              legalName: provider.name,
-              tradingName: provider.name,
-              personType: 'PJ',
-              document: '',
-              phone: provider.phone || '',
-              email: provider.email || '',
-              cep: '',
-              address: provider.address || '',
-              contactPerson: provider.contactPerson || '',
-              contacts: provider.contactPerson || provider.phone || provider.email ? [{ id: `contact_${Date.now()}`, name: provider.contactPerson || provider.name, phone: provider.phone || '', email: provider.email || '' }] : [],
-              types: ['Assistência técnica'],
-              active: true,
-              notes: ''
-            })}
           />
         )}
 
@@ -3539,6 +2907,7 @@ export default function App() {
             currentUserName={user.name}
             extraServiceActions={getActiveTypes('service').filter(a => !CORE_SERVICE_ACTIONS.includes(a))}
             companyProfile={companyProfile}
+            locations={locations} defaultLocationId={storageSettings.defaultLocationId}
             onAddMovement={handleAddMovement}
             onUpdateMovement={handleUpdateMovement}
             onDeleteMovement={handleDeleteMovement}
@@ -3572,6 +2941,7 @@ export default function App() {
             companyProfile={companyProfile}
             focusLoanId={focusTarget?.tab === 'loans' ? focusTarget.itemId : null}
             onFocusConsumed={() => setFocusTarget(null)}
+            locations={locations} defaultLocationId={storageSettings.defaultLocationId}
             onAddLoan={handleAddLoan}
             onReturnLoan={handleReturnLoan}
             onPartialReturnLoan={handlePartialReturnLoan}

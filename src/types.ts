@@ -17,6 +17,49 @@ export type ComponentBrand = 'Trimble' | 'Topcon';
 
 export type ComponentStatus = 'Disponível' | 'Em Uso' | 'Manutenção' | 'Descartado';
 
+// ── Location (storage / service / loan destination) ──────────────────────────
+
+export type LocationKind = 'INTERNAL' | 'EXTERNAL_SERVICE' | 'EXTERNAL_LOAN';
+
+export interface Location {
+  id: string;
+  name: string;
+  code?: string;
+  kind: LocationKind;
+  partnerId?: string; // FK → Partner.id (optional, for external locations)
+  address?: string;
+  contactPerson?: string;
+  phone?: string;
+  email?: string;
+  isActive: boolean;
+  notes?: string;
+  updatedAt: any;
+  updatedBy: string;
+}
+
+export interface StorageSettings {
+  defaultLocationId: string;
+  revision: number;
+  updatedAt?: any;
+  updatedBy?: string;
+}
+
+export interface LocationEvent {
+  id: string;
+  operationId: string;
+  componentId: string;
+  componentName: string;
+  componentSerial: string;
+  from: { locationId: string; machineId: string; label: string };
+  to: { locationId: string; machineId: string; label: string };
+  action: string;
+  referenceId: string;
+  notes: string;
+  actorId: string;
+  actorName: string;
+  createdAt: any;
+}
+
 export interface AutopilotComponent {
   id: string;
   serialNumber: string;
@@ -24,7 +67,13 @@ export interface AutopilotComponent {
   brand: ComponentBrand;
   type: string; // e.g. "Antena/Receptor", "Monitor/Display", "Controladora", "Motor de Passo", etc.
   status: ComponentStatus;
-  currentMachine?: string; // Machine prefix where it is installed, e.g. "T01" or empty
+  currentMachine?: string; // LEGACY – Machine prefix (kept for backward compat)
+  currentLocationId?: string; // FK → Location.id (canonical)
+  currentMachineId?: string; // FK → Machine.id (canonical)
+  placementVersion?: number; // 1 = destination explicitly recorded by the storage workflow
+  maintenanceRequired?: boolean; // Only a completed repair clears this restriction.
+  active?: boolean; // soft-delete flag; undefined/true = active, false = deleted
+  deletedAt?: string;
   updatedAt: any;
   updatedBy: string; // User's email or name who last updated
 }
@@ -63,10 +112,13 @@ export interface Machine {
   model: string;
   brand: string; // e.g. "John Deere", "Case IH", "New Holland"
   fleet?: string; // e.g. "Frente 01", "Frota Cana"
+  active?: boolean; // soft-delete flag; undefined/true = active, false = deleted
+  deletedAt?: string;
   updatedAt: any;
 }
 
 export type MovementAction = 'Instalação' | 'Remoção' | 'Manutenção' | 'Calibração';
+export type ServiceActionCode = 'INSTALLATION' | 'REMOVAL' | 'MAINTENANCE' | 'CALIBRATION';
 
 export type MovementStatus = 'Aberta' | 'Agendada' | 'Em Atendimento' | 'Concluída' | 'Cancelada';
 
@@ -102,12 +154,13 @@ export interface FieldDataCollection {
 
 export interface MovementLog {
   id: string;
-  componentId: string;
+  componentId: string; // LEGACY – primary component (kept for backward compat)
   componentSerial: string;
   componentName: string;
-  machineId?: string; // stable relationship to machines/{id}; legacy records fall back to machinePrefix
-  machinePrefix: string; // "Almoxarifado" or prefix of machine
+  machineId?: string; // FK → Machine.id (canonical); legacy records fall back to machinePrefix
+  machinePrefix: string; // "Almoxarifado" or prefix of machine (LEGACY)
   action: MovementAction;
+  serviceActionCode?: ServiceActionCode;
   technicianId: string;
   technicianName: string;
   date: any; // Timestamp
@@ -120,6 +173,15 @@ export interface MovementLog {
   cancelledAt?: any;
   updatedAt?: any;
   updatedBy?: string;
+  // ── PR1 new fields (optional, backward-compatible) ────────────────────────
+  locationId?: string; // FK → Location.id (canonical)
+  componentIds?: string[]; // multi-component support (PR5)
+  primaryComponentId?: string; // compat: copy of componentId for multi-component OS
+  // ── PR5 new fields (optional, backward-compatible) ────────────────────────
+  maintenanceId?: string; // FK → ComponentMaintenance.id (links maintenance OS)
+  replacedParts?: string; // standardized parts replaced detail
+  servicesPerformed?: string; // standardized services performed detail
+  cost?: number; // standardized repair cost
 }
 
 // Preset applied when navigating from a dashboard indicator card
@@ -165,6 +227,8 @@ export interface ComponentLoan {
   actualReturnDate?: string; // ISO format or empty
   status: 'Ativo' | 'Devolvido';
   contractNumber: string; // e.g., "CO-2026-001"
+  locationId?: string;
+  returnLocationId?: string;
   notes?: string;
   createdAt: any;
   updatedAt: any;
@@ -257,6 +321,9 @@ export interface ComponentMaintenance {
   returnDate?: string; // ISO string or empty
   providerId?: string; // Related partner/provider
   providerName: string; // Maintenance company
+  locationId?: string; // FK → Location.id (kind EXTERNAL_SERVICE) — canonical destination
+  returnLocationId?: string;
+  osNumber?: number; // Linked maintenance O.S. number
   serviceType?: string; // Registered service type (Settings > Cadastro > Tipos de Serviço)
   issueDescription: string; // Description of the problem
   replacedParts?: string; // Parts replaced during maintenance

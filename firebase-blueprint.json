@@ -8,10 +8,10 @@
         "uid": { "type": "string" },
         "email": { "type": "string" },
         "name": { "type": "string" },
-        "role": { "type": "string", "enum": ["administrador", "tecnico"] },
+        "role": { "type": "string", "enum": [ "administrador", "tecnico" ] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["uid", "email", "name", "role", "createdAt"]
+      "required": [ "uid", "email", "name", "role", "createdAt" ]
     },
     "Component": {
       "title": "Autopilot Component",
@@ -21,14 +21,17 @@
         "id": { "type": "string" },
         "serialNumber": { "type": "string" },
         "name": { "type": "string" },
-        "brand": { "type": "string", "enum": ["Trimble", "Topcon"] },
+        "brand": { "type": "string", "enum": [ "Trimble", "Topcon" ] },
         "type": { "type": "string" },
-        "status": { "type": "string", "enum": ["Disponível", "Em Uso", "Manutenção", "Descartado"] },
-        "currentMachine": { "type": "string" },
+        "status": { "type": "string", "enum": [ "Disponível", "Em Uso", "Manutenção", "Descartado" ] },
+        "currentMachine": { "type": "string", "description": "LEGACY – Machine prefix (kept for backward compat)." },
+        "currentLocationId": { "type": "string", "description": "FK -> Location.id (canonical)." },
+        "currentMachineId": { "type": "string", "description": "FK -> Machine.id (canonical)." },
         "updatedAt": { "type": "string", "format": "date-time" },
-        "updatedBy": { "type": "string" }
+        "updatedBy": { "type": "string" },
+        "placementVersion": { "type": "integer", "enum": [ 1 ], "description": "Destination verified by explicit storage workflow; exactly one location or machine." }
       },
-      "required": ["id", "serialNumber", "name", "brand", "type", "status", "updatedAt", "updatedBy"]
+      "required": [ "id", "serialNumber", "name", "brand", "type", "status", "updatedAt", "updatedBy" ]
     },
     "Machine": {
       "title": "Agricultural Machine",
@@ -37,13 +40,13 @@
       "properties": {
         "id": { "type": "string" },
         "prefix": { "type": "string" },
-        "type": { "type": "string", "enum": ["Trator", "Colhedora", "Pulverizador", "Outro"] },
+        "type": { "type": "string", "enum": [ "Trator", "Colhedora", "Pulverizador", "Outro" ] },
         "model": { "type": "string" },
         "brand": { "type": "string" },
         "fleet": { "type": "string" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "prefix", "type", "model", "brand", "updatedAt"]
+      "required": [ "id", "prefix", "type", "model", "brand", "updatedAt" ]
     },
     "Movement": {
       "title": "Component Movement Log",
@@ -56,21 +59,24 @@
         "componentName": { "type": "string" },
         "machineId": { "type": "string" },
         "machinePrefix": { "type": "string" },
-        "action": { "type": "string", "enum": ["Instalação", "Remoção", "Manutenção", "Calibração"] },
+        "action": { "type": "string", "enum": [ "Instalação", "Remoção", "Manutenção", "Calibração" ] },
         "technicianId": { "type": "string" },
         "technicianName": { "type": "string" },
         "date": { "type": "string", "format": "date-time" },
         "notes": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
         "osNumber": { "type": "number" },
-        "status": { "type": "string", "enum": ["Aberta", "Agendada", "Em Atendimento", "Concluída", "Cancelada"] },
+        "status": { "type": "string", "enum": [ "Aberta", "Agendada", "Em Atendimento", "Concluída", "Cancelada" ] },
         "history": { "type": "array", "description": "Append-only lifecycle and edit audit events." },
         "completedAt": { "type": "string", "format": "date-time" },
         "cancelledAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
-        "updatedBy": { "type": "string" }
+        "updatedBy": { "type": "string" },
+        "locationId": { "type": "string", "description": "FK -> Location.id (canonical)." },
+        "componentIds": { "type": "array", "description": "Multi-component support (PR5)." },
+        "primaryComponentId": { "type": "string", "description": "Compat: copy of componentId for multi-component OS." }
       },
-      "required": ["id", "componentId", "componentSerial", "componentName", "machinePrefix", "action", "technicianId", "technicianName", "date", "createdAt"]
+      "required": [ "id", "componentId", "componentSerial", "componentName", "machinePrefix", "action", "technicianId", "technicianName", "date", "createdAt" ]
     },
     "FieldDataCollection": {
       "title": "Field Data Collection (Semanal)",
@@ -82,11 +88,11 @@
         "machinePrefix": { "type": "string" },
         "machineBrand": { "type": "string" },
         "machineModel": { "type": "string" },
-        "machineType": { "type": "string", "enum": ["Trator", "Colhedora", "Pulverizador", "Outro"] },
+        "machineType": { "type": "string", "enum": [ "Trator", "Colhedora", "Pulverizador", "Outro" ] },
         "fleet": { "type": "string" },
         "frente": { "type": "string" },
         "weekId": { "type": "string", "description": "ISO week id, e.g. 2026-W32" },
-        "status": { "type": "string", "enum": ["Pendente", "Concluído"] },
+        "status": { "type": "string", "enum": [ "Pendente", "Concluído" ] },
         "collectedAt": { "type": "string", "format": "date-time" },
         "collectedBy": { "type": "string" },
         "history": { "type": "array", "description": "Append-only weekly status events." },
@@ -94,7 +100,7 @@
         "notes": { "type": "string" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["id", "machineId", "machinePrefix", "weekId", "status", "updatedAt"]
+      "required": [ "id", "machineId", "machinePrefix", "weekId", "status", "updatedAt" ]
     },
     "ThirdParty": {
       "title": "Third-Party Provider",
@@ -111,7 +117,7 @@
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       },
-      "required": ["id", "name", "document", "phone", "email", "company", "createdAt", "updatedAt", "updatedBy"]
+      "required": [ "id", "name", "document", "phone", "email", "company", "createdAt", "updatedAt", "updatedBy" ]
     },
     "ComponentLoan": {
       "title": "Component Loan",
@@ -134,20 +140,22 @@
               "componentBrand": { "type": "string" },
               "componentType": { "type": "string" }
             },
-            "required": ["componentId", "componentSerial", "componentName", "componentBrand", "componentType"]
+            "required": [ "componentId", "componentSerial", "componentName", "componentBrand", "componentType" ]
           }
         },
         "loanDate": { "type": "string", "format": "date" },
         "estimatedReturnDate": { "type": "string", "format": "date" },
         "actualReturnDate": { "type": "string", "format": "date" },
-        "status": { "type": "string", "enum": ["Ativo", "Devolvido"] },
+        "status": { "type": "string", "enum": [ "Ativo", "Devolvido" ] },
         "contractNumber": { "type": "string" },
         "notes": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" },
-        "updatedBy": { "type": "string" }
+        "updatedBy": { "type": "string" },
+        "locationId": { "type": "string" },
+        "returnLocationId": { "type": "string" }
       },
-      "required": ["id", "thirdPartyId", "thirdPartyName", "thirdPartyDocument", "thirdPartyCompany", "items", "loanDate", "status", "contractNumber", "createdAt", "updatedAt", "updatedBy"]
+      "required": [ "id", "thirdPartyId", "thirdPartyName", "thirdPartyDocument", "thirdPartyCompany", "items", "loanDate", "status", "contractNumber", "createdAt", "updatedAt", "updatedBy" ]
     },
     "CompanyProfileSettings": {
       "title": "Company Profile Settings",
@@ -163,7 +171,7 @@
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       },
-      "required": ["name", "cnpj", "updatedAt", "updatedBy"]
+      "required": [ "name", "cnpj", "updatedAt", "updatedBy" ]
     },
     "RegisteredType": {
       "title": "Registered Type",
@@ -171,13 +179,13 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
-        "category": { "type": "string", "enum": ["partner", "vehicle", "equipment_component", "service"] },
+        "category": { "type": "string", "enum": [ "partner", "vehicle", "equipment_component", "service" ] },
         "name": { "type": "string" },
         "active": { "type": "boolean" },
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       },
-      "required": ["id", "category", "name", "active", "updatedAt", "updatedBy"]
+      "required": [ "id", "category", "name", "active", "updatedAt", "updatedBy" ]
     },
     "LicenseAlertSettings": {
       "title": "License Alert Settings",
@@ -211,14 +219,14 @@
               "type": { "type": "string" },
               "date": { "type": "string", "format": "date-time" },
               "recipient": { "type": "string" },
-              "status": { "type": "string", "enum": ["Enviado", "Falhou"] }
+              "status": { "type": "string", "enum": [ "Enviado", "Falhou" ] }
             }
           }
         },
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       },
-      "required": ["alertEmails", "enabled", "thresholds", "notifyExpired", "updatedAt", "updatedBy"]
+      "required": [ "alertEmails", "enabled", "thresholds", "notifyExpired", "updatedAt", "updatedBy" ]
     },
     "CampoAlertSettings": {
       "title": "Field Data Alert Settings",
@@ -242,14 +250,14 @@
               "type": { "type": "string" },
               "date": { "type": "string", "format": "date-time" },
               "recipient": { "type": "string" },
-              "status": { "type": "string", "enum": ["Enviado", "Falhou"] }
+              "status": { "type": "string", "enum": [ "Enviado", "Falhou" ] }
             }
           }
         },
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       },
-      "required": ["alertEmails", "enabled", "scheduleDay", "scheduleTime", "updatedAt", "updatedBy"]
+      "required": [ "alertEmails", "enabled", "scheduleDay", "scheduleTime", "updatedAt", "updatedBy" ]
     },
     "LoanAlertSettings": {
       "title": "Loan Alert Settings",
@@ -271,14 +279,14 @@
               "type": { "type": "string" },
               "date": { "type": "string", "format": "date-time" },
               "recipient": { "type": "string" },
-              "status": { "type": "string", "enum": ["Enviado", "Falhou"] }
+              "status": { "type": "string", "enum": [ "Enviado", "Falhou" ] }
             }
           }
         },
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       },
-      "required": ["alertEmails", "enabled", "updatedAt", "updatedBy"]
+      "required": [ "alertEmails", "enabled", "updatedAt", "updatedBy" ]
     },
     "MaintenanceAlertSettings": {
       "title": "Maintenance Alert Settings",
@@ -305,14 +313,14 @@
               "type": { "type": "string" },
               "date": { "type": "string", "format": "date-time" },
               "recipient": { "type": "string" },
-              "status": { "type": "string", "enum": ["Enviado", "Falhou"] }
+              "status": { "type": "string", "enum": [ "Enviado", "Falhou" ] }
             }
           }
         },
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       },
-      "required": ["alertEmails", "enabled", "overdueDays", "notifyCompleted", "updatedAt", "updatedBy"]
+      "required": [ "alertEmails", "enabled", "overdueDays", "notifyCompleted", "updatedAt", "updatedBy" ]
     },
     "IdleAlertSettings": {
       "title": "Idle Components Alert Settings",
@@ -334,14 +342,78 @@
               "type": { "type": "string" },
               "date": { "type": "string", "format": "date-time" },
               "recipient": { "type": "string" },
-              "status": { "type": "string", "enum": ["Enviado", "Falhou"] }
+              "status": { "type": "string", "enum": [ "Enviado", "Falhou" ] }
             }
           }
         },
         "updatedAt": { "type": "string", "format": "date-time" },
         "updatedBy": { "type": "string" }
       },
-      "required": ["alertEmails", "enabled", "idleDays", "updatedAt", "updatedBy"]
+      "required": [ "alertEmails", "enabled", "idleDays", "updatedAt", "updatedBy" ]
+    },
+    "Location": {
+      "title": "Location",
+      "description": "A physical or external destination where components are stored, serviced (assistência técnica), or loaned (comodato).",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "kind": { "type": "string", "enum": [ "INTERNAL", "EXTERNAL_SERVICE", "EXTERNAL_LOAN" ] },
+        "partnerId": { "type": "string", "description": "FK -> Partner.id (optional, for external locations)." },
+        "address": { "type": "string" },
+        "contactPerson": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "notes": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" },
+        "code": { "type": "string", "maxLength": 40 }
+      },
+      "required": [ "id", "name", "kind", "isActive", "updatedAt", "updatedBy" ]
+    },
+    "StorageSettings": {
+      "type": "object",
+      "properties": {
+        "defaultLocationId": { "type": "string" },
+        "revision": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": [ "defaultLocationId", "revision", "updatedAt", "updatedBy" ]
+    },
+    "LocationEvent": {
+      "type": "object",
+      "description": "Immutable destination change. Historical names are snapshots; canonical IDs remain authoritative.",
+      "properties": {
+        "id": { "type": "string" },
+        "operationId": { "type": "string" },
+        "componentId": { "type": "string" },
+        "componentName": { "type": "string" },
+        "componentSerial": { "type": "string" },
+        "from": {
+          "type": "object",
+          "properties": {
+            "locationId": { "type": "string" },
+            "machineId": { "type": "string" },
+            "label": { "type": "string" }
+          }
+        },
+        "to": {
+          "type": "object",
+          "properties": {
+            "locationId": { "type": "string" },
+            "machineId": { "type": "string" },
+            "label": { "type": "string" }
+          }
+        },
+        "action": { "type": "string" },
+        "referenceId": { "type": "string" },
+        "notes": { "type": "string" },
+        "actorId": { "type": "string" },
+        "actorName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "firestore": {
@@ -372,6 +444,40 @@
     "/settings/{settingId}": {
       "schema": { "$ref": "#/entities/CompanyProfileSettings" },
       "description": "System configuration parameters and company profiles. Also stores settings/licenses (LicenseAlertSettings), settings/campo_alerts (CampoAlertSettings), settings/loan_alerts (LoanAlertSettings), settings/maintenance_alerts (MaintenanceAlertSettings) and settings/idle_alerts (IdleAlertSettings)."
+    },
+    "/locations/{locationId}": {
+      "schema": { "$ref": "#/entities/Location" },
+      "description": "Storage locations, external service destinations (assistência técnica) and loan destinations (comodato)."
+    },
+    "/counters/{counterId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "value": { "type": "integer", "description": "Last OS number emitted (atomic counter)." },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "required": [ "value" ]
+      },
+      "description": "Atomic counters for sequential numbering (doc: counters/osNumber)."
+    },
+    "/storage_settings/main": {
+      "schema": { "$ref": "#/entities/StorageSettings" },
+      "description": "Explicit suggested warehouse and serialization revision for atomic storage commands."
+    },
+    "/location_events/{eventId}": {
+      "schema": { "$ref": "#/entities/LocationEvent" },
+      "description": "Immutable placement history, linked by component and operation."
+    },
+    "/storage_operations/{operationId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "actorId": { "type": "string" },
+          "type": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "description": "Immutable idempotency receipts, written atomically with the operation."
     }
   }
 }

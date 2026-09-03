@@ -1,4 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { createEquipmentAvailabilityResolver, AVAILABILITY_STYLES } from '../utils/equipmentAvailability';
+import type { ComponentLoan } from '../types';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNotifications } from './NotificationProvider';
 import { 
@@ -7,9 +9,23 @@ import {
   ComponentStatus, 
   UserRole,
   ComponentMaintenance,
-  MaintenanceProvider,
-  Machine
+  Machine,
+  MovementLog,
+  Location,
+  License
 } from '../types';
+import type { Partner, LocationEvent } from '../types';
+import { StorageSelect, TransferDialog } from './StorageControls';
+import EquipmentDetailModal from './EquipmentDetailModal';
+import HelpGuideModal from './HelpGuideModal';
+import {
+  createEquipmentDestinationResolver,
+  groupEquipmentByDestination,
+  DESTINATION_LABELS,
+  type DestinationKind,
+  type EquipmentDestination,
+  type EquipmentGrouping,
+} from '../utils/equipmentDestinations';
 import { 
   Plus, 
   Search, 
@@ -27,10 +43,30 @@ import {
   Calendar,
   AlertTriangle,
   MoreVertical,
-  SlidersHorizontal
+  SlidersHorizontal,
+  MapPin,
+  Tractor,
+  Warehouse,
+  Handshake,
+  HelpCircle,
+  Layers,
+  FilterX
 } from 'lucide-react';
 
+const DESTINATION_ICONS = {
+  machine: Tractor,
+  internal: Warehouse,
+  service: Wrench,
+  loan: Handshake,
+  unknown: MapPin,
+} satisfies Record<DestinationKind, typeof MapPin>;
+
 interface ComponentsTabProps {
+  partners?: Partner[];
+  defaultLocationId?: string;
+  initialLocationFilter?: string;
+  locationEvents?: LocationEvent[];
+  onTransfer?: (ids: string[], locationId: string, notes: string) => Promise<void>;
   components: AutopilotComponent[];
   machines: Machine[];
   role: UserRole;
@@ -47,16 +83,21 @@ interface ComponentsTabProps {
   onSendToMaintenance?: (maint: Omit<ComponentMaintenance, 'id' | 'updatedAt' | 'updatedBy'>) => Promise<void>;
   onReturnFromMaintenance?: (maintId: string, returnData: {
     returnDate: string;
+    returnLocationId: string;
     replacedParts: string;
     servicesPerformed: string;
     cost: number;
     status: 'Concluído' | 'Sem Conserto';
   }) => Promise<void>;
-  providers?: MaintenanceProvider[];
-  onAddProvider?: (provider: Omit<MaintenanceProvider, 'id' | 'createdAt' | 'updatedAt' | 'updatedBy'>) => Promise<void>;
+  // ── PR3 new (optional, backward compatible) ──
+  loans?: ComponentLoan[];
+  movements?: MovementLog[];
+  locations?: Location[];
+  licenses?: License[];
 }
 
 export default function ComponentsTab({
+  partners = [], defaultLocationId = '', initialLocationFilter, locationEvents = [], onTransfer,
   components,
   machines = [],
   role,
@@ -72,9 +113,11 @@ export default function ComponentsTab({
   maintenances = [],
   onSendToMaintenance,
   onReturnFromMaintenance,
-  providers = [],
-  onAddProvider
+  loans = [], movements = [],
+  locations = [],
+  licenses = []
 }: ComponentsTabProps) {
+  const operational = useMemo(() => createEquipmentAvailabilityResolver({ movements, loans, maintenances, machines, locations }), [movements, loans, maintenances, machines, locations]);
   const isAdminOrTech = role === 'administrador' || role === 'tecnico' || role === 'ADMINISTRADOR' || role === 'TECNICO_CAMPO';
   const { showToast, confirmDialog } = useNotifications();
 
@@ -82,6 +125,15 @@ export default function ComponentsTab({
   const [brandFilter, setBrandFilter] = useState<string>(initialBrandFilter || 'all');
   const [statusFilter, setStatusFilter] = useState<string>(initialStatusFilter || 'all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [locationFilter, setLocationFilter] = useState<string>(initialLocationFilter ? 'internal:location:' + initialLocationFilter : 'all');
+  useEffect(() => { if (initialLocationFilter) { setLocationFilter('internal:location:' + initialLocationFilter); setStatusFilter('all'); setBrandFilter('all'); } }, [initialLocationFilter]);
+  const [storageId, setStorageId] = useState(defaultLocationId);
+  const [returnStorageId, setReturnStorageId] = useState(defaultLocationId);
+  const [transferComp, setTransferComp] = useState<AutopilotComponent | null>(null);
+  const [providerSearch, setProviderSearch] = useState('');
+  const assistancePartners = partners.filter(item => item.active && item.types.includes('Assistência técnica'));
+  const [partnerId, setPartnerId] = useState('');
+  const [groupBy, setGroupBy] = useState<EquipmentGrouping>('none');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
@@ -90,6 +142,42 @@ export default function ComponentsTab({
   const [selectedComp, setSelectedComp] = useState<AutopilotComponent | null>(null);
   const [componentActionsOpen, setComponentActionsOpen] = useState(false);
   const componentActionsRef = useRef<HTMLDivElement>(null);
+
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  const componentHelpSteps = [
+    { title: 'Armazenamento e transferências', description: 'No cadastro, escolha um local ativo. Para mudar entre depósitos, abra o resumo → Localização → Transferir. Não altere o destino editando o cadastro. O local padrão é apenas uma sugestão.', icon: Warehouse, accent: 'bg-emerald-600 text-white' },
+    {
+      title: 'Filtrar e agrupar',
+      description: 'Use os filtros (busca, marca, status e local) e selecione "Por localização" em "Agrupar" para organizar os equipamentos por destino.',
+      icon: Filter,
+      accent: 'bg-emerald-600 text-white'
+    },
+    {
+      title: 'Agrupar por localização',
+      description: 'O agrupamento mostra cada equipamento no contexto de onde ele está — no almoxarifado, em uma máquina, em assistência ou emprestado.',
+      icon: Layers,
+      accent: 'bg-slate-900 text-white'
+    },
+    {
+      title: 'Enviar para manutenção',
+      description: 'Escolha um parceiro do tipo Assistência técnica. O envio registra o destino e o histórico; no retorno, selecione o armazenamento de recebimento, mesmo quando não houver conserto.',
+      icon: Wrench,
+      accent: 'bg-amber-600 text-white'
+    },
+    {
+      title: 'Parceiros como destino',
+      description: 'Assistências vêm de Cadastros → Parceiros, sem criar cadastros duplicados. O vínculo é feito pelo identificador, não pelo nome digitado.',
+      icon: MapPin,
+      accent: 'bg-blue-600 text-white'
+    },
+    {
+      title: 'Excluir = inativar',
+      description: 'Excluir um equipamento o inativa (mantém histórico). A exclusão é bloqueada se houver O.S. ativa ou manutenção em andamento.',
+      icon: ShieldAlert,
+      accent: 'bg-rose-600 text-white'
+    }
+  ];
 
   // Focus a specific component (e.g. arriving from a maintenance notification): open its detail modal
   useEffect(() => {
@@ -136,7 +224,6 @@ export default function ComponentsTab({
   const [maintComponentId, setMaintComponentId] = useState('');
   const [maintComponentSearch, setMaintComponentSearch] = useState('');
   const [maintComponentPickerOpen, setMaintComponentPickerOpen] = useState(false);
-  const [maintProviderName, setMaintProviderName] = useState('');
   const [maintServiceType, setMaintServiceType] = useState('');
   const [maintIssueDescription, setMaintIssueDescription] = useState('');
   const [maintSentDate, setMaintSentDate] = useState(new Date().toISOString().split('T')[0]);
@@ -149,14 +236,6 @@ export default function ComponentsTab({
   const [maintReturnStatus, setMaintReturnStatus] = useState<'Concluído' | 'Sem Conserto'>('Concluído');
   const [maintListTab, setMaintListTab] = useState<'ativos' | 'historico'>('ativos');
 
-  // New Maintenance Provider form states
-  const [isAddingProvider, setIsAddingProvider] = useState(false);
-  const [newProviderName, setNewProviderName] = useState('');
-  const [newProviderPhone, setNewProviderPhone] = useState('');
-  const [newProviderEmail, setNewProviderEmail] = useState('');
-  const [newProviderAddress, setNewProviderAddress] = useState('');
-  const [newProviderContact, setNewProviderContact] = useState('');
-
   useEffect(() => {
     if (!isAdding && !editingComp && !selectedComp && !isSendingToMaint && !returningMaint) return;
     const previousOverflow = document.body.style.overflow;
@@ -166,42 +245,9 @@ export default function ComponentsTab({
     };
   }, [isAdding, editingComp, selectedComp, isSendingToMaint, returningMaint]);
 
-  const handleAddProviderSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newProviderName.trim()) {
-      setError('Por favor, preencha o nome da assistência técnica.');
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-    try {
-      if (onAddProvider) {
-        await onAddProvider({
-          name: newProviderName.trim(),
-          phone: newProviderPhone.trim(),
-          email: newProviderEmail.trim(),
-          address: newProviderAddress.trim(),
-          contactPerson: newProviderContact.trim()
-        });
-      }
-      setMaintProviderName(newProviderName.trim()); // Auto-populate
-      setIsAddingProvider(false);
-      setNewProviderName('');
-      setNewProviderPhone('');
-      setNewProviderEmail('');
-      setNewProviderAddress('');
-      setNewProviderContact('');
-    } catch (err: any) {
-      setError(err.message || 'Erro ao cadastrar nova assistência técnica.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleSendToMaintSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!maintComponentId || !maintProviderName || !maintIssueDescription) {
+    if (!maintComponentId || !partnerId || !maintIssueDescription) {
       setError('Por favor, preencha todos os campos obrigatórios.');
       return;
     }
@@ -219,8 +265,8 @@ export default function ComponentsTab({
           componentBrand: comp.brand,
           componentType: comp.type,
           sentDate: new Date(maintSentDate).toISOString(),
-          providerId: providers.find(provider => provider.name.trim().toLocaleLowerCase('pt-BR') === maintProviderName.trim().toLocaleLowerCase('pt-BR'))?.id || '',
-          providerName: maintProviderName,
+          providerId: partnerId,
+          providerName: assistancePartners.find(item => item.id === partnerId)?.legalName || '',
           serviceType: maintServiceType || undefined,
           issueDescription: maintIssueDescription,
           status: 'Em Manutenção'
@@ -230,7 +276,8 @@ export default function ComponentsTab({
       setMaintComponentId('');
       setMaintComponentSearch('');
       setMaintComponentPickerOpen(false);
-      setMaintProviderName('');
+      setPartnerId('');
+
       setMaintServiceType('');
       setMaintIssueDescription('');
       setMaintSentDate(new Date().toISOString().split('T')[0]);
@@ -251,6 +298,7 @@ export default function ComponentsTab({
       if (onReturnFromMaintenance) {
         await onReturnFromMaintenance(returningMaint.id, {
           returnDate: new Date(maintReturnDate).toISOString(),
+          returnLocationId: returnStorageId,
           replacedParts: maintReplacedParts,
           servicesPerformed: maintServicesPerformed,
           cost: Number(maintCost) || 0,
@@ -275,6 +323,7 @@ export default function ComponentsTab({
     setBrand('Trimble');
     setType('Antena/Receptor');
     setStatus('Disponível');
+    setStorageId(defaultLocationId);
     setCurrentMachine('');
     setError(null);
   };
@@ -306,7 +355,8 @@ export default function ComponentsTab({
         brand,
         type,
         status,
-        currentMachine: status === 'Em Uso' ? currentMachine.trim() : ''
+        currentMachine: '',
+        currentLocationId: storageId
       });
       setIsAdding(false);
       resetForm();
@@ -335,8 +385,8 @@ export default function ComponentsTab({
         brand: isAdminOrTech ? brand : editingComp.brand, // Block editing brand if not admin/tech
         serialNumber: isAdminOrTech ? serialNumber.trim() : editingComp.serialNumber,
         type,
-        status,
-        currentMachine: status === 'Em Uso' ? currentMachine.trim() : ''
+        status: editingComp.status,
+        currentMachine: editingComp.currentMachine || ''
       });
       setEditingComp(null);
       resetForm();
@@ -364,7 +414,7 @@ export default function ComponentsTab({
     if (!isAdminOrTech) return false;
     const confirmed = await confirmDialog({
       title: 'Excluir Componente',
-      message: 'Tem certeza de que deseja excluir este equipamento do cadastro? Esta ação é irreversível.',
+      message: 'Tem certeza de que deseja excluir este equipamento do cadastro? Ele será inativado e mantido no histórico.',
       confirmLabel: 'Sim, Excluir',
       cancelLabel: 'Cancelar',
       danger: true
@@ -380,18 +430,40 @@ export default function ComponentsTab({
     return false;
   };
 
+  const resolveDestination = useMemo(
+    () => createEquipmentDestinationResolver(machines, locations, maintenances),
+    [machines, locations, maintenances],
+  );
+  const destinations: Map<string, EquipmentDestination> = useMemo(
+    () => new Map<string, EquipmentDestination>(components.map(component => [component.id, resolveDestination(component)])),
+    [components, resolveDestination],
+  );
+
   // Filtered listing
   const filteredComponents = components.filter(c => {
     const matchesSearch = c.serialNumber.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          (c.currentMachine && c.currentMachine.toLowerCase().includes(searchTerm.toLowerCase()));
+                          (c.currentMachine && c.currentMachine.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                          destinations.get(c.id)!.label.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesBrand = brandFilter === 'all' ? true : c.brand === brandFilter;
-    const matchesStatus = statusFilter === 'all' ? true : c.status === statusFilter;
+    const matchesStatus = statusFilter === 'all' ? true : operational(c).filterValue === statusFilter;
     const matchesType = typeFilter === 'all' ? true : c.type === typeFilter;
+    const matchesLocation = locationFilter === 'all' ? true : destinations.get(c.id)!.key === locationFilter;
 
-    return matchesSearch && matchesBrand && matchesStatus && matchesType;
+    return matchesSearch && matchesBrand && matchesStatus && matchesType && matchesLocation;
   });
+
+  // Stable destination identities avoid merging distinct records with the same name.
+  const locationOptions = Array.from(new Map<string, EquipmentDestination>([...Array.from(destinations.values()), ...locations.filter(item => item.kind === 'INTERNAL').map(item => ({ key: `internal:location:${item.id}`, kind: 'internal' as const, label: item.name }))].map(destination =>
+    [destination.key, destination]
+  )).values()).sort((a, b) =>
+    a.label.localeCompare(b.label, 'pt-BR', { numeric: true }) || a.key.localeCompare(b.key)
+  );
+
+
+  // Group filtered components when groupBy is active
+  const groupedComponents = groupEquipmentByDestination(filteredComponents, groupBy, c => destinations.get(c.id)!);
 
   const componentTypes = configuredComponentTypes.length > 0 ? configuredComponentTypes : [
     'Antena/Receptor',
@@ -403,10 +475,12 @@ export default function ComponentsTab({
     'Outro'
   ];
 
+  useEffect(() => { if (returningMaint) setReturnStorageId(defaultLocationId); }, [returningMaint?.id]);
+
   if (showMaintenanceView) {
     const activeMaintenances = maintenances.filter(m => m.status === 'Em Manutenção');
     const pastMaintenances = maintenances.filter(m => m.status !== 'Em Manutenção');
-    const availableMaintenanceComponents = components.filter(c => c.status !== 'Manutenção' && c.status !== 'Descartado');
+    const availableMaintenanceComponents = components.filter(c => operational(c).canSendToMaintenance);
     const maintenanceComponentMatches = availableMaintenanceComponents.filter(component => {
       const query = maintComponentSearch.trim().toLocaleLowerCase('pt-BR');
       if (!query || component.id === maintComponentId) return true;
@@ -416,6 +490,8 @@ export default function ComponentsTab({
 
     return (
       <div className="space-y-4 animate-fade-in" id="maintenance-module">
+        <button onClick={() => setHelpOpen(true)} className="float-right flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500" aria-label="Ajuda sobre manutenção externa"><HelpCircle size={18} /></button>
+        <HelpGuideModal open={helpOpen} onClose={() => setHelpOpen(false)} title="Manutenção externa" steps={componentHelpSteps.filter(step => ['Enviar para manutenção', 'Parceiros como destino', 'Armazenamento e transferências'].includes(step.title))} />
         {/* Header */}
         <button
           onClick={() => { setShowMaintenanceView(false); setIsSendingToMaint(false); setReturningMaint(null); setError(null); }}
@@ -571,33 +647,14 @@ export default function ComponentsTab({
                 )}
               </div>
 
-              <div>
-                <label className="mb-1 block text-xs font-bold text-slate-700">Empresa / Assistência Técnica de Destino *</label>
-                <input
-                  type="text"
-                  required
-                  list="providers-list"
-                  value={maintProviderName}
-                  onChange={(e) => setMaintProviderName(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-amber-500 focus:border-amber-500 text-xs"
-                  placeholder="Selecione ou digite a assistência técnica..."
-                />
-                <datalist id="providers-list">
-                  {providers.map((p) => (
-                    <option key={p.id} value={p.name} />
-                  ))}
-                  <option value="Trimble Service Center" />
-                  <option value="Laboratório Oeste GPS" />
-                  <option value="Topcon Precision Repair" />
-                </datalist>
-                <button
-                  type="button"
-                  onClick={() => { setIsAddingProvider(true); setError(null); }}
-                  className="mt-1.5 flex min-h-7 items-center gap-1 rounded-lg px-1.5 text-[10px] font-semibold text-slate-500 transition-colors hover:bg-amber-50 hover:text-amber-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-                >
-                  <Plus className="h-3 w-3" />
-                  Cadastrar nova assistência
-                </button>
+              <div className="space-y-2">
+                <label className="block text-xs font-bold text-slate-700" htmlFor="assistance-search">Assistência técnica *</label>
+                <input id="assistance-search" value={providerSearch} onChange={event => setProviderSearch(event.target.value)} placeholder="Buscar parceiro por nome ou documento" className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm" />
+                <select aria-label="Parceiro assistência técnica" required value={partnerId} onChange={event => setPartnerId(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-200 px-3 text-sm">
+                  <option value="">Selecione o parceiro</option>
+                  {assistancePartners.filter(item => item.id === partnerId || (item.legalName + ' ' + (item.tradingName || '') + ' ' + item.document).toLocaleLowerCase().includes(providerSearch.toLocaleLowerCase())).map(item => <option key={item.id} value={item.id}>{item.tradingName || item.legalName} · {item.document}</option>)}
+                </select>
+                <p className="text-xs text-slate-500">Gerencie as assistências em Cadastros → Parceiros. O destino é vinculado ao parceiro selecionado.</p>
               </div>
                 </div>
               </section>
@@ -702,6 +759,7 @@ export default function ComponentsTab({
             </div>
 
             <form onSubmit={handleReturnFromMaintSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="md:col-span-3"><StorageSelect locations={locations} value={returnStorageId} onChange={setReturnStorageId} defaultId={defaultLocationId} /></div>
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Resultado da Manutenção *</label>
                 <select
@@ -1059,102 +1117,6 @@ export default function ComponentsTab({
         </div>
         </div>
 
-        {/* Modal para cadastro de Nova Assistência Técnica */}
-        {isAddingProvider && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in" id="add-provider-modal">
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-md w-full overflow-hidden">
-              <div className="bg-amber-50 border-b border-amber-100 px-6 py-4 flex justify-between items-center">
-                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
-                  <Wrench className="h-4.5 w-4.5 text-amber-600" />
-                  Cadastrar Nova Assistência Técnica
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setIsAddingProvider(false)}
-                  className="p-1 hover:bg-amber-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <form onSubmit={handleAddProviderSubmit} className="p-6 space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Nome / Razão Social *</label>
-                  <input
-                    type="text"
-                    required
-                    value={newProviderName}
-                    onChange={(e) => setNewProviderName(e.target.value)}
-                    placeholder="Ex: Laboratório Oeste GPS Ltda"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-amber-500 focus:border-amber-500 text-xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Pessoa de Contato</label>
-                  <input
-                    type="text"
-                    value={newProviderContact}
-                    onChange={(e) => setNewProviderContact(e.target.value)}
-                    placeholder="Ex: Engenheiro Carlos"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-amber-500 focus:border-amber-500 text-xs"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">Telefone</label>
-                    <input
-                      type="text"
-                      value={newProviderPhone}
-                      onChange={(e) => setNewProviderPhone(e.target.value)}
-                      placeholder="Ex: (45) 99988-7766"
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-amber-500 focus:border-amber-500 text-xs"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">E-mail</label>
-                    <input
-                      type="email"
-                      value={newProviderEmail}
-                      onChange={(e) => setNewProviderEmail(e.target.value)}
-                      placeholder="Ex: contato@oestegps.com"
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-amber-500 focus:border-amber-500 text-xs"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Endereço Completo</label>
-                  <input
-                    type="text"
-                    value={newProviderAddress}
-                    onChange={(e) => setNewProviderAddress(e.target.value)}
-                    placeholder="Rua, Número, Bairro, Cidade - UF"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-amber-500 focus:border-amber-500 text-xs"
-                  />
-                </div>
-
-                <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={() => setIsAddingProvider(false)}
-                    className="px-4 py-2 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold hover:bg-slate-50 transition-colors"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors"
-                  >
-                    {loading ? 'Salvando...' : 'Cadastrar Assistência'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
       </div>
     );
   }
@@ -1202,7 +1164,16 @@ export default function ComponentsTab({
           </p>
         </div>
 
-        <div className="flex items-center justify-between gap-2 md:flex-wrap md:justify-start">
+        <div className="flex items-center justify-between gap-2 flex-wrap md:justify-start">
+          <button
+            type="button"
+            onClick={() => setHelpOpen(true)}
+            aria-label="Ajuda sobre equipamentos GPS"
+            title="Como usar esta tela"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+          >
+            <HelpCircle className="h-5 w-5" />
+          </button>
           {isAdminOrTech && !isAdding && !editingComp && (
             <div className="flex min-w-0 items-center gap-2">
               <button
@@ -1309,127 +1280,38 @@ export default function ComponentsTab({
               <option value="all">Todos os status</option>
               <option value="Disponível">Disponível</option>
               <option value="Em Uso">Em Uso</option>
-              <option value="Manutenção">Manutenção</option>
+              <option value="Manutenção">Manutenção pendente / em andamento</option>
+              <option value="Reservado">Reservado para O.S.</option>
+              <option value="Bloqueado">Pendências de cadastro</option>
               <option value="Descartado">Descartado</option>
             </select>
           </div>
         )}
       </div>
 
-      {selectedComp && createPortal(
-        <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center sm:p-4">
-          <button
-            type="button"
-            aria-label="Fechar resumo do equipamento"
-            className="absolute inset-0 cursor-default bg-slate-950/55 backdrop-blur-[1px]"
-            onClick={() => {
-              setComponentActionsOpen(false);
-              setSelectedComp(null);
-            }}
-          />
-          <div className="relative flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-xl sm:rounded-2xl">
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
-              <div className="flex min-w-0 items-start gap-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
-                  <Cpu className="h-5 w-5" />
-                </span>
-                <div className="min-w-0">
-                  <h2 className="truncate text-base font-bold text-slate-900 sm:text-lg">{selectedComp.name}</h2>
-                  <p className="mt-0.5 truncate font-mono text-xs text-slate-500">S/N {selectedComp.serialNumber}</p>
-                </div>
-              </div>
-              <div ref={componentActionsRef} className="relative flex shrink-0 items-center gap-1">
-                {isAdminOrTech && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => startEdit(selectedComp)}
-                      aria-label="Editar equipamento"
-                      title="Editar equipamento"
-                      className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-emerald-50 hover:text-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-                    >
-                      <Edit className="h-4 w-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setComponentActionsOpen(open => !open)}
-                      aria-label="Mais ações do equipamento"
-                      aria-expanded={componentActionsOpen}
-                      className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-                    >
-                      <MoreVertical className="h-5 w-5" />
-                    </button>
-                    {componentActionsOpen && (
-                      <div className="absolute right-10 top-10 z-20 w-48 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            setComponentActionsOpen(false);
-                            const deleted = await handleDelete(selectedComp.id);
-                            if (deleted) setSelectedComp(null);
-                          }}
-                          className="flex min-h-10 w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-semibold text-rose-600 transition-colors hover:bg-rose-50"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          Excluir equipamento
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setComponentActionsOpen(false);
-                    setSelectedComp(null);
-                  }}
-                  aria-label="Fechar resumo"
-                  className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/60 px-4 py-4 sm:px-5">
-              <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-                <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-4">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Equipamento GPS</p>
-                    <p className="mt-1 text-lg font-bold text-slate-900">{selectedComp.name}</p>
-                  </div>
-                  <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${
-                    selectedComp.status === 'Disponível' ? 'border-blue-100 bg-blue-50 text-blue-700' :
-                    selectedComp.status === 'Em Uso' ? 'border-emerald-100 bg-emerald-50 text-emerald-700' :
-                    selectedComp.status === 'Manutenção' ? 'border-amber-100 bg-amber-50 text-amber-700' :
-                    'border-rose-100 bg-rose-50 text-rose-700'
-                  }`}>{selectedComp.status}</span>
-                </div>
-                <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-5">
-                  <div>
-                    <dt className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Número de série</dt>
-                    <dd className="mt-1 break-all font-mono text-xs font-semibold text-slate-700">{selectedComp.serialNumber}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Marca</dt>
-                    <dd className="mt-1 text-sm font-semibold text-slate-700">{selectedComp.brand}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Tipo</dt>
-                    <dd className="mt-1 text-sm font-semibold text-slate-700">{selectedComp.type}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Máquina / localização</dt>
-                    <dd className="mt-1 text-sm font-semibold text-slate-700">
-                      {selectedComp.status === 'Em Uso' ? selectedComp.currentMachine || 'Não informada' : 'Almoxarifado central'}
-                    </dd>
-                  </div>
-                </dl>
-              </section>
-            </div>
-          </div>
-        </div>,
-        document.body
+      {transferComp && onTransfer && <TransferDialog components={[transferComp]} locations={locations} defaultId={defaultLocationId} onClose={() => setTransferComp(null)} onTransfer={onTransfer} />}
+      {selectedComp && (
+        <EquipmentDetailModal
+          locationEvents={locationEvents}
+          onTransfer={onTransfer ? comp => { setSelectedComp(null); setTransferComp(comp); } : undefined}
+          component={components.find(item => item.id === selectedComp.id) || selectedComp}
+          machines={machines}
+          locations={locations}
+          movements={movements}
+          loans={loans}
+          maintenances={maintenances}
+          licenses={licenses}
+          isAdminOrTech={isAdminOrTech}
+          onEdit={(comp) => {
+            setComponentActionsOpen(false);
+            startEdit(comp);
+          }}
+          onDelete={handleDelete}
+          onClose={() => {
+            setComponentActionsOpen(false);
+            setSelectedComp(null);
+          }}
+        />
       )}
 
       {/* Forms Area */}
@@ -1518,34 +1400,7 @@ export default function ComponentsTab({
               </select>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Situação Inicial *</label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value as ComponentStatus)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs bg-white"
-                id="select-comp-status"
-              >
-                <option value="Disponível">Disponível no Almoxarifado</option>
-                <option value="Em Uso">Em Uso (Instalado)</option>
-                <option value="Manutenção">Em Manutenção/Laboratório</option>
-                <option value="Descartado">Descartado/Obsoleto</option>
-              </select>
-            </div>
-
-            {status === 'Em Uso' && (
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Instalado na Máquina (Prefixo)</label>
-                <input
-                  type="text"
-                  value={currentMachine}
-                  onChange={(e) => setCurrentMachine(e.target.value.toUpperCase())}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs"
-                  placeholder="Ex: T01 / C12"
-                  id="input-comp-machine"
-                />
-              </div>
-            )}
+            <div className="sm:col-span-2"><StorageSelect locations={locations} value={storageId} onChange={setStorageId} defaultId={defaultLocationId} label="Armazenamento inicial" /><p className="mt-2 text-xs text-slate-500">O equipamento será cadastrado como disponível. Instalações são registradas por O.S.</p></div>
 
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-2 sm:col-span-2">
               <button
@@ -1659,34 +1514,7 @@ export default function ComponentsTab({
               </select>
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Situação / Status *</label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value as ComponentStatus)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-indigo-500 focus:border-indigo-500 text-xs bg-white"
-                id="edit-comp-status"
-              >
-                <option value="Disponível">Disponível no Almoxarifado</option>
-                <option value="Em Uso">Em Uso (Instalado)</option>
-                <option value="Manutenção">Em Manutenção/Laboratório</option>
-                <option value="Descartado">Descartado/Obsoleto</option>
-              </select>
-            </div>
-
-            {status === 'Em Uso' && (
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Instalado na Máquina (Prefixo)</label>
-                <input
-                  type="text"
-                  value={currentMachine}
-                  onChange={(e) => setCurrentMachine(e.target.value.toUpperCase())}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-indigo-500 focus:border-indigo-500 text-xs"
-                  placeholder="Ex: T01 / C12"
-                  id="edit-comp-machine"
-                />
-              </div>
-            )}
+            <div className="rounded-xl bg-slate-50 p-3 text-sm sm:col-span-2"><strong>{editingComp.status}</strong><p>{resolveDestination(editingComp).label}</p><p className="mt-2 text-xs text-slate-500">Use transferência, O.S., empréstimo ou manutenção para alterar o destino.</p></div>
 
             <div className="flex justify-end gap-2 border-t border-slate-100 pt-2 sm:col-span-2">
               <button
@@ -1757,16 +1585,113 @@ export default function ComponentsTab({
               <option value="all">Todos os Status</option>
               <option value="Disponível">Disponível</option>
               <option value="Em Uso">Em Uso</option>
-              <option value="Manutenção">Manutenção</option>
+              <option value="Manutenção">Manutenção pendente / em andamento</option>
+              <option value="Reservado">Reservado para O.S.</option>
+              <option value="Bloqueado">Pendências de cadastro</option>
               <option value="Descartado">Descartado</option>
+            </select>
+          </div>
+
+          {/* Location select filter */}
+          {locationOptions.length > 0 && (
+            <div className={`${mobileFiltersOpen ? 'flex' : 'hidden'} w-full items-center gap-2 md:flex md:w-52`}>
+              <span className="text-[11px] text-slate-400 font-bold whitespace-nowrap uppercase">Local:</span>
+              <select
+                value={locationFilter}
+                onChange={(e) => setLocationFilter(e.target.value)}
+                className="block w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-xs font-semibold focus:outline-none"
+                id="filter-location-select"
+              >
+                <option value="all">Todos os Locais</option>
+                {locationOptions.map((destination) => (
+                  <option key={destination.key} value={destination.key}>
+                    {destination.label} · {DESTINATION_LABELS[destination.kind].category}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Grouping toggle */}
+          <div className={`${mobileFiltersOpen ? 'flex' : 'hidden'} w-full items-center gap-2 md:flex md:w-auto`}>
+            <span className="text-[11px] text-slate-400 font-bold whitespace-nowrap uppercase">Agrupar:</span>
+            <select
+              value={groupBy}
+              onChange={(e) => setGroupBy(e.target.value as EquipmentGrouping)}
+              className="block w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-xs font-semibold focus:outline-none"
+              id="group-components-select"
+            >
+              <option value="none">Sem agrupamento</option>
+              <option value="location">Por localização</option>
             </select>
           </div>
 
         </div>
       </div>
 
-      {/* Components Grid / Table */}
-      {filteredComponents.length === 0 ? (
+      {/* Components Grid / Table (grouped view when grouping is active) */}
+      {groupBy !== 'none' ? (
+        <div className="space-y-4" id="components-grouped-view">
+          {groupedComponents.map((group) => {
+            const DestinationIcon = DESTINATION_ICONS[group.kind];
+            return (
+            <div key={group.key} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex items-center justify-between gap-3 bg-slate-50 border-b border-slate-200 px-4 py-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white border border-slate-200 text-slate-600">
+                    <DestinationIcon className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="break-words text-sm font-bold text-slate-900">
+                      {group.label}
+                    </p>
+                    <p className="mt-0.5 flex flex-wrap items-center gap-x-1 text-[11px] text-slate-500 font-medium">
+                      <span>{DESTINATION_LABELS[group.kind].category}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{group.items.length} equipamento{group.items.length === 1 ? '' : 's'}</span>
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-2 p-3 md:grid-cols-2 lg:grid-cols-3">
+                {group.items.map((comp) => {
+                  const destination = destinations.get(comp.id)!;
+                  let statusBadge = 'bg-slate-100 text-slate-700 border-slate-200';
+                  if (comp.status === 'Disponível') statusBadge = 'bg-blue-50 text-blue-700 border-blue-100';
+                  if (comp.status === 'Em Uso') statusBadge = 'bg-emerald-50 text-emerald-700 border-emerald-100';
+                  if (comp.status === 'Manutenção') statusBadge = 'bg-amber-50 text-amber-700 border-amber-100';
+                  if (comp.status === 'Descartado') statusBadge = 'bg-rose-50 text-rose-700 border-rose-100';
+                  return (
+                    <button
+                      key={comp.id}
+                      type="button"
+                      onClick={() => setSelectedComp(comp)}
+                      className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 text-left transition-colors hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${AVAILABILITY_STYLES[operational(comp).tone]}`}>{operational(comp).label}</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-indigo-50 text-indigo-700 border-indigo-100">{comp.brand}</span>
+                      </div>
+                      <p className="text-sm font-bold text-slate-900 leading-tight">{comp.name}</p>
+                      <p className="font-mono text-[10px] text-slate-500">S/N: {comp.serialNumber}</p>
+                      <p className="break-words text-[11px] text-slate-600">
+                        <span className="text-slate-400 font-medium">{DESTINATION_LABELS[destination.kind].field}:</span>{' '}
+                        {destination.label}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            );
+          })}
+          {filteredComponents.length === 0 && (
+            <div className="bg-white p-12 text-center border border-slate-200 rounded-2xl text-slate-400 text-sm">
+              Nenhum equipamento de piloto automático correspondente aos filtros foi encontrado.
+            </div>
+          )}
+        </div>
+      ) : filteredComponents.length === 0 ? (
         <div className="bg-white p-12 text-center border border-slate-200 rounded-2xl text-slate-400 text-sm">
           Nenhum equipamento de piloto automático correspondente aos filtros foi encontrado.
         </div>
@@ -1785,7 +1710,7 @@ export default function ComponentsTab({
               ? 'bg-indigo-50 text-indigo-700 border-indigo-100' 
               : 'bg-sky-50 text-sky-700 border-sky-100';
 
-            const foundMachine = machines.find(m => m.prefix.trim().toUpperCase() === (comp.currentMachine || '').trim().toUpperCase());
+            const destination = destinations.get(comp.id)!;
 
             return (
               <div 
@@ -1807,8 +1732,8 @@ export default function ComponentsTab({
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${brandBadge}`}>
                     {comp.brand}
                   </span>
-                  <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${statusBadge}`}>
-                    {comp.status}
+                  <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${AVAILABILITY_STYLES[operational(comp).tone]}`}>
+                    {operational(comp).label}
                   </span>
                 </div>
 
@@ -1824,20 +1749,20 @@ export default function ComponentsTab({
                     <span className="text-slate-400 font-medium">Tipo:</span> {comp.type}
                   </p>
                   <p className="text-slate-600">
-                    <span className="text-slate-400 font-medium">Máquina / Localização:</span>{' '}
-                    {comp.status === 'Em Uso' ? (
+                    <span className="text-slate-400 font-medium">{DESTINATION_LABELS[destination.kind].field}:</span>{' '}
+                    {destination.kind === 'machine' ? (
                       <span className="flex flex-col gap-0.5">
                         <span className="font-bold text-slate-800 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md inline-block w-fit">
-                          {comp.currentMachine || 'N/A'}
+                          {destination.label}
                         </span>
-                        {foundMachine && foundMachine.fleet && (
+                        {destination.fleet && (
                           <span className="text-[10px] text-slate-500 font-semibold">
-                            {foundMachine.fleet}
+                            {destination.fleet}
                           </span>
                         )}
                       </span>
                     ) : (
-                      <span className="text-slate-400 italic">Almoxarifado Central</span>
+                      <span className="break-words">{destination.label}</span>
                     )}
                   </p>
                 </div>
@@ -1862,6 +1787,7 @@ export default function ComponentsTab({
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs text-slate-700" id="components-table-body">
                 {filteredComponents.map((comp) => {
+                  const destination = destinations.get(comp.id)!;
                   let statusBadge = 'bg-slate-100 text-slate-700 border-slate-200';
                   if (comp.status === 'Disponível') statusBadge = 'bg-blue-50 text-blue-700 border-blue-100';
                   if (comp.status === 'Em Uso') statusBadge = 'bg-emerald-50 text-emerald-700 border-emerald-100';
@@ -1903,30 +1829,18 @@ export default function ComponentsTab({
                         {comp.type}
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${statusBadge}`}>
-                          {comp.status}
+                        <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${AVAILABILITY_STYLES[operational(comp).tone]}`}>
+                          {operational(comp).label}
                         </span>
                       </td>
                       <td className="py-3 px-4">
-                        {comp.status === 'Em Uso' ? (
-                          (() => {
-                            const foundMachine = machines.find(m => m.prefix.trim().toUpperCase() === (comp.currentMachine || '').trim().toUpperCase());
-                            return (
-                              <div className="flex flex-col gap-0.5">
-                                <span className="font-bold text-slate-800 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md inline-block w-fit">
-                                  {comp.currentMachine || 'N/A'}
-                                </span>
-                                {foundMachine && foundMachine.fleet && (
-                                  <span className="text-[10px] text-slate-500 font-semibold mt-0.5 ml-0.5">
-                                    {foundMachine.fleet}
-                                  </span>
-                                )}
-                              </div>
-                            );
-                          })()
-                        ) : (
-                          <span className="text-slate-400 italic">Almoxarifado Central</span>
-                        )}
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-[10px] text-slate-500">{DESTINATION_LABELS[destination.kind].field}</span>
+                          <span className={destination.kind === 'machine'
+                            ? 'font-bold text-slate-800 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md inline-block w-fit'
+                            : 'text-slate-600'}>{destination.label}</span>
+                          {destination.fleet && <span className="text-[10px] text-slate-500 font-semibold">{destination.fleet}</span>}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1952,6 +1866,13 @@ export default function ComponentsTab({
           </div>
         </div>
       )}
+
+      <HelpGuideModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        title="Como usar Equipamentos GPS"
+        steps={componentHelpSteps}
+      />
 
     </div>
   );

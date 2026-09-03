@@ -24,8 +24,11 @@ import {
   Plus,
   Check,
   ArrowLeft,
-  Maximize2
+  Maximize2,
+  HelpCircle
 } from 'lucide-react';
+import HelpGuideModal from './HelpGuideModal';
+import type { HelpGuideStep } from './HelpGuideModal';
 
 interface SupportAttachment {
   id: string;
@@ -990,6 +993,7 @@ function MeusChamados({ user, focusTicketId, onFocusConsumed }: { user: UserProf
 export default function SupportTab({ user, onBackToDashboard, focusTicketId, onFocusConsumed }: SupportTabProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [view, setView] = useState<'form' | 'chamados'>('chamados');
+  const [helpOpen, setHelpOpen] = useState(false);
 
   useEffect(() => {
     if (focusTicketId) setView('chamados');
@@ -1140,6 +1144,39 @@ export default function SupportTab({ user, onBackToDashboard, focusTicketId, onF
     setView('chamados');
   };
 
+  const helpSteps: HelpGuideStep[] = [
+    {
+      title: 'Bem-vindo à Central de atendimento',
+      description: 'Esta tela reúne todo o contato com a equipe de suporte. Você abre chamados, acompanha o andamento dos atendimentos e responde às mensagens, tudo em um só lugar.',
+      icon: LifeBuoy,
+      accent: 'bg-emerald-600 text-white'
+    },
+    {
+      title: 'Abrir um novo chamado',
+      description: 'Toque em "Novo chamado", informe o assunto, descreva o que aconteceu e escolha a prioridade. Quanto mais detalhes, mais rápido conseguimos resolver.',
+      icon: Plus,
+      accent: 'bg-blue-600 text-white'
+    },
+    {
+      title: 'Anexar evidências',
+      description: 'Você pode enviar até 4 arquivos (PNG, JPG, WEBP, GIF ou PDF) com até 6 MB cada. Capturas de tela ajudam muito a identificar o problema.',
+      icon: Paperclip,
+      accent: 'bg-violet-600 text-white'
+    },
+    {
+      title: 'Acompanhar e responder',
+      description: 'Na aba "Meus chamados", filtre por status, pesquise pelo assunto ou protocolo e abra qualquer chamado para ver a conversa, anexos e enviar respostas diretamente.',
+      icon: MessageSquareText,
+      accent: 'bg-amber-600 text-white'
+    },
+    {
+      title: 'A prioridade importa',
+      description: 'Baixa: dúvida ou melhoria. Média: dificulta a operação. Alta: operação interrompida. Use alta apenas em casos que realmente travem o trabalho.',
+      icon: AlertTriangle,
+      accent: 'bg-slate-900 text-white'
+    }
+  ];
+
   if (success) {
     return (
       <div className="mx-auto max-w-2xl py-4 sm:py-8">
@@ -1251,24 +1288,46 @@ export default function SupportTab({ user, onBackToDashboard, focusTicketId, onF
               <h2 className="text-base font-extrabold text-slate-900">Meus chamados</h2>
               <p className="mt-0.5 hidden text-xs text-slate-500 sm:block">Consulte protocolos e atualizações do atendimento.</p>
             </div>
-            <button
-              type="button"
-              onClick={handleNewTicket}
-              className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition-colors hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
-            >
-              <Plus className="h-4 w-4" />
-              Novo chamado
-            </button>
+            <div className="flex shrink-0 items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setHelpOpen(true)}
+                aria-label="Ajuda sobre suporte"
+                title="Como usar esta tela"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+              >
+                <HelpCircle className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={handleNewTicket}
+                className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-sm transition-colors hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2"
+              >
+                <Plus className="h-4 w-4" />
+                Novo chamado
+              </button>
+            </div>
           </>
         ) : (
-          <button
-            type="button"
-            onClick={handleGoToChamados}
-            className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Voltar aos chamados
-          </button>
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={handleGoToChamados}
+              className="inline-flex min-h-11 items-center gap-2 rounded-xl px-2 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Voltar aos chamados
+            </button>
+            <button
+              type="button"
+              onClick={() => setHelpOpen(true)}
+              aria-label="Ajuda sobre suporte"
+              title="Como usar esta tela"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+            >
+              <HelpCircle className="h-5 w-5" />
+            </button>
+          </div>
         )}
       </div>
 
@@ -1374,6 +1433,13 @@ export default function SupportTab({ user, onBackToDashboard, focusTicketId, onF
           </details>
         </div>
       )}
+
+      <HelpGuideModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        title="Como usar a Central de atendimento"
+        steps={helpSteps}
+      />
     </div>
   );
 }

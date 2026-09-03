@@ -1,3 +1,7 @@
+import { createEquipmentAvailabilityResolver, resolveServiceAction, SERVICE_ACTIONS, orderItems } from '../utils/equipmentAvailability';
+import type { ComponentLoan, ComponentMaintenance } from '../types';
+import { StorageSelect } from './StorageControls';
+import type { Location } from '../types';
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { 
@@ -25,13 +29,23 @@ import {
   Edit,
   Trash2,
   ChevronDown,
-  Download
+  Download,
+  HelpCircle,
+  Layers,
+  Wrench,
+  History,
+  ShieldCheck
 } from 'lucide-react';
 import FieldDataKanban from './FieldDataKanban';
+import HelpGuideModal from './HelpGuideModal';
 import { useNotifications } from './NotificationProvider';
 import { generateOsPdf } from '../utils/osPdf';
 
 interface MovementsTabProps {
+  loans?: ComponentLoan[];
+  maintenances?: ComponentMaintenance[];
+  locations?: Location[];
+  defaultLocationId?: string;
   movements: MovementLog[];
   components: AutopilotComponent[];
   machines: Machine[];
@@ -46,7 +60,7 @@ interface MovementsTabProps {
   onDeleteMovement?: (movement: MovementLog) => Promise<void>;
   onCompleteCollection?: (machine: Machine, targetWeekId: string) => Promise<void>;
   onEnsureWeekRecords?: (machines: Machine[], targetWeekId: string) => Promise<void>;
-  onTransitionOSStatus?: (movement: MovementLog, nextStatus: MovementStatus, actionLabel: string, detail?: string) => Promise<void>;
+  onTransitionOSStatus?: (movement: MovementLog, nextStatus: MovementStatus, actionLabel: string, detail?: string, locationId?: string) => Promise<void>;
   initialSubTab?: 'os' | 'kanban';
   initialKanbanStatus?: 'Pendente' | 'Concluído';
 }
@@ -67,6 +81,7 @@ const ACTION_LABELS: Record<MovementAction, string> = {
 };
 
 export default function MovementsTab({
+  locations = [], defaultLocationId = '', loans = [], maintenances = [],
   movements,
   components,
   machines,
@@ -99,8 +114,12 @@ export default function MovementsTab({
   // OS form / details / menu state
   const [isAdding, setIsAdding] = useState(false);
   const [editingMove, setEditingMove] = useState<MovementLog | null>(null);
+  const [receivingLocationId, setReceivingLocationId] = useState(defaultLocationId);
+  const [orderLocationId, setOrderLocationId] = useState(defaultLocationId);
   const [selectedMove, setSelectedMove] = useState<MovementLog | null>(null);
   const [detailMenuOpen, setDetailMenuOpen] = useState(false);
+  useEffect(() => { setReceivingLocationId(selectedMove?.locationId || defaultLocationId); }, [selectedMove?.id]);
+  useEffect(() => { setOrderLocationId(editingMove?.locationId || defaultLocationId); }, [editingMove?.id, isAdding]);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [showDownloadModal, setShowDownloadModal] = useState(false);
   const [downloadOption, setDownloadOption] = useState<'os' | 'os-historico'>('os');
@@ -112,6 +131,7 @@ export default function MovementsTab({
 
   // Form states
   const [componentId, setComponentId] = useState('');
+  const [selectedComponentIds, setSelectedComponentIds] = useState<string[]>([]);
   const [machineId, setMachineId] = useState('');
   const [machinePrefix, setMachinePrefix] = useState('');
   const [action, setAction] = useState<MovementAction>('Instalação');
@@ -121,6 +141,54 @@ export default function MovementsTab({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  const osHelpSteps = [
+    { title: 'Destino e recebimento', description: 'Abrir, agendar e iniciar não mudam o local físico. A instalação concluída vincula à máquina; a remoção exige um armazenamento ativo. Confira o recebimento no resumo antes de concluir. Calibração e manutenção interna preservam o local; assistência externa tem fluxo próprio.', icon: ShieldCheck, accent: 'bg-emerald-600 text-white' },
+    {
+      title: 'O.S. multi-equipamento',
+      description: 'Uma única ordem de serviço pode envolver vários equipamentos GPS ao mesmo tempo — por exemplo, instalar antena e monitor no mesmo trator.',
+      icon: Layers,
+      accent: 'bg-emerald-600 text-white',
+      content: (
+        <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs leading-relaxed text-slate-600 shadow-sm">
+          Marque a caixa de cada equipamento desejado. O <strong className="text-slate-800">primeiro marcado</strong> vira o <strong className="text-emerald-700">Principal</strong> e define o número e os dados de referência da O.S.
+        </div>
+      )
+    },
+    {
+      title: 'Equipamentos elegíveis',
+      description: 'A lista mostra apenas o que faz sentido para a operação escolhida. Itens inativados não aparecem.',
+      icon: ClipboardList,
+      accent: 'bg-slate-900 text-white',
+      content: (
+        <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600 shadow-sm">
+          <div className="flex items-center justify-between"><span>Instalação</span><span className="font-bold text-slate-800">Apenas Disponíveis</span></div>
+          <div className="flex items-center justify-between"><span>Remoção / Calibração</span><span className="font-bold text-slate-800">Apenas Em Uso</span></div>
+          <div className="flex items-center justify-between"><span>Manutenção</span><span className="font-bold text-slate-800">Ativos em geral</span></div>
+        </div>
+      )
+    },
+    {
+      title: 'Validação por equipamento',
+      description: 'Antes de criar, o sistema confirma que nenhum dos equipamentos possui outra O.S. ativa e aponta exatamente qual conflita.',
+      icon: ShieldCheck,
+      accent: 'bg-blue-600 text-white'
+    },
+    {
+      title: 'Conclusão atualiza todos',
+      description: 'Ao concluir a O.S., todos os equipamentos vinculados mudam de estado juntos (em produção, em uma única transação).',
+      icon: Wrench,
+      accent: 'bg-violet-600 text-white'
+    },
+    {
+      title: 'Edição pré-carregada',
+      description: 'Ao editar uma O.S. aberta/agendada, a seleção vem preenchida com os equipamentos já vinculados. O.S. em atendimento, concluídas ou canceladas não podem ser editadas.',
+      icon: History,
+      accent: 'bg-amber-600 text-white'
+    }
+  ];
 
   // Close OS menu when clicking outside
   useEffect(() => {
@@ -199,6 +267,7 @@ export default function MovementsTab({
   // Reset form
   const resetForm = () => {
     setComponentId('');
+    setSelectedComponentIds([]);
     setMachineId('');
     setMachinePrefix('');
     setAction('Instalação');
@@ -218,10 +287,14 @@ export default function MovementsTab({
     setSelectedMove(null);
     setEditingMove(movement);
     setIsAdding(false);
-    setComponentId(movement.componentId);
+    const ids = movement.componentIds && movement.componentIds.length > 0
+      ? movement.componentIds
+      : [movement.componentId];
+    setComponentId(ids[0] || movement.componentId);
+    setSelectedComponentIds(ids);
     setMachineId(movement.machineId || machines.find(machine => machine.prefix === movement.machinePrefix)?.id || '');
     setMachinePrefix(movement.machinePrefix === 'Almoxarifado' ? '' : movement.machinePrefix);
-    setAction(movement.action);
+    setAction((SERVICE_ACTIONS[resolveServiceAction(movement)!] || movement.action) as MovementAction);
     setNotes(movement.notes || '');
     const date = movement.date?.toDate ? movement.date.toDate() : new Date(movement.date);
     const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().substring(0, 16);
@@ -232,13 +305,14 @@ export default function MovementsTab({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!componentId) {
-      setError('Por favor, selecione o equipamento GPS.');
+    if (selectedComponentIds.length === 0) {
+      setError('Selecione ao menos um equipamento GPS.');
       return;
     }
 
-    const selectedComp = components.find(c => c.id === componentId);
-    if (!selectedComp) {
+    const primaryComp = components.find(c => c.id === componentId)
+      || components.find(c => c.id === selectedComponentIds[0]);
+    if (!primaryComp) {
       setError('Equipamento inválido.');
       return;
     }
@@ -257,14 +331,18 @@ export default function MovementsTab({
         || machines.find(machine => machine.prefix === machinePrefix);
 
       const movementData = {
-        componentId,
-        componentSerial: selectedComp.serialNumber,
-        componentName: selectedComp.name,
+        componentId: primaryComp.id,
+        componentSerial: primaryComp.serialNumber,
+        componentName: primaryComp.name,
         machineId: linkedMachine?.id || '',
         machinePrefix: linkedMachine?.prefix || machinePrefix || 'Almoxarifado',
         action,
+        serviceActionCode: resolveServiceAction({ action }),
+        locationId: action === 'Remoção' ? orderLocationId : '',
         date: new Date(dateStr).toISOString(),
-        notes: notes.trim()
+        notes: notes.trim(),
+        componentIds: selectedComponentIds,
+        primaryComponentId: primaryComp.id
       };
 
       if (editingMove) {
@@ -285,6 +363,19 @@ export default function MovementsTab({
     } finally {
       setLoading(false);
     }
+  };
+
+  const toggleComponentSelection = (id: string) => {
+    setSelectedComponentIds(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+      setComponentId(next[0] || '');
+      const picked = components.find(c => c.id === id);
+      if (picked && picked.currentMachine) {
+        setMachinePrefix(picked.currentMachine);
+        setMachineId(machines.find(machine => machine.prefix === picked.currentMachine)?.id || '');
+      }
+      return next;
+    });
   };
 
   const sortedMovements = [...movements].sort((a, b) => {
@@ -320,18 +411,10 @@ export default function MovementsTab({
     { key: 'Concluída' as MovementStatus, label: 'Concluídas', count: countByStatus('Concluída') }
   ];
 
-  const reservedComponentIds = new Set(movements
-    .filter(movement => movement.id !== editingMove?.id && !['Concluída', 'Cancelada'].includes(movement.status || 'Aberta'))
-    .map(movement => movement.componentId));
-  const availableComponents = components.filter(c => c.status === 'Disponível' && !reservedComponentIds.has(c.id));
-  const activeComponents = components.filter(c => c.status === 'Em Uso' && !reservedComponentIds.has(c.id));
-  const includeEditingComponent = (items: AutopilotComponent[]) => {
-    const current = editingMove ? components.find(component => component.id === editingMove.componentId) : undefined;
-    return current && !items.some(component => component.id === current.id) ? [...items, current] : items;
-  };
-  const installationComponents = includeEditingComponent(availableComponents);
-  const operationComponents = includeEditingComponent(activeComponents);
-  const maintenanceComponents = includeEditingComponent(components.filter(c => c.status !== 'Descartado' && !reservedComponentIds.has(c.id)));
+  const operational = createEquipmentAvailabilityResolver({ movements, loans, maintenances, machines, locations });
+  const installationComponents = components.filter(c => operational(c, editingMove?.id).canCreateOrder('INSTALLATION'));
+  const operationComponents = components.filter(c => operational(c, editingMove?.id).canCreateOrder(action === 'Calibração' ? 'CALIBRATION' : 'REMOVAL'));
+  const maintenanceComponents = components.filter(c => operational(c, editingMove?.id).canCreateOrder('MAINTENANCE'));
 
   const formatDate = (d: any) => {
     if (!d) return '-';
@@ -351,11 +434,14 @@ export default function MovementsTab({
 
   const runTransition = async (move: MovementLog, nextStatus: MovementStatus, actionLabel: string, detail?: string) => {
     if (!onTransitionOSStatus) return false;
+    if (nextStatus === 'Concluída' && resolveServiceAction(move) === 'REMOVAL' && (selectedMove?.id !== move.id || !receivingLocationId)) {
+      setSelectedMove(move); showToast('info', 'Confira o local de recebimento no resumo antes de concluir.'); return false;
+    }
     setConfirmingAction(move.id + nextStatus);
     setMenuOpenId(null);
     setMenuAnchor(null);
     try {
-      await onTransitionOSStatus(move, nextStatus, actionLabel, detail);
+      await onTransitionOSStatus(move, nextStatus, actionLabel, detail, nextStatus === 'Concluída' && resolveServiceAction(move) === 'REMOVAL' ? receivingLocationId || move.locationId : undefined);
       showToast('success', `O.S. #${String(move.osNumber || '').padStart(4, '0')} atualizada para ${STATUS_META[nextStatus].label}.`);
       return true;
     } catch (err: any) {
@@ -532,15 +618,26 @@ export default function MovementsTab({
             </p>
           </div>
           {!isAdding && !editingMove && (
-            <button
-              onClick={() => { setIsAdding(true); resetForm(); }}
-              className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-emerald-700 sm:px-4"
-              id="open-add-movement-form"
-            >
-              <Plus className="h-4 w-4" />
-              <span className="sm:hidden">Nova ordem</span>
-              <span className="hidden sm:inline">Nova ordem de serviço</span>
-            </button>
+            <div className="flex shrink-0 items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setHelpOpen(true)}
+                aria-label="Ajuda sobre ordens de serviço"
+                title="Como usar esta tela"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+              >
+                <HelpCircle className="h-5 w-5" />
+              </button>
+              <button
+                onClick={() => { setIsAdding(true); resetForm(); }}
+                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-emerald-700 sm:px-4"
+                id="open-add-movement-form"
+              >
+                <Plus className="h-4 w-4" />
+                <span className="sm:hidden">Nova ordem</span>
+                <span className="hidden sm:inline">Nova ordem de serviço</span>
+              </button>
+            </div>
           )}
         </div>
 
@@ -715,6 +812,7 @@ export default function MovementsTab({
                   {success && <p className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-600">{success}</p>}
 
                   <form id="new-os-form" onSubmit={handleSubmit} className="space-y-4">
+                {action === 'Remoção' && <StorageSelect locations={locations} value={orderLocationId} onChange={setOrderLocationId} defaultId={defaultLocationId} />}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">Tipo de serviço *</label>
@@ -723,6 +821,7 @@ export default function MovementsTab({
                       onChange={(e) => {
                         setAction(e.target.value as MovementAction);
                         setComponentId('');
+                        setSelectedComponentIds([]);
                         setMachineId('');
                         setMachinePrefix('');
                       }}
@@ -751,43 +850,51 @@ export default function MovementsTab({
 
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
-                      Equipamento GPS * {action === 'Instalação' && '(Apenas Disponíveis)'}
+                      Equipamentos GPS * {action === 'Instalação' && '(Apenas Disponíveis)'}
                     </label>
-                    <select
-                      required
-                      value={componentId}
-                      onChange={(e) => {
-                        const id = e.target.value;
-                        setComponentId(id);
-                        const selected = components.find(c => c.id === id);
-                        if (selected && selected.currentMachine) {
-                          setMachinePrefix(selected.currentMachine);
-                          setMachineId(machines.find(machine => machine.prefix === selected.currentMachine)?.id || '');
-                        } else {
-                          setMachineId('');
-                          setMachinePrefix('');
+                    <div className="max-h-52 space-y-1.5 overflow-y-auto rounded-xl border border-slate-200 p-2">
+                      {(() => {
+                        const options = action === 'Instalação'
+                          ? installationComponents
+                          : action === 'Remoção' || action === 'Calibração'
+                            ? operationComponents
+                            : maintenanceComponents;
+                        if (options.length === 0) {
+                          return <p className="px-3 py-5 text-center text-xs text-slate-400">Nenhum equipamento disponível para esta operação.</p>;
                         }
-                      }}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs bg-white"
-                      id="select-movement-component"
-                    >
-                      <option value="">-- Selecione o Equipamento --</option>
-                      {action === 'Instalação' ? (
-                        installationComponents.map(c => (
-                          <option key={c.id} value={c.id}>{c.brand} {c.name} (S/N: {c.serialNumber})</option>
-                        ))
-                      ) : action === 'Remoção' || action === 'Calibração' ? (
-                        operationComponents.map(c => (
-                          <option key={c.id} value={c.id}>{c.brand} {c.name} (S/N: {c.serialNumber}) - Instalado em: {c.currentMachine}</option>
-                        ))
-                      ) : (
-                        maintenanceComponents.map(c => (
-                          <option key={c.id} value={c.id}>{c.brand} {c.name} (S/N: {c.serialNumber}) - Status: {c.status}</option>
-                        ))
-                      )}
-                    </select>
-                    {action === 'Instalação' && availableComponents.length === 0 && (
-                      <p className="text-[10px] text-amber-600 mt-1">Nenhum componente disponível em estoque para instalação direta.</p>
+                        return options.map(c => {
+                          const checked = selectedComponentIds.includes(c.id);
+                          const primary = c.id === componentId;
+                          return (
+                            <label
+                              key={c.id}
+                              className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 transition-colors ${checked ? 'border-emerald-300 bg-emerald-50' : 'border-slate-100 bg-white hover:border-slate-300'}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggleComponentSelection(c.id)}
+                                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-xs font-semibold text-slate-800">{c.brand} {c.name}</span>
+                                <span className="mt-0.5 block truncate font-mono text-[10px] text-slate-500">
+                                  S/N: {c.serialNumber}
+                                  {c.status === 'Em Uso' && c.currentMachine ? ` · ${c.currentMachine}` : ` · ${c.status}`}
+                                </span>
+                              </span>
+                              {primary && (
+                                <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold text-emerald-700">Principal</span>
+                              )}
+                            </label>
+                          );
+                        });
+                      })()}
+                    </div>
+                    {selectedComponentIds.length > 1 && (
+                      <p className="mt-1 text-[10px] text-slate-500">
+                        {selectedComponentIds.length} equipamentos selecionados. O primeiro selecionado (marcado como "Principal") define os dados principais da O.S.
+                      </p>
                     )}
                   </div>
 
@@ -808,7 +915,7 @@ export default function MovementsTab({
                         id="select-movement-machine"
                       >
                         <option value="">-- Selecione a Máquina --</option>
-                        {machines.map(m => (
+                        {machines.filter(m => m.active !== false).map(m => (
                           <option key={m.id} value={m.prefix}>
                             {m.prefix} - {m.brand} {m.model} ({m.type}){m.fleet ? ` [Frota: ${m.fleet}]` : ''}
                           </option>
@@ -1118,6 +1225,7 @@ export default function MovementsTab({
                   <p className="text-xs text-slate-500">Abertura: {formatDateTime(selectedMove.date)}</p>
                 </div>
 
+                {resolveServiceAction(selectedMove) === 'REMOVAL' && !['Concluída', 'Cancelada'].includes(selectedMove.status || 'Aberta') && <StorageSelect locations={locations} value={receivingLocationId} onChange={setReceivingLocationId} defaultId={defaultLocationId} />}
                 {selectedMove.notes && (
                   <div>
                     <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-1">Observações técnicas</p>
@@ -1354,6 +1462,13 @@ export default function MovementsTab({
         })(),
         document.body
       )}
+
+    <HelpGuideModal
+      open={helpOpen}
+      onClose={() => setHelpOpen(false)}
+      title="Como usar as ordens de serviço"
+      steps={osHelpSteps}
+    />
 
     </div>
   );

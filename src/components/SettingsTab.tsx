@@ -17,12 +17,15 @@ import {
   ShieldCheck,
   AlertTriangle,
   ExternalLink,
-  ClipboardList
+  ClipboardList,
+  HelpCircle
 } from 'lucide-react';
 import CompanyProfileSection from './CompanyProfileSection';
 import UserManagementSection from './UserManagementSection';
 import AlertSettingsSection from './AlertSettingsSection';
 import TypeRegistrySection from './TypeRegistrySection';
+import HelpGuideModal from './HelpGuideModal';
+import type { HelpGuideStep } from './HelpGuideModal';
 
 const PROVIDERS = {
   openai: { label: 'OpenAI', placeholder: 'sk-...', docsUrl: 'https://platform.openai.com/api-keys', docsLabel: 'platform.openai.com', defaultModel: 'gpt-4o-mini' },
@@ -145,6 +148,40 @@ export default function SettingsTab({
   const [success, setSuccess] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'unknown' | 'checking' | 'connected' | 'failed'>('unknown');
   const [openSection, setOpenSection] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  const helpSteps: HelpGuideStep[] = [
+    {
+      title: 'Integrações com IA',
+      description: 'Configure o provedor de inteligência artificial (OpenAI, DeepSeek, Gemini ou Claude) usado na leitura automática de licenças por OCR. Insira a chave da API, selecione o modelo e teste a conexão antes de salvar.',
+      icon: Brain,
+      accent: 'bg-emerald-600 text-white'
+    },
+    {
+      title: 'Cadastro de Tipos',
+      description: 'Cadastre e gerencie os tipos utilizados no sistema, como categorias de parceiros, equipamentos e serviços. Esses tipos são usados em diversas telas para padronizar os registros.',
+      icon: ClipboardList,
+      accent: 'bg-slate-900 text-white'
+    },
+    {
+      title: 'Dados da Empresa',
+      description: 'Atualize as informações institucionais da empresa, como razão social, CNPJ, endereço e dados de contato. Essas informações aparecem nos relatórios e documentos gerados pelo sistema.',
+      icon: Building2,
+      accent: 'bg-blue-600 text-white'
+    },
+    {
+      title: 'Gestão de Usuários',
+      description: 'Adicione, edite ou remova usuários do sistema. Defina perfis de acesso como Administrador ou Técnico de Campo, controlando o que cada usuário pode visualizar e modificar.',
+      icon: Users,
+      accent: 'bg-violet-600 text-white'
+    },
+    {
+      title: 'Notificações e Alertas',
+      description: 'Configure alertas automáticos por e-mail para vencimento de licenças, manutenções pendentes e movimentações de componentes. Defina destinatários e regras de notificação.',
+      icon: Bell,
+      accent: 'bg-amber-600 text-white'
+    }
+  ];
 
   useEffect(() => {
     checkCurrentStatus();
@@ -285,11 +322,11 @@ export default function SettingsTab({
       {/* Page Header */}
       <div className="relative overflow-hidden rounded-2xl border border-emerald-100 bg-gradient-to-br from-white via-white to-emerald-50 p-4 shadow-sm sm:p-5">
         <div className="pointer-events-none absolute -right-8 -top-10 h-32 w-32 rounded-full bg-emerald-100/60 blur-2xl" />
-        <div className="relative flex items-start gap-3.5">
+        <div className="relative flex items-start gap-2">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-sm shadow-emerald-200">
             <Settings className="h-5 w-5" />
           </div>
-          <div className="min-w-0 pt-0.5">
+          <div className="min-w-0 flex-1 pt-0.5">
             <div className="mb-1 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.14em] text-emerald-700">
               <ShieldCheck className="h-3.5 w-3.5" />
               Painel administrativo
@@ -297,6 +334,15 @@ export default function SettingsTab({
             <h1 className="text-xl font-extrabold tracking-tight text-slate-950">Configurações</h1>
             <p className="mt-1 text-xs leading-relaxed text-slate-500">Gerencie integrações, acessos e preferências do sistema.</p>
           </div>
+          <button
+            type="button"
+            onClick={() => setHelpOpen(true)}
+            aria-label="Ajuda sobre configurações"
+            title="Como usar esta tela"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+          >
+            <HelpCircle className="h-5 w-5" />
+          </button>
         </div>
       </div>
 
@@ -599,6 +645,13 @@ export default function SettingsTab({
         </div>
         )}
       </div>
+
+      <HelpGuideModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        title="Como usar as configurações"
+        steps={helpSteps}
+      />
     </div>
   );
 }

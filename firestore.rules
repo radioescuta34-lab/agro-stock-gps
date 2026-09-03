@@ -36,6 +36,17 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
+    // Soft-delete: admin-only update that inactivates a record instead of deleting it.
+    // bKey is an extra allowed key (e.g. 'updatedBy' for components); pass '' when unused.
+    function isSoftDeleteUpdate(bKey) {
+      let allowed = ['active', 'deletedAt', 'updatedAt']
+        .concat(bKey != '' ? [bKey] : []);
+      return isAdmin()
+        && request.resource.data.active == false
+        && request.resource.data.deletedAt == request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed);
+    }
+
     // Validate User Profile
     function isValidUser(user) {
       return user.uid is string && user.uid.size() <= 128
@@ -67,21 +78,32 @@ service cloud.firestore {
         && comp.name is string && comp.name.size() <= 128
         && (comp.brand == 'Trimble' || comp.brand == 'Topcon')
         && comp.type is string && comp.type.size() <= 128
-        && (comp.status == 'Disponível' || comp.status == 'Em Uso' || comp.status == 'Manutenção' || comp.status == 'Descartado');
+        && (comp.status == 'Disponível' || comp.status == 'Em Uso' || comp.status == 'Manutenção' || comp.status == 'Descartado')
+        && (!('currentLocationId' in comp) || (comp.currentLocationId is string && comp.currentLocationId.size() <= 128))
+        && (!('currentMachineId' in comp) || (comp.currentMachineId is string && comp.currentMachineId.size() <= 128))
+        && (!('placementVersion' in comp) || (comp.placementVersion == 1
+          && !((comp.get('currentLocationId', '') != '') && (comp.get('currentMachineId', '') != ''))
+          && (comp.get('currentLocationId', '') != '' || comp.get('currentMachineId', '') != '')));
     }
 
     match /components/{componentId} {
       allow get, list: if isSignedIn();
       allow create: if isAdmin() && isValidId(componentId) && isValidComponent(request.resource.data) && request.resource.data.updatedAt == request.time;
-      allow delete: if isAdmin();
-      allow update: if isSignedIn() && isValidId(componentId) && isValidComponent(request.resource.data) && request.resource.data.updatedAt == request.time && (
-        isAdmin() || (
-          // Technician can only update component status, location/machine, updatedAt, and updatedBy
-          request.resource.data.serialNumber == resource.data.serialNumber
-          && request.resource.data.brand == resource.data.brand
-          && request.resource.data.name == resource.data.name
-          && request.resource.data.type == resource.data.type
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'currentMachine', 'updatedAt', 'updatedBy'])
+      allow delete: if false; // soft-delete only (active/deletedAt)
+      allow update: if isSignedIn() && isValidId(componentId) && request.resource.data.updatedAt == request.time && (
+        isSoftDeleteUpdate('updatedBy')
+        || (
+          isValidComponent(request.resource.data) && (
+            isAdmin() || (
+              // Technician can only update component status, location/machine, updatedAt, and updatedBy
+              request.resource.data.serialNumber == resource.data.serialNumber
+              && request.resource.data.brand == resource.data.brand
+              && request.resource.data.name == resource.data.name
+              && request.resource.data.type == resource.data.type
+              && isTechnician()
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'currentMachine', 'currentLocationId', 'currentMachineId', 'placementVersion', 'updatedAt', 'updatedBy'])
+            )
+          )
         )
       );
     }
@@ -99,8 +121,11 @@ service cloud.firestore {
     match /machines/{machineId} {
       allow get, list: if isSignedIn();
       allow create: if (isAdmin() || isTechnician()) && isValidId(machineId) && isValidMachine(request.resource.data);
-      allow update: if (isAdmin() || isTechnician()) && isValidId(machineId) && isValidMachine(request.resource.data);
-      allow delete: if (isAdmin() || isTechnician());
+      allow update: if (isAdmin() || isTechnician()) && isValidId(machineId) && (
+        isSoftDeleteUpdate('')
+        || isValidMachine(request.resource.data)
+      );
+      allow delete: if false; // soft-delete only (active/deletedAt)
     }
 
     // Validate License
@@ -135,7 +160,10 @@ service cloud.firestore {
         && (!('completedAt' in move) || move.completedAt is string || move.completedAt is timestamp)
         && (!('cancelledAt' in move) || move.cancelledAt is string || move.cancelledAt is timestamp)
         && (!('updatedAt' in move) || move.updatedAt == request.time)
-        && (!('updatedBy' in move) || (move.updatedBy is string && move.updatedBy.size() <= 128));
+        && (!('updatedBy' in move) || (move.updatedBy is string && move.updatedBy.size() <= 128))
+        && (!('locationId' in move) || (move.locationId is string && move.locationId.size() <= 128))
+        && (!('componentIds' in move) || (move.componentIds is list && move.componentIds.size() <= 50))
+        && (!('primaryComponentId' in move) || (move.primaryComponentId is string && move.primaryComponentId.size() <= 128));
     }
 
     function isValidStatusTransition(previousStatus, nextStatus) {
@@ -149,11 +177,12 @@ service cloud.firestore {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       let validHistoryAppend = request.resource.data.history is list
         && (!('history' in resource.data) || request.resource.data.history.size() == resource.data.history.size() + 1);
-      let lifecycleUpdate = changed.hasOnly(['status', 'history', 'completedAt', 'cancelledAt', 'updatedAt', 'updatedBy'])
+      let lifecycleUpdate = changed.hasOnly(['status', 'history', 'completedAt', 'cancelledAt', 'updatedAt', 'updatedBy', 'locationId'])
+        && (!changed.hasAny(['locationId']) || (resource.data.action == 'Remoção' && request.resource.data.status == 'Concluída'))
         && isValidStatusTransition(('status' in resource.data) ? resource.data.status : 'Aberta', request.resource.data.status);
       let editableUpdate = (!('status' in resource.data) || resource.data.status == 'Aberta' || resource.data.status == 'Agendada')
         && request.resource.data.status == (('status' in resource.data) ? resource.data.status : 'Aberta')
-        && changed.hasOnly(['componentId', 'componentSerial', 'componentName', 'machineId', 'machinePrefix', 'action', 'date', 'notes', 'status', 'history', 'updatedAt', 'updatedBy']);
+        && changed.hasOnly(['componentId', 'componentSerial', 'componentName', 'machineId', 'machinePrefix', 'action', 'date', 'notes', 'status', 'history', 'updatedAt', 'updatedBy', 'locationId', 'componentIds', 'primaryComponentId']);
       return isValidMovement(request.resource.data)
         && validHistoryAppend
         && (lifecycleUpdate || editableUpdate);
@@ -265,6 +294,87 @@ service cloud.firestore {
     match /partners/{partnerId} {
       allow get, list: if isSignedIn();
       allow create, update: if (isAdmin() || isTechnician()) && isValidId(partnerId) && isValidPartner(request.resource.data);
+      allow delete: if false;
+    }
+
+    // Validate Location (storage / external service / external loan destination)
+    function isValidLocation(loc) {
+      let activeOk = (('isActive' in loc) && loc.isActive is bool) || (('active' in loc) && loc.active is bool);
+      return loc.id is string && loc.id.size() <= 128
+        && loc.name is string && loc.name.size() <= 256
+        && (loc.kind == 'INTERNAL' || loc.kind == 'EXTERNAL_SERVICE' || loc.kind == 'EXTERNAL_LOAN')
+        && activeOk
+        && (!('partnerId' in loc) || (loc.partnerId is string && loc.partnerId.size() <= 128))
+        && (!('address' in loc) || (loc.address is string && loc.address.size() <= 512))
+        && (!('contactPerson' in loc) || (loc.contactPerson is string && loc.contactPerson.size() <= 128))
+        && (!('phone' in loc) || (loc.phone is string && loc.phone.size() <= 64))
+        && (!('email' in loc) || (loc.email is string && loc.email.size() <= 128))
+        && (!('notes' in loc) || (loc.notes is string && loc.notes.size() <= 512));
+    }
+
+    match /locations/{locationId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isValidId(locationId) && isValidLocation(request.resource.data)
+        && request.resource.data.updatedAt == request.time
+        && (!('code' in request.resource.data) || (request.resource.data.code is string && request.resource.data.code.size() <= 40))
+        && (!exists(/databases/$(database)/documents/locations/$(locationId)) || resource.data.kind == request.resource.data.kind)
+        && (request.resource.data.isActive == true || !exists(/databases/$(database)/documents/storage_settings/main)
+          || getAfter(/databases/$(database)/documents/storage_settings/main).data.defaultLocationId != locationId)
+        && (isAdmin() || (isTechnician() && request.resource.data.kind != 'INTERNAL'
+          && request.resource.data.partnerId is string
+          && get(/databases/$(database)/documents/partners/$(request.resource.data.partnerId)).data.active == true
+          && request.resource.data.isActive == true));
+      allow delete: if false;
+    }
+
+    // Global revision protects multi-document destination operations from concurrent commands.
+    function validStorageDefault() {
+      let id = request.resource.data.defaultLocationId;
+      return id is string && (id == '' || (getAfter(/databases/$(database)/documents/locations/$(id)).data.kind == 'INTERNAL'
+        && getAfter(/databases/$(database)/documents/locations/$(id)).data.isActive == true));
+    }
+    match /storage_settings/{settingId} {
+      allow read: if isSignedIn();
+      allow create: if settingId == 'main' && (isAdmin() || isTechnician())
+        && validStorageDefault() && request.resource.data.revision == 1 && request.resource.data.updatedAt == request.time
+        && (isAdmin() || request.resource.data.defaultLocationId == '');
+      allow update: if settingId == 'main' && (isAdmin() || isTechnician())
+        && validStorageDefault() && request.resource.data.revision == resource.data.revision + 1
+        && request.resource.data.updatedAt == request.time
+        && (isAdmin() || request.resource.data.defaultLocationId == resource.data.defaultLocationId);
+      allow delete: if false;
+    }
+
+    match /storage_operations/{operationId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if (isAdmin() || isTechnician()) && isValidId(operationId)
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /location_events/{eventId} {
+      allow read: if isSignedIn();
+      allow create: if (isAdmin() || isTechnician()) && eventId.size() <= 300
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.componentId is string
+        && request.resource.data.from is map && request.resource.data.to is map
+        && getAfter(/databases/$(database)/documents/storage_operations/$(request.resource.data.operationId)).data.actorId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Validate OS counter (atomic sequential numbering)
+    function isValidOsCounter(c) {
+      return c.value is int
+        && c.value >= 0
+        && (!('updatedAt' in c) || c.updatedAt == request.time);
+    }
+
+    match /counters/{counterId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if (isAdmin() || isTechnician()) && isValidId(counterId) && counterId == 'osNumber' && isValidOsCounter(request.resource.data);
       allow delete: if false;
     }
 

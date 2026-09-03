@@ -7,8 +7,15 @@ import {
   Lock,
   Camera,
   X,
-  ArrowLeft
+  ArrowLeft,
+  HelpCircle,
+  UserCog,
+  Image,
+  KeyRound,
+  BadgeCheck
 } from 'lucide-react';
+import HelpGuideModal from './HelpGuideModal';
+import type { HelpGuideStep } from './HelpGuideModal';
 import UserForm from './UserForm';
 import type { UserFormData } from './UserForm';
 
@@ -38,6 +45,34 @@ export default function ProfileTab({ user, onUpdateProfile, onBack }: ProfileTab
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  const helpSteps: HelpGuideStep[] = [
+    {
+      title: 'Foto de Perfil',
+      description: 'Clique na imagem do avatar para selecionar uma nova foto do seu computador. A imagem deve ter no máximo 2MB. Você pode remover a foto a qualquer momento clicando em "Remover" ao lado do nome.',
+      icon: Image,
+      accent: 'bg-emerald-600 text-white',
+    },
+    {
+      title: 'Editar Informações',
+      description: 'Atualize seu nome completo, nome de usuário e primeiro/último nome nos campos do formulário. Suas alterações são salvas imediatamente ao clicar em "Salvar Alterações".',
+      icon: UserCog,
+      accent: 'bg-blue-600 text-white',
+    },
+    {
+      title: 'Alterar Senha',
+      description: 'Para redefinir sua senha, preencha o campo de nova senha no formulário. Caso não queira alterar, deixe o campo em branco e salve apenas os dados pessoais.',
+      icon: KeyRound,
+      accent: 'bg-violet-600 text-white',
+    },
+    {
+      title: 'Conta e Permissão',
+      description: 'Seu endereço de e-mail virtual e nível de permissão (Administrador ou Técnico de Campo) são exibidos abaixo do avatar. Essas informações são definidas pelo administrador do sistema.',
+      icon: BadgeCheck,
+      accent: 'bg-slate-900 text-white',
+    },
+  ];
 
   const isAdmin = user.role === 'administrador' || user.role === 'ADMINISTRADOR';
   const displayPhoto = newPhotoData || photoURL;
@@ -106,13 +141,26 @@ export default function ProfileTab({ user, onUpdateProfile, onBack }: ProfileTab
   return (
     <div className="max-w-lg mx-auto">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
-        <div className="p-2 bg-emerald-100 text-emerald-600 rounded-xl">
-          <User className="h-5 w-5" />
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-emerald-100 text-emerald-600 rounded-xl">
+            <User className="h-5 w-5" />
+          </div>
+          <div>
+            <h1 className="text-lg font-extrabold text-slate-900">Meu Perfil</h1>
+            <p className="text-xs text-slate-500 mt-0.5">Gerencie suas informações de acesso</p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-lg font-extrabold text-slate-900">Meu Perfil</h1>
-          <p className="text-xs text-slate-500 mt-0.5">Gerencie suas informações de acesso</p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setHelpOpen(true)}
+            aria-label="Ajuda sobre o perfil"
+            title="Como usar esta tela"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+          >
+            <HelpCircle className="h-5 w-5" />
+          </button>
         </div>
       </div>
 
@@ -202,6 +250,7 @@ export default function ProfileTab({ user, onUpdateProfile, onBack }: ProfileTab
           submitLabel="Salvar Alterações"
         />
       </div>
+      <HelpGuideModal open={helpOpen} onClose={() => setHelpOpen(false)} title="Guia do Perfil" steps={helpSteps} />
     </div>
   );
 }

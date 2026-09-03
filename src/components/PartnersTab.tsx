@@ -5,6 +5,7 @@ import {
   Check,
   ChevronRight,
   Edit,
+  HelpCircle,
   Mail,
   MapPin,
   MessageCircle,
@@ -18,6 +19,8 @@ import {
   Wrench,
   X
 } from 'lucide-react';
+import HelpGuideModal from './HelpGuideModal';
+import type { HelpGuideStep } from './HelpGuideModal';
 import { ComponentLoan, ComponentMaintenance, Partner, PartnerContact, PartnerPersonType, PartnerType, UserRole } from '../types';
 import { useNotifications } from './NotificationProvider';
 
@@ -55,6 +58,7 @@ export default function PartnersTab({
   const [selectedPartner, setSelectedPartner] = useState<Partner | null>(null);
   const [editingPartner, setEditingPartner] = useState<Partner | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
   const legalNameRef = useRef<HTMLInputElement>(null);
@@ -359,6 +363,39 @@ export default function PartnersTab({
     return `https://wa.me/${internationalNumber}`;
   };
 
+  const steps: HelpGuideStep[] = [
+    {
+      title: 'Cadastro de parceiros',
+      description: 'Crie e gerencie parceiros como assistências técnicas, prestadores de serviço ou recebedores de empréstimos. Cada parceiro pode ter múltiplos contatos e tipos de atuação.',
+      icon: Building2,
+      accent: 'bg-emerald-600 text-white'
+    },
+    {
+      title: 'Pessoa física ou jurídica',
+      description: 'Ao cadastrar, escolha entre pessoa física (CPF) ou pessoa jurídica (CNPJ). Para PJ, é possível informar nome fantasia e razão social. O CEP preenche o endereço automaticamente.',
+      icon: UserRound,
+      accent: 'bg-slate-900 text-white'
+    },
+    {
+      title: 'Gerenciamento de contatos',
+      description: 'Adicione múltiplos contatos para cada parceiro, com telefone, celular, e-mail e função. O primeiro contato é considerado o principal e aparece na listagem.',
+      icon: Phone,
+      accent: 'bg-blue-600 text-white'
+    },
+    {
+      title: 'Tipos de atuação',
+      description: 'Defina as funções do parceiro no sistema: Assistência técnica, Prestador de serviço ou Recebedor de empréstimo. Um parceiro pode exercer mais de uma função simultaneamente. Em empréstimos e manutenção, o destino é vinculado ao ID do parceiro. Não cadastre assistências ou recebedores como armazenamentos internos.',
+      icon: Wrench,
+      accent: 'bg-violet-600 text-white'
+    },
+    {
+      title: 'Busca, filtros e histórico',
+      description: 'Use a barra de busca para localizar parceiros por nome, documento ou e-mail. Filtre por tipo e status, e acompanhe quantas manutenções e empréstimos cada parceiro possui.',
+      icon: Search,
+      accent: 'bg-amber-600 text-white'
+    }
+  ];
+
   const formModal = (isAdding || editingPartner) && createPortal(
     <div className="fixed inset-0 z-[75] flex items-end justify-center sm:items-center sm:p-4">
       <button type="button" aria-label="Fechar formulário" className="absolute inset-0 bg-slate-950/55 backdrop-blur-[1px]" onClick={() => !loading && (setIsAdding(false), setEditingPartner(null))} />
@@ -479,7 +516,7 @@ export default function PartnersTab({
     <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="flex items-start justify-between gap-3">
         <div><div className="flex flex-wrap items-center gap-2"><h1 className="text-xl font-bold text-slate-900">Parceiros</h1><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-500">{displayedPartners.length} {displayedPartners.length === 1 ? 'parceiro' : 'parceiros'}</span></div><p className="mt-1 text-xs text-slate-500">Centralize assistências, prestadores e recebedores de equipamentos.</p></div>
-        {canManage && <button onClick={openCreate} className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700"><Plus className="h-4 w-4" /> Novo</button>}
+        <div className="flex shrink-0 items-center gap-2"><button onClick={() => setHelpOpen(true)} aria-label="Ajuda sobre parceiros" title="Como usar esta tela" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"><HelpCircle className="h-5 w-5" /></button>{canManage && <button onClick={openCreate} className="flex min-h-10 shrink-0 items-center gap-1.5 rounded-xl bg-emerald-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-emerald-700"><Plus className="h-4 w-4" /> Novo</button>}</div>
       </div>
       <div className="mt-4 flex items-center gap-2 sm:hidden"><button onClick={() => { setMobileSearchOpen(v => !v); setMobileFiltersOpen(false); }} aria-label="Buscar parceiros" className={`flex h-10 w-10 items-center justify-center rounded-xl border ${mobileSearchOpen ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-500'}`}><Search className="h-4 w-4" /></button><button onClick={() => { setMobileFiltersOpen(v => !v); setMobileSearchOpen(false); }} aria-label="Filtrar parceiros" className={`flex h-10 w-10 items-center justify-center rounded-xl border ${mobileFiltersOpen || typeFilter !== 'all' || statusFilter !== 'active' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-500'}`}><SlidersHorizontal className="h-4 w-4" /></button></div>
       {mobileSearchOpen && <input autoFocus value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar por nome, documento ou e-mail" className="mt-3 min-h-10 w-full rounded-xl border border-slate-200 px-3 text-xs outline-none focus:border-emerald-400 sm:hidden" />}
@@ -528,5 +565,6 @@ export default function PartnersTab({
       document.body
     )}
     {formModal}
+    <HelpGuideModal open={helpOpen} onClose={() => setHelpOpen(false)} title="Como usar a tela de Parceiros" steps={steps} />
   </div>;
 }

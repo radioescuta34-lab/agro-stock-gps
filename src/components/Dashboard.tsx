@@ -1,4 +1,6 @@
-import React from 'react';
+import { createEquipmentAvailabilityResolver } from '../utils/equipmentAvailability';
+import type { ComponentLoan, ComponentMaintenance, Location } from '../types';
+import React, { useState } from 'react';
 import { 
   AutopilotComponent, 
   Machine, 
@@ -21,12 +23,16 @@ import {
   Key,
   Clock,
   Shield,
-  Kanban
+  Kanban,
+  HelpCircle
 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { getISOWeekId, getWeekFormattedLabel } from '../utils/dateUtils';
+import HelpGuideModal from './HelpGuideModal';
+import type { HelpGuideStep } from './HelpGuideModal';
 
 interface DashboardProps {
+  loans?: ComponentLoan[]; maintenances?: ComponentMaintenance[]; locations?: Location[];
   key?: string;
   components: AutopilotComponent[];
   machines: Machine[];
@@ -40,6 +46,7 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ 
+  loans = [], maintenances = [], locations = [],
   components, 
   machines, 
   movements, 
@@ -51,12 +58,48 @@ export default function Dashboard({
   onSeedData
 }: DashboardProps) {
   const isAdminOrTech = role === 'administrador' || role === 'tecnico' || role === 'ADMINISTRADOR' || role === 'TECNICO_CAMPO';
+
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  const helpSteps: HelpGuideStep[] = [
+    {
+      title: 'Visão Geral dos Equipamentos',
+      description: 'O primeiro painel exibe os KPIs do inventário de componentes de piloto automático: total, em operação, em manutenção e disponíveis no almoxarifado. Cada card é clicável e leva à aba de Componentes com filtro aplicado. Abaixo, um gráfico de barras mostra a distribuição por marca (Trimble, Topcon, John Deere etc.).',
+      icon: Cpu,
+      accent: 'bg-emerald-600 text-white'
+    },
+    {
+      title: 'Painel de Licenças',
+      description: 'A seção de licenças rastreia ativações de sinais GPS (ex.: CenterPoint, Sitestrak). Mostra licenças ativas, expiradas e pendentes. Se houver contratos vencidos ou a vencer nos próximos 30 dias, um alerta amarelo aparece com aviso para renovação junto ao fornecedor.',
+      icon: Key,
+      accent: 'bg-indigo-600 text-white'
+    },
+    {
+      title: 'Recolhimento de Dados de Campo',
+      description: 'Este painel acompanha o status semanal do recolhimento de telemetria das máquinas. Exibe quantas frentes de trabalho existem, quantas máquinas já concluíram o recolhimento e quantas estão pendentes. O gráfico de rosca mostra a porcentagem de cobertura da semana atual.',
+      icon: Activity,
+      accent: 'bg-blue-600 text-white'
+    },
+    {
+      title: 'Lançamentos Recentes',
+      description: 'A coluna esquerda na parte inferior lista as últimas 4 movimentações de campo registradas no sistema (instalações, remoções, manutenções, calibrações). Cada lançamento mostra o componente, prefixo da máquina, técnico responsável e data.',
+      icon: ClipboardList,
+      accent: 'bg-violet-600 text-white'
+    },
+    {
+      title: 'Ações Rápidas e Diretrizes',
+      description: 'No canto inferior direito, os botões permitem registrar novas movimentações de campo ou adicionar equipamentos ao estoque. Também são exibidas as diretrizes de manutenção GPS: remoção no final de safra, diagnóstico de defeitos e descarte patrimonial correto.',
+      icon: AlertTriangle,
+      accent: 'bg-amber-600 text-white'
+    }
+  ];
   
   // 1. Calculations: Component Inventory
   const totalComponents = components.length;
-  const inUseCount = components.filter(c => c.status === 'Em Uso').length;
-  const availableCount = components.filter(c => c.status === 'Disponível').length;
-  const maintenanceCount = components.filter(c => c.status === 'Manutenção').length;
+  const operational = createEquipmentAvailabilityResolver({ movements, loans, maintenances, machines, locations });
+  const inUseCount = components.filter(c => operational(c).filterValue === 'Em Uso').length;
+  const availableCount = components.filter(c => operational(c).availableForUse).length;
+  const maintenanceCount = components.filter(c => operational(c).filterValue === 'Manutenção').length;
   const discardedCount = components.filter(c => c.status === 'Descartado').length;
 
   const totalMachines = machines.length;
@@ -165,16 +208,27 @@ export default function Dashboard({
             <Cpu className="h-5 w-5 text-emerald-400" />
             <h2 className="text-md font-bold tracking-tight">Visão Geral dos Equipamentos</h2>
           </div>
-          {totalComponents === 0 && onSeedData && isAdminOrTech && (
+          <div className="flex items-center gap-2 flex-wrap">
             <button
-              onClick={onSeedData}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm"
-              id="seed-database-btn"
+              type="button"
+              onClick={() => setHelpOpen(true)}
+              aria-label="Ajuda sobre o painel de equipamentos"
+              title="Como usar esta tela"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/20 bg-white/10 text-white/70 shadow-sm transition-colors hover:bg-white/20 hover:text-white"
             >
-              <Cpu className="h-3.5 w-3.5" />
-              Popular Banco de Dados de Teste
+              <HelpCircle className="h-5 w-5" />
             </button>
-          )}
+            {totalComponents === 0 && onSeedData && isAdminOrTech && (
+              <button
+                onClick={onSeedData}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition-colors flex items-center gap-1.5 shadow-sm"
+                id="seed-database-btn"
+              >
+                <Cpu className="h-3.5 w-3.5" />
+                Popular Banco de Dados de Teste
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="p-6 space-y-6">
@@ -690,6 +744,12 @@ export default function Dashboard({
 
       </div>
 
+      <HelpGuideModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        title="Como usar o Painel de Visão Geral"
+        steps={helpSteps}
+      />
     </div>
   );
 }

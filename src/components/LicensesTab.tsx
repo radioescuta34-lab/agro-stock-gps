@@ -32,8 +32,11 @@ import {
   QrCode,
   LayoutGrid,
   List,
-  Filter
+  Filter,
+  HelpCircle
 } from 'lucide-react';
+import HelpGuideModal from './HelpGuideModal';
+import type { HelpGuideStep } from './HelpGuideModal';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'agro_stock_gps_';
 
@@ -139,6 +142,40 @@ export default function LicensesTab({
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  const steps: HelpGuideStep[] = [
+    {
+      title: 'Visão Geral da Tela',
+      description: 'Esta tela reúne o controle completo das licenças: assinaturas de sinal de correção (RTX, RTK) e ativações de recursos permanentes para monitores de piloto automático. Use os filtros e a busca para localizar rapidamente qualquer ativo.',
+      icon: LayoutGrid,
+      accent: 'bg-emerald-600 text-white',
+    },
+    {
+      title: 'Cadastro e Edição',
+      description: 'Clique em "Cadastrar Nova Licença" para registrar um novo ativo. Informe nome comercial, chave de ativação, fabricante (Trimble ou Topcon), tipo de ativação, status (Ativa, Disponível, Expirada ou Pendente), datas de vigência e dados do hardware vinculado.',
+      icon: Key,
+      accent: 'bg-slate-900 text-white',
+    },
+    {
+      title: 'Ativação Inteligente (IA OCR)',
+      description: 'No cadastro, arraste ou selecione a foto do termo de ativação. A IA lê o documento e preenche automaticamente serviço, código de permissão, Master Unlock Key, datas e números de série dos receptores Trimble e Topcon.',
+      icon: Sparkles,
+      accent: 'bg-blue-600 text-white',
+    },
+    {
+      title: 'Status da Licença',
+      description: 'Ativa está em uso; Disponível não está vinculada e permanece em estoque; Pendente aguarda liberação de sinal; Expirada requer renovação contratual. As expirações próximas são sinalizadas em âmbar e as vencidas em vermelho.',
+      icon: CheckCircle2,
+      accent: 'bg-violet-600 text-white',
+    },
+    {
+      title: 'Desbloqueio em Campo (QR)',
+      description: 'Use o botão "Desbloqueio QR" para gerar os QR codes de ativação e da Master Unlock Key. O técnico escaneia no monitor do equipamento, insere a chave e confirma o desbloqueio, registrando data, hora e operador.',
+      icon: QrCode,
+      accent: 'bg-amber-600 text-white',
+    },
+  ];
 
   const resetForm = () => {
     setName('');
@@ -542,6 +579,14 @@ export default function LicensesTab({
         </div>
         
         <div className="flex flex-wrap gap-2 shrink-0 w-full md:w-auto">
+          <button
+            onClick={() => setHelpOpen(true)}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+            aria-label="Ajuda sobre licenças"
+            title="Como usar esta tela"
+          >
+            <HelpCircle className="h-5 w-5" />
+          </button>
           {isAdminOrTech && !isAdding && !editingLic && (
             <button
               onClick={() => {
@@ -1622,6 +1667,8 @@ export default function LicensesTab({
           </div>
         </div>
       )}
+
+      <HelpGuideModal open={helpOpen} onClose={() => setHelpOpen(false)} title="Como usar Licenças" steps={steps} />
 
     </div>
   );

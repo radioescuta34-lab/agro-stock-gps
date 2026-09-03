@@ -17,8 +17,10 @@ import {
   SlidersHorizontal,
   MoreVertical,
   CalendarCheck2,
-  AlertCircle
+  AlertCircle,
+  HelpCircle
 } from 'lucide-react';
+import HelpGuideModal from './HelpGuideModal';
 
 interface MachinesTabProps {
   machines: Machine[];
@@ -53,6 +55,35 @@ export default function MachinesTab({
   const [fleetFilter, setFleetFilter] = useState('all');
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [mobileTypeOpen, setMobileTypeOpen] = useState(false);
+
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  const machineHelpSteps = [
+    {
+      title: 'Gestão da frota',
+      description: 'Cadastre e mantenha tratores, colhedoras e pulverizadores. Filtros por tipo, marca, modelo e frota ajudam a localizar veículos.',
+      icon: Truck,
+      accent: 'bg-emerald-600 text-white'
+    },
+    {
+      title: 'Vínculo com equipamentos GPS',
+      description: 'Uma máquina pode receber equipamentos GPS. A instalação só altera o destino ao concluir a O.S., registrando o ID e prefixo da máquina e liberando o armazenamento anterior. Na remoção, escolha o local que receberá o equipamento.',
+      icon: CalendarCheck2,
+      accent: 'bg-slate-900 text-white'
+    },
+    {
+      title: 'Histórico',
+      description: 'Consulte o histórico de manutenção e movimentações de cada veículo pela tela de detalhes.',
+      icon: History,
+      accent: 'bg-blue-600 text-white'
+    },
+    {
+      title: 'Remover = inativar',
+      description: 'Remover uma máquina a inativa (preserva histórico). Se houver equipamento "Em Uso" nela, a remoção é bloqueada até remover/concluir a O.S.',
+      icon: Trash2,
+      accent: 'bg-rose-600 text-white'
+    }
+  ];
 
   const uniqueBrands = useMemo(() => {
     const brands = machines.map(m => m.brand).filter(Boolean);
@@ -229,7 +260,7 @@ export default function MachinesTab({
 
     const confirmed = await confirmDialog({
       title: 'Remover Máquina',
-      message: 'Tem certeza de que deseja remover esta máquina da frota?',
+      message: 'Tem certeza de que deseja remover esta máquina da frota? Ela será inativada e mantida no histórico.',
       confirmLabel: 'Sim, Remover',
       cancelLabel: 'Cancelar',
       danger: true
@@ -382,7 +413,16 @@ export default function MachinesTab({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setHelpOpen(true)}
+            aria-label="Ajuda sobre a frota"
+            title="Como usar esta tela"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+          >
+            <HelpCircle className="h-5 w-5" />
+          </button>
           {isAdminOrTech && !isAdding && !editingMachine && (
             <button
               onClick={() => { setIsAdding(true); resetForm(); }}
@@ -1402,6 +1442,13 @@ export default function MachinesTab({
           </p>
         </div>
       )}
+
+      <HelpGuideModal
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        title="Como usar a Gestão de frota"
+        steps={machineHelpSteps}
+      />
 
     </div>
   );

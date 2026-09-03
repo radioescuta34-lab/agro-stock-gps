@@ -17,7 +17,10 @@
     "trello:webhook:register": "node scripts/register-trello-webhook.mjs",
     "notifications:vapid": "web-push generate-vapid-keys",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:storage": "node --import tsx --test src/utils/storageModel.test.ts src/utils/equipmentDestinations.test.ts",
+    "rules:deploy": "firebase deploy --only firestore:rules --project agrostock-gps",
+    "rules:login": "firebase login"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

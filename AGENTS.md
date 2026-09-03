@@ -6,6 +6,12 @@
 - `npm run start` — `node dist/server.cjs` (production)
 - `npm run lint` — `tsc --noEmit` (only type-check; no linter or formatter)
 
+## Firestore rules deploy
+- Deploy is Firebase CLI, **rules-only** (`firebase.json` scoped to `firestore`). Project id: `agrostock-gps`.
+- `npm run rules:login` — authenticate once (`firebase login`, opens browser; must be run by a human).
+- `npm run rules:deploy` — deploy rules to production.
+- `firestore.rules` and `firestore.indexes.json` must be deployed **before** shipping code that relies on them (default deny otherwise).
+
 ## Architecture
 - **SPA + API in one server**: `server.ts` exports `createApp()` (Express app). Dev uses `tsx` + Vite middleware. Production uses `vite build` + `esbuild`-compiled server.
 - **Vercel**: `api/index.ts` imports `createApp()` and wraps it as a serverless handler. SPA fallback via `vercel.json` rewrites.
@@ -22,6 +28,7 @@
 - `movements` is **append-only** (no updates/deletes by rule)
 - `updatedAt` must equal `request.time` — use `serverTimestamp()` on every Firestore write
 - Techs can only update `status`, `currentMachine`, `updatedAt`, `updatedBy` on components
+- `machines` and `components` are **soft-delete only** (`delete` is denied by rule). Remove via update setting `active:false` + `deletedAt: serverTimestamp()`; only admins can soft-delete (`isSoftDeleteUpdate`)
 
 ## Environment
 - Copy `.env.example` to `.env.local` for local dev. Key vars: `GEMINI_API_KEY` (required), `SMTP_*` (optional, email alerts fall back to console log)
