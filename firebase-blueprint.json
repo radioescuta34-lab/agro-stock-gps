@@ -488,6 +488,18 @@
       "schema": { "$ref": "#/entities/LocationEvent" },
       "description": "Immutable placement history, linked by component and operation."
     },
+    "/notification_read_states/{userId}": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "userId": { "type": "string", "description": "Owner UID; must match the document id and the authenticated caller." },
+          "readIds": { "type": "array", "items": { "type": "string" }, "description": "IDs of notifications already read (max 500)." },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "required": [ "userId", "readIds", "updatedAt" ]
+      },
+      "description": "Per-user notification inbox read markers, synced across devices while generated notifications remain operational data."
+    },
     "/storage_operations/{operationId}": {
       "schema": {
         "type": "object",

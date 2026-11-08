@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
   Bell,
   BellRing,
@@ -17,6 +18,7 @@ import { ComponentLoan, ComponentMaintenance, License, UserProfile } from '../ty
 import { getOverdueLoans } from '../utils/loansAlerts';
 import { getOverdueMaintenances } from '../utils/maintenanceAlerts';
 import { buildAuthenticatedHeaders, canUseWebPush, subscribeDeviceToPush } from '../utils/pushNotifications';
+import { db } from '../firebase';
 
 type NotificationKind = 'support' | 'license' | 'maintenance' | 'loan';
 
@@ -30,6 +32,9 @@ interface NotificationItem {
   targetId?: string;
   urgent?: boolean;
 }
+
+type InboxTab = 'unread' | 'all';
+const READ_HISTORY_DAYS = 30;
 
 interface SupportTicketSummary {
   id: string;
@@ -90,10 +95,12 @@ export default function AppNotificationCenter({
   const [open, setOpen] = useState(false);
   const [tickets, setTickets] = useState<SupportTicketSummary[]>([]);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
+  const [inboxTab, setInboxTab] = useState<InboxTab>('unread');
   const [pushState, setPushState] = useState<'idle' | 'loading' | 'enabled' | 'denied' | 'unavailable' | 'error'>('idle');
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const storageKey = `agro_stock_gps_notification_reads_${user.uid}`;
+  const readStateDoc = useMemo(() => doc(db, 'notification_read_states', user.uid), [user.uid]);
 
   const loadTickets = useCallback(async () => {
     try {
@@ -107,16 +114,34 @@ export default function AppNotificationCenter({
   }, [user]);
 
   useEffect(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem(storageKey) || '[]');
-      setReadIds(new Set<string>(Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : []));
-    } catch {
-      setReadIds(new Set());
-    }
+    let cancelled = false;
+    setInboxTab('unread');
+    const readFallback = () => {
+      try {
+        const stored = JSON.parse(localStorage.getItem(storageKey) || '[]');
+        if (!cancelled) setReadIds(new Set<string>(Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : []));
+      } catch { if (!cancelled) setReadIds(new Set()); }
+    };
+    const loadReadState = async () => {
+      try {
+        const snapshot = await getDoc(readStateDoc);
+        const ids = (snapshot.data() as { readIds?: unknown } | undefined)?.readIds;
+        if (Array.isArray(ids) && !cancelled) {
+          const next = new Set<string>(ids.filter((id): id is string => typeof id === 'string'));
+          setReadIds(next);
+          localStorage.setItem(storageKey, JSON.stringify(Array.from(next)));
+          return;
+        }
+      } catch {
+        // The local cache keeps the inbox useful until Firestore rules are deployed.
+      }
+      readFallback();
+    };
+    void loadReadState();
     void loadTickets();
     const timer = window.setInterval(loadTickets, 60_000);
-    return () => window.clearInterval(timer);
-  }, [loadTickets, storageKey]);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [loadTickets, readStateDoc, storageKey, user.uid]);
 
   useEffect(() => {
     if (!canUseWebPush()) setPushState('unavailable');
@@ -219,15 +244,33 @@ export default function AppNotificationCenter({
     return result.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [tickets, licenses, maintenances, loans, maintenanceOverdueDays]);
 
-  const unreadCount = items.filter(item => !readIds.has(item.id)).length;
+  const historyCutoff = Date.now() - READ_HISTORY_DAYS * 86_400_000;
+  const isItemRead = useCallback((item: NotificationItem) =>
+    readIds.has(item.id) || (!item.urgent && new Date(item.date).getTime() < historyCutoff),
+  [readIds, historyCutoff]);
+  const visibleItems = useMemo(() => items.filter(item =>
+    !isItemRead(item) || item.urgent || new Date(item.date).getTime() >= historyCutoff
+  ), [items, isItemRead, historyCutoff]);
+  const unreadItems = useMemo(() => visibleItems.filter(item => !isItemRead(item)), [visibleItems, isItemRead]);
+  const readItems = useMemo(() => visibleItems.filter(item => isItemRead(item)), [visibleItems, isItemRead]);
+  const unreadCount = unreadItems.length;
 
   const persistReads = (next: Set<string>) => {
-    setReadIds(next);
-    localStorage.setItem(storageKey, JSON.stringify(Array.from(next).slice(-500)));
+    const ids = Array.from(next).slice(-500);
+    const normalized = new Set(ids);
+    setReadIds(normalized);
+    localStorage.setItem(storageKey, JSON.stringify(ids));
+    void setDoc(readStateDoc, {
+      userId: user.uid,
+      readIds: ids,
+      updatedAt: serverTimestamp()
+    }, { merge: true }).catch(() => {
+      // Offline or pre-deploy fallback: the local cache is still persisted for this user/device.
+    });
   };
 
   const markRead = (id: string) => persistReads(new Set<string>(readIds).add(id));
-  const markAllRead = () => persistReads(new Set<string>([...readIds, ...items.map(item => item.id)]));
+  const markAllRead = () => persistReads(new Set<string>([...readIds, ...unreadItems.map(item => item.id)]));
 
   const activatePush = async () => {
     setPushState('loading');
@@ -261,13 +304,20 @@ export default function AppNotificationCenter({
         <div className="flex items-center gap-1">
           {unreadCount > 0 && (
             <button onClick={markAllRead} className="rounded-lg px-2 py-1.5 text-[10px] font-bold text-emerald-700 hover:bg-emerald-50" title="Marcar todas como lidas">
-              <CheckCheck className="mr-1 inline h-3.5 w-3.5" /> Lidas
+              <CheckCheck className="mr-1 inline h-3.5 w-3.5" /> Marcar lidas
             </button>
           )}
           <button onClick={() => setOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label="Fechar notificações">
             <X className="h-4 w-4" />
           </button>
         </div>
+      </div>
+
+      <div className="flex gap-5 border-b border-slate-100 px-4" role="tablist" aria-label="Filtros de notificações">
+        <button type="button" role="tab" aria-selected={inboxTab === 'unread'} onClick={() => setInboxTab('unread')} className={`border-b-2 py-2.5 text-[11px] font-bold transition-colors ${inboxTab === 'unread' ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+          Não lidas{unreadCount > 0 && <span className="ml-1.5 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] text-emerald-700 tabular-nums">{unreadCount}</span>}
+        </button>
+        <button type="button" role="tab" aria-selected={inboxTab === 'all'} onClick={() => setInboxTab('all')} className={`border-b-2 py-2.5 text-[11px] font-bold transition-colors ${inboxTab === 'all' ? 'border-emerald-600 text-emerald-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>Todas</button>
       </div>
 
       {pushState !== 'enabled' && (
@@ -288,15 +338,19 @@ export default function AppNotificationCenter({
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {items.length === 0 ? (
+        {inboxTab === 'unread' && unreadItems.length === 0 ? (
           <div className="flex flex-col items-center px-6 py-12 text-center">
             <div className="rounded-2xl bg-slate-100 p-3 text-slate-400"><Bell className="h-6 w-6" /></div>
             <p className="mt-3 text-sm font-bold text-slate-800">Tudo em dia por aqui</p>
-            <p className="mt-1 max-w-60 text-[11px] leading-relaxed text-slate-500">Novas respostas, vencimentos e pendências operacionais aparecerão aqui.</p>
+            <p className="mt-1 max-w-60 text-[11px] leading-relaxed text-slate-500">Você não tem notificações novas. Consulte o histórico na aba Todas.</p>
           </div>
-        ) : items.map(item => {
+        ) : inboxTab === 'all' && visibleItems.length === 0 ? (
+          <div className="flex flex-col items-center px-6 py-12 text-center"><div className="rounded-2xl bg-slate-100 p-3 text-slate-400"><Bell className="h-6 w-6" /></div><p className="mt-3 text-sm font-bold text-slate-800">Sem notificações recentes</p><p className="mt-1 max-w-60 text-[11px] leading-relaxed text-slate-500">Novas respostas, vencimentos e pendências operacionais aparecerão aqui.</p></div>
+        ) : <>
+          {inboxTab === 'all' && unreadItems.length > 0 && <p className="border-b border-slate-100 bg-slate-50 px-4 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Não lidas</p>}
+          {unreadItems.map(item => {
           const Icon = iconByKind[item.kind];
-          const isUnread = !readIds.has(item.id);
+          const isUnread = !isItemRead(item);
           return (
             <button key={item.id} onClick={() => openItem(item)} className={`group flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition-colors hover:bg-slate-50 ${isUnread ? 'bg-emerald-50/25' : ''}`}>
               <span className={`mt-0.5 rounded-xl p-2 ${toneByKind[item.kind]}`}><Icon className="h-4 w-4" /></span>
@@ -311,7 +365,17 @@ export default function AppNotificationCenter({
               <ChevronRight className="mt-4 h-4 w-4 shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-slate-500" />
             </button>
           );
-        })}
+          })}
+          {inboxTab === 'all' && readItems.length > 0 && <p className="border-y border-slate-100 bg-slate-50 px-4 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">Lidas recentemente</p>}
+          {inboxTab === 'all' && readItems.map(item => {
+            const Icon = iconByKind[item.kind];
+            return <button key={item.id} onClick={() => openItem(item)} className="group flex w-full items-start gap-3 border-b border-slate-100 px-4 py-3 text-left transition-colors hover:bg-slate-50">
+              <span className={`mt-0.5 rounded-xl p-2 opacity-70 ${toneByKind[item.kind]}`}><Icon className="h-4 w-4" /></span>
+              <span className="min-w-0 flex-1"><span className="text-xs font-bold leading-snug text-slate-700">{item.title}</span><span className="mt-1 block line-clamp-2 text-[11px] leading-relaxed text-slate-500">{item.message}</span><span className="mt-1.5 flex items-center gap-1 text-[10px] font-medium text-slate-400"><Clock3 className="h-3 w-3" /> {relativeDate(toIsoDate(item.date))}</span></span>
+              <ChevronRight className="mt-4 h-4 w-4 shrink-0 text-slate-300 transition-transform group-hover:translate-x-0.5 group-hover:text-slate-500" />
+            </button>;
+          })}
+        </>}
       </div>
     </div>,
     document.body

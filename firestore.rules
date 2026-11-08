@@ -146,6 +146,25 @@ service cloud.firestore {
       allow delete: if isSuper() || (isAdmin() && !isSuperUserDoc(userId));
     }
 
+    // Per-user notification inbox state. The generated notifications remain
+    // operational data; this document stores only each user's read markers.
+    function isValidNotificationReadState(state, userId) {
+      return state.keys().hasOnly(['userId', 'readIds', 'updatedAt'])
+        && state.userId == userId
+        && state.readIds is list && state.readIds.size() <= 500
+        && state.updatedAt == request.time;
+    }
+
+    match /notification_read_states/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId;
+      allow list: if false;
+      allow create: if isSignedIn() && request.auth.uid == userId && isValidNotificationReadState(request.resource.data, userId);
+      allow update: if isSignedIn() && request.auth.uid == userId
+        && resource.data.userId == userId
+        && isValidNotificationReadState(request.resource.data, userId);
+      allow delete: if false;
+    }
+
     // Validate Component
     function isValidComponent(comp) {
       return comp.id is string && comp.id.size() <= 128
