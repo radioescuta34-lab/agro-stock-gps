@@ -3124,7 +3124,8 @@ export default function App() {
           <MovementsTab
             movements={movements}
             components={components}
-            machines={eligibleCollectionMachines}
+            machines={machines}
+            collectionMachines={eligibleCollectionMachines}
             fieldDataCollections={fieldDataCollections}
             role={user.role}
             currentUserId={user.uid}

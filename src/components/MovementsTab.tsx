@@ -67,6 +67,8 @@ interface MovementsTabProps {
   movements: MovementLog[];
   components: AutopilotComponent[];
   machines: Machine[];
+  /** Machines eligible only for the weekly collection Kanban; never restricts O.S. operations. */
+  collectionMachines?: Machine[];
   fieldDataCollections?: FieldDataCollection[];
   role: UserRole;
   currentUserId: string;
@@ -207,6 +209,7 @@ export default function MovementsTab({
   movements,
   components,
   machines,
+  collectionMachines = machines,
   fieldDataCollections = [],
   role,
   currentUserId,
@@ -965,7 +968,7 @@ export default function MovementsTab({
 
       {subTab === 'kanban' ? (
         <FieldDataKanban
-          machines={machines}
+          machines={collectionMachines}
           fieldDataCollections={fieldDataCollections}
           role={role}
           currentUserName={currentUserName}
