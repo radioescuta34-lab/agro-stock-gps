@@ -18,6 +18,19 @@ export function ReviewDestinationDialog({ component, state, onCommand, onClose }
   </StorageDialog>;
 }
 
+export function AssignPlacementDialog({ component, locations, defaultId, onAssign, onClose }: { component: AutopilotComponent; locations: Location[]; defaultId?: string; onAssign: (locationId: string, notes: string) => Promise<void>; onClose: () => void }) {
+  const [locationId, setLocationId] = useState(defaultId || ''); const [notes, setNotes] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const formId = useId();
+  return <StorageDialog title="Definir local de início" onClose={onClose} busy={busy} actions={<button disabled={busy} form={formId} className={storagePrimary}>{busy ? 'Salvando…' : 'Confirmar local'}</button>}>
+    <form id={formId} className="space-y-4" onSubmit={async event => { event.preventDefault(); setBusy(true); setError(''); try { await onAssign(locationId, notes); onClose(); } catch (err) { setError(err instanceof Error ? err.message : 'Não foi possível definir o local.'); } finally { setBusy(false); } }}>
+      <p className="text-sm text-slate-600">{component.name} · S/N {component.serialNumber} · {component.status}</p>
+      <p className="text-xs text-slate-500">Registre onde este equipamento está fisicamente no inventário. O destino fica gravado no histórico e o equipamento volta a ficar disponível para movimentação.</p>
+      {component.status === 'Em Uso' && <p className="rounded-xl bg-amber-50 p-3 text-xs text-amber-700">O status "Em Uso" será ajustado para "Disponível", pois o equipamento será registrado em armazenamento. Para instalar em uma máquina, use uma O.S. depois.</p>}
+      <StorageSelect locations={locations} value={locationId} onChange={setLocationId} defaultId={defaultId} label="Armazenamento inicial" />
+      <label className="block text-xs font-semibold text-slate-600">Justificativa *<textarea required maxLength={512} value={notes} onChange={event => setNotes(event.target.value)} className={storageInput + ' mt-2 min-h-24'} /></label>{error && <p role="alert" className="text-sm text-rose-600">{error}</p>}
+    </form>
+  </StorageDialog>;
+}
+
 export function StorageSelect({ locations, value, onChange, defaultId, label = 'Local de recebimento', excludeId }: { locations: Location[]; value: string; onChange: (value: string) => void; defaultId?: string; label?: string; excludeId?: string }) {
   const id = useId();
   const options = locations.filter(item => item.kind === 'INTERNAL' && item.isActive && item.id !== excludeId).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));

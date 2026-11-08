@@ -1,4 +1,4 @@
-export type UserRole = 'ADMINISTRADOR' | 'TECNICO_CAMPO' | 'administrador' | 'tecnico';
+export type UserRole = 'SUPER_USUARIO' | 'ADMINISTRADOR' | 'TECNICO_CAMPO' | 'superusuario' | 'administrador' | 'tecnico';
 
 export interface UserProfile {
   uid: string;
@@ -112,15 +112,32 @@ export interface Machine {
   model: string;
   brand: string; // e.g. "John Deere", "Case IH", "New Holland"
   fleet?: string; // e.g. "Frente 01", "Frota Cana"
+  /** Canonical work-front relation. `fleet` remains only for legacy display/search. */
+  workFrontId?: string;
+  workFrontName?: string;
   active?: boolean; // soft-delete flag; undefined/true = active, false = deleted
   deletedAt?: string;
   updatedAt: any;
 }
 
+export type WorkFrontOperation = 'Colheita' | 'Vinhaça' | 'Plantio' | 'Tratos culturais' | 'Outra';
+
+/** A named operational front that can be selected by machines and enabled for weekly collection. */
+export interface WorkFront {
+  id: string;
+  name: string;
+  code?: string;
+  operationType: WorkFrontOperation;
+  collectsFieldData: boolean;
+  active: boolean;
+  updatedAt: any;
+  updatedBy: string;
+}
+
 export type MovementAction = 'Instalação' | 'Remoção' | 'Manutenção' | 'Calibração';
 export type ServiceActionCode = 'INSTALLATION' | 'REMOVAL' | 'MAINTENANCE' | 'CALIBRATION';
 
-export type MovementStatus = 'Aberta' | 'Agendada' | 'Em Atendimento' | 'Concluída' | 'Cancelada';
+export type MovementStatus = 'Aberta' | 'Agendada' | 'Em Atendimento' | 'Em Manutenção Interna' | 'Em Assistência Externa' | 'Aguardando Conferência' | 'Concluída' | 'Sem Conserto' | 'Cancelada';
 
 export interface MovementHistoryEntry {
   timestamp: string; // ISO string
@@ -138,6 +155,8 @@ export interface FieldDataCollection {
   machineType?: MachineType;
   fleet?: string;
   frente?: string;
+  workFrontId?: string;
+  workFrontName?: string;
   weekId: string; // e.g., "2026-W32"
   status: 'Pendente' | 'Concluído';
   collectedAt?: any; // ISO string or timestamp
@@ -182,6 +201,15 @@ export interface MovementLog {
   replacedParts?: string; // standardized parts replaced detail
   servicesPerformed?: string; // standardized services performed detail
   cost?: number; // standardized repair cost
+  // ── Maintenance execution fields ─────────────────────────────────────────
+  executionType?: 'INTERNAL' | 'EXTERNAL'; // only for MAINTENANCE service
+  providerId?: string; // FK → partner (assistência técnica) for external execution
+  providerName?: string;
+  sentDate?: string; // ISO date when equipment was sent to external provider
+  expectedReturnDate?: string; // ISO date for expected return from external provider
+  issueDescription?: string; // defect description for external maintenance
+  additionalNotes?: string; // observações adicionadas após início da O.S. (separadas por \n---\n)
+  scheduledDate?: string; // data de reagendamento (ISO string) quando status = Agendada
 }
 
 // Preset applied when navigating from a dashboard indicator card
@@ -323,6 +351,8 @@ export interface ComponentMaintenance {
   providerName: string; // Maintenance company
   locationId?: string; // FK → Location.id (kind EXTERNAL_SERVICE) — canonical destination
   returnLocationId?: string;
+  /** O.S. que originou esta projeção operacional. Ausente somente em registros legados. */
+  orderId?: string;
   osNumber?: number; // Linked maintenance O.S. number
   serviceType?: string; // Registered service type (Settings > Cadastro > Tipos de Serviço)
   issueDescription: string; // Description of the problem
@@ -330,18 +360,6 @@ export interface ComponentMaintenance {
   servicesPerformed?: string; // Services performed
   cost?: number; // Optional cost of repair
   status: 'Em Manutenção' | 'Concluído' | 'Sem Conserto';
-  updatedAt: any;
-  updatedBy: string;
-}
-
-export interface MaintenanceProvider {
-  id: string;
-  name: string; // Name of the provider
-  phone?: string;
-  email?: string;
-  address?: string;
-  contactPerson?: string;
-  createdAt: any;
   updatedAt: any;
   updatedBy: string;
 }

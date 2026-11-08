@@ -181,20 +181,24 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
       {/* Toasts */}
       {toasts.length > 0 && createPortal(
-        <div className="fixed top-4 right-4 z-[120] flex flex-col gap-2.5 w-[calc(100vw-2rem)] max-w-sm pointer-events-none">
+        <div
+          className="fixed inset-x-3 top-[max(0.75rem,env(safe-area-inset-top))] z-[120] flex flex-col gap-2.5 pointer-events-none sm:left-auto sm:right-4 sm:top-4 sm:w-[min(24rem,calc(100vw-2rem))]"
+          aria-live="polite"
+          aria-atomic="true"
+        >
           {toasts.map(toast => {
             const style = TOAST_STYLES[toast.type];
             return (
               <div
                 key={toast.id}
-                className={`pointer-events-auto p-3.5 rounded-xl border shadow-lg flex items-start gap-2.5 text-xs font-semibold animate-slide-in-right ${style.box}`}
+                className={`pointer-events-auto flex items-start gap-2.5 rounded-xl border p-3.5 text-[13px] font-semibold shadow-lg animate-slide-in-right sm:text-xs ${style.box}`}
                 role="status"
               >
                 {style.icon}
                 <div className="leading-normal flex-1 min-w-0 break-words">{toast.message}</div>
                 <button
                   onClick={() => dismissToast(toast.id)}
-                  className="text-current opacity-50 hover:opacity-100 transition-opacity shrink-0"
+                  className="-mr-1 -mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-current opacity-50 transition-colors hover:bg-slate-900/5 hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
                   aria-label="Fechar"
                 >
                   <X className="h-4 w-4" />

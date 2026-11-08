@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { getISOWeekId, getWeekFormattedLabel } from '../utils/dateUtils';
+import { isAdminRole, isTechnicianRole } from '../utils/roles';
 import HelpGuideModal from './HelpGuideModal';
 import type { HelpGuideStep } from './HelpGuideModal';
 
@@ -57,7 +58,7 @@ export default function Dashboard({
   onNavigate,
   onSeedData
 }: DashboardProps) {
-  const isAdminOrTech = role === 'administrador' || role === 'tecnico' || role === 'ADMINISTRADOR' || role === 'TECNICO_CAMPO';
+  const isAdminOrTech = isAdminRole(role) || isTechnicianRole(role);
 
   const [helpOpen, setHelpOpen] = useState(false);
 

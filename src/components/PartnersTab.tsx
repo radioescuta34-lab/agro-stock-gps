@@ -22,6 +22,7 @@ import {
 import HelpGuideModal from './HelpGuideModal';
 import type { HelpGuideStep } from './HelpGuideModal';
 import { ComponentLoan, ComponentMaintenance, Partner, PartnerContact, PartnerPersonType, PartnerType, UserRole } from '../types';
+import { isAdminRole, isTechnicianRole } from '../utils/roles';
 import { useNotifications } from './NotificationProvider';
 
 interface PartnersTabProps {
@@ -48,7 +49,7 @@ export default function PartnersTab({
   onDeactivatePartner
 }: PartnersTabProps) {
   const { confirmDialog, showToast } = useNotifications();
-  const canManage = role === 'administrador' || role === 'tecnico' || role === 'ADMINISTRADOR' || role === 'TECNICO_CAMPO';
+  const canManage = isAdminRole(role) || isTechnicianRole(role);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | PartnerType>('all');
   const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | 'all'>('active');

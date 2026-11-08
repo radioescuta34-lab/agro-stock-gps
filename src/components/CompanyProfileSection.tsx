@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CompanyProfile, UserRole } from '../types';
+import { isAdminRole } from '../utils/roles';
 import {
   Building2,
   Save,
@@ -42,7 +43,7 @@ export default function CompanyProfileSection({
   const [success, setSuccess] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
 
-  const isAdmin = role === 'administrador' || role === 'ADMINISTRADOR';
+  const isAdmin = isAdminRole(role);
 
   useEffect(() => {
     setName(companyProfile.name);

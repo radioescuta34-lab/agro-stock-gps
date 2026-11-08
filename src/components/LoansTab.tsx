@@ -1,4 +1,5 @@
 import { createEquipmentAvailabilityResolver } from '../utils/equipmentAvailability';
+import { isAdminRole } from '../utils/roles';
 import type { MovementLog, ComponentMaintenance, Machine } from '../types';
 import { StorageSelect } from './StorageControls';
 import type { Location } from '../types';
@@ -910,7 +911,7 @@ export default function LoansTab({
                       )}
 
                       {/* Administrative actions */}
-                      {(role === 'administrador' || role === 'ADMINISTRADOR') && (
+                      {isAdminRole(role) && (
                         <button
                           onClick={() => setLoanToDelete(loan)}
                           className="p-1.5 hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-transparent hover:border-rose-100 rounded-lg transition-all"

@@ -171,7 +171,7 @@ export default function SettingsTab({
     },
     {
       title: 'Gestão de Usuários',
-      description: 'Adicione, edite ou remova usuários do sistema. Defina perfis de acesso como Administrador ou Técnico de Campo, controlando o que cada usuário pode visualizar e modificar.',
+      description: 'Adicione, edite ou remova usuários do sistema. Defina perfis de acesso como Super Usuário (DEV), Administrador ou Técnico de Campo, controlando o que cada usuário pode visualizar e modificar.',
       icon: Users,
       accent: 'bg-violet-600 text-white'
     },
@@ -611,6 +611,7 @@ export default function SettingsTab({
               usersList={usersList}
               role={role}
               companyEmail={companyProfile.email}
+              currentUserId={currentUser.uid}
               onAddUser={onAddUser}
               onEditUser={onEditUser}
               onDeleteUser={onDeleteUser}

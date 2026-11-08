@@ -20,7 +20,10 @@
 
 ## Auth quirks
 - Login uses **username** → mapped to `{username}@agrostockgps.com` virtual email (`AuthScreen.tsx`)
-- Roles: `ADMINISTRADOR` or `TECNICO_CAMPO` (both casing variants exist in code)
+- Roles: `SUPER_USUARIO`, `ADMINISTRADOR` or `TECNICO_CAMPO` (legacy lowercase variants exist in code; always use `src/utils/roles.ts`)
+- `SUPER_USUARIO` (DEV) sits above admin: inherits admin permissions, is the only role that can manage `settings/whatsNew`, and is invisible to admins. Promote the first Super manually in Firestore: `users/{uid}.role = "SUPER_USUARIO"`.
+- Admin user listing goes through `GET /api/admin/users/list` (Bearer token) because Firestore rules cannot filter `list`; Super uses a realtime listener.
+- User admin endpoints require a Firebase ID token and validate the caller role server-side (never trust client headers).
 - First admin auto-created on empty DB: user `admin` / password `adminpassword`
 - Demo mode uses `localStorage` (prefix `agro_stock_gps_`) — no Firebase needed
 

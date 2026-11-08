@@ -1,6 +1,7 @@
 import type { AutopilotComponent, ComponentLoan, ComponentMaintenance, Location, LocationEvent, Machine, MovementLog, MovementStatus, Partner, StorageSettings } from '../types';
 import { createEquipmentDestinationResolver } from './equipmentDestinations';
 import { createEquipmentAvailabilityResolver, isOpenOrder, orderItems, resolveServiceAction } from './equipmentAvailability';
+import { isAdminRole, isTechnicianRole } from './roles';
 export { isOpenOrder, orderItems } from './equipmentAvailability';
 
 export interface StorageState {
@@ -10,27 +11,35 @@ export interface StorageState {
 }
 export type StorageCollection = 'components' | 'locations' | 'movements' | 'loans' | 'maintenances';
 export interface StorageChange { collection: StorageCollection; id: string; data: any | null }
+export interface MaintenanceReturn {
+  returnLocationId: string;
+  status: 'Concluído' | 'Sem Conserto';
+  returnDate?: string;
+  cost?: number;
+  replacedParts?: string;
+  servicesPerformed?: string;
+}
 export type StorageCommand =
   | { type: 'saveLocation'; location: Location }
   | { type: 'default'; locationId: string }
   | { type: 'transfer' | 'review'; componentIds: string[]; locationId: string; notes: string; machineId?: string }
+  | { type: 'assignPlacement'; componentId: string; locationId: string; notes: string }
   | { type: 'component'; component: AutopilotComponent; editing: boolean }
   | { type: 'order'; order: MovementLog; editing: boolean }
   | { type: 'deleteOrder'; id: string }
-  | { type: 'transition'; id: string; status: MovementStatus; action: string; detail?: string; locationId?: string }
+  | { type: 'transition'; id: string; status: MovementStatus; action: string; detail?: string; locationId?: string; returnData?: MaintenanceReturn; scheduledDate?: string }
+  | { type: 'note'; id: string; note: string }
   | { type: 'loan'; loan: ComponentLoan }
-  | { type: 'returnLoan'; id: string; componentIds?: string[]; locationId: string }
-  | { type: 'maintenance'; maintenance: ComponentMaintenance }
-  | { type: 'returnMaintenance'; id: string; data: Pick<ComponentMaintenance, 'returnDate' | 'returnLocationId' | 'replacedParts' | 'servicesPerformed' | 'cost' | 'status'> };
+  | { type: 'returnLoan'; id: string; componentIds?: string[]; locationId: string };
 
 export function storageCommandKey(command: StorageCommand) {
-  const property = command.type === 'component' && !command.editing ? 'component' : command.type === 'order' && !command.editing ? 'order' : command.type === 'loan' ? 'loan' : command.type === 'maintenance' ? 'maintenance' : '';
+  const property = command.type === 'component' && !command.editing ? 'component' : command.type === 'order' && !command.editing ? 'order' : command.type === 'loan' ? 'loan' : '';
   if (!property) return JSON.stringify(command);
   const payload = { ...(command as any)[property] };
   for (const key of ['id', 'createdAt', 'updatedAt', 'updatedBy', 'osNumber', 'contractNumber', 'history']) delete payload[key];
   return JSON.stringify({ ...command, [property]: payload });
 }
-export const isStorageAdmin = (role: string) => ['ADMINISTRADOR', 'administrador'].includes(role);
+export const isStorageAdmin = (role: string) => isAdminRole(role);
 const normalized = (value: string) => value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('pt-BR');
 function requireValue(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
 const version = (value: any) => value?.toMillis ? value.toMillis() : value ? new Date(value).getTime() : 0;
@@ -39,13 +48,21 @@ function assertFresh(previous: { updatedAt?: any } | undefined, incoming: { upda
 }
 
 export function planStorageCommand(state: StorageState, command: StorageCommand, actor: { id: string; name: string; role: string }, operationId: string, now: string) {
-  requireValue(isStorageAdmin(actor.role) || ['TECNICO_CAMPO', 'tecnico'].includes(actor.role), 'Sem permissão para movimentar equipamentos.');
+  requireValue(isStorageAdmin(actor.role) || isTechnicianRole(actor.role), 'Sem permissão para movimentar equipamentos.');
   const changes: StorageChange[] = [];
   const events: LocationEvent[] = [];
   const settings = { ...state.settings, revision: (state.settings.revision || 0) + 1, updatedAt: now, updatedBy: actor.name };
   const resolve = createEquipmentDestinationResolver(state.machines, state.locations, state.maintenances);
   const availability = createEquipmentAvailabilityResolver(state);
-  const save = (collection: StorageCollection, data: any) => changes.push({ collection, id: data.id, data: { ...data, updatedAt: now, updatedBy: actor.name } });
+  // A command can update the same equipment more than once (for example, flagging a
+  // maintenance requirement and then completing its placement). Keep only the final
+  // version so a Firestore transaction never emits conflicting writes for one document.
+  const save = (collection: StorageCollection, data: any) => {
+    const change = { collection, id: data.id, data: { ...data, updatedAt: now, updatedBy: actor.name } } as StorageChange;
+    const existingIndex = changes.findIndex(item => item.collection === collection && item.id === data.id);
+    if (existingIndex >= 0) changes[existingIndex] = change;
+    else changes.push(change);
+  };
   const internal = (id: string) => {
     const location = state.locations.find(item => item.id === id && item.kind === 'INTERNAL' && item.isActive);
     requireValue(location, 'Selecione um local de armazenamento ativo.');
@@ -93,10 +110,16 @@ export function planStorageCommand(state: StorageState, command: StorageCommand,
     requireValue(ids.length > 0 && ids.length <= 50, 'Selecione de 1 a 50 equipamentos sem repetição.');
     if (code === 'INSTALLATION') requireValue(state.machines.some(item => item.id === order.machineId && item.active !== false), 'Selecione uma máquina ativa.');
     if (code === 'REMOVAL') internal(order.locationId || '');
+    if (code === 'MAINTENANCE' && order.executionType === 'EXTERNAL') {
+      requireValue(order.providerId, 'Selecione a assistência técnica para execução externa.');
+      requireValue(order.sentDate, 'Informe a data de envio para assistência externa.');
+      requireValue(order.issueDescription?.trim(), 'Descreva o defeito para assistência externa.');
+    }
     for (const id of ids) {
       const component = getComponent(id);
       available(component, order.id);
-      requireValue(availability(component, order.id).canCreateOrder(code), `${component.name}: não está disponível para este serviço. Confira as pendências e o armazenamento de origem.`);
+      const ctx = availability(component, order.id);
+      requireValue(ctx.canCreateOrder(code), `${component.name}: ${ctx.blockReason || 'não está disponível para este serviço. Confira as pendências e o armazenamento de origem.'}`);
     }
   };
   const markRepairRequired = (order: MovementLog) => {
@@ -143,6 +166,20 @@ export function planStorageCommand(state: StorageState, command: StorageCommand,
         available(component); requireValue(component.status !== 'Em Uso', 'Para retirar de uma máquina ou parceiro, use remoção ou devolução.');
       }
       place(component, { location, machine }, component.status, 'Local conferido', '', command.notes);
+      break;
+    }
+    case 'assignPlacement': {
+      requireValue(command.notes.trim(), 'Informe a justificativa para definir o local de início.');
+      const component = getComponent(command.componentId);
+      const location = internal(command.locationId);
+      available(component);
+      const ctx = availability(component);
+      requireValue(ctx.label === 'Cadastro a conferir', `${component.name}: este equipamento não está como "Cadastro a conferir". Use transferência, O.S., empréstimo ou manutenção para alterar o destino.`);
+      const current = resolve(component);
+      requireValue(current.kind === 'unknown' || current.kind === 'internal', `${component.name}: destinos de máquina, assistência e empréstimo mudam pelos fluxos de O.S., manutenção ou empréstimo.`);
+      // A legacy record may be stored as in use without a resolvable machine; placing it in an
+      // identified storage must release it so the record stops being flagged as pending.
+      place(component, { location }, component.status === 'Em Uso' ? 'Disponível' : component.status, 'Local de início definido', '', command.notes);
       break;
     }
     case 'transfer': {
@@ -197,23 +234,101 @@ export function planStorageCommand(state: StorageState, command: StorageCommand,
     }
     case 'transition': {
       const storedOrder = state.movements.find(item => item.id === command.id);
-      const order = storedOrder && { ...storedOrder, ...(command.locationId ? { locationId: command.locationId } : {}) };
-      requireValue(order, 'O.S. não encontrada.');
-      const transitions: Record<MovementStatus, MovementStatus[]> = { Aberta: ['Agendada', 'Em Atendimento', 'Cancelada'], Agendada: ['Aberta', 'Em Atendimento', 'Cancelada'], 'Em Atendimento': ['Agendada', 'Concluída', 'Cancelada'], Concluída: [], Cancelada: [] };
-      requireValue(transitions[order.status || 'Aberta']?.includes(command.status), 'A situação da O.S. mudou. Atualize a lista.');
-      const code = resolveServiceAction(order);
+      requireValue(storedOrder, 'O.S. não encontrada.');
+      const code = resolveServiceAction(storedOrder);
       requireValue(code, 'Tipo de serviço não reconhecido. Classifique a O.S. antes de continuar.');
-      if (command.status !== 'Cancelada') validateOrder(order);
-      if (command.status === 'Concluída') {
+      // The receiving location is stored on removal orders only; maintenance orders record
+      // it in history (the physical move lives on the equipment and location events).
+      const order = { ...storedOrder, ...(command.locationId && code !== 'MAINTENANCE' ? { locationId: command.locationId } : {}) };
+      const previousStatus = order.status || 'Aberta';
+      const transitions: Record<MovementStatus, MovementStatus[]> = {
+        Aberta: ['Agendada', 'Em Atendimento', 'Cancelada'],
+        Agendada: ['Aberta', 'Em Atendimento', 'Cancelada'],
+        'Em Atendimento': ['Agendada', 'Em Manutenção Interna', 'Em Assistência Externa', 'Concluída', 'Cancelada'],
+        'Em Manutenção Interna': ['Aguardando Conferência', 'Cancelada'],
+        'Em Assistência Externa': ['Aguardando Conferência', 'Cancelada'],
+        'Aguardando Conferência': ['Concluída', 'Sem Conserto', 'Cancelada'],
+        Concluída: [], Cancelada: [], 'Sem Conserto': [],
+      };
+      requireValue(transitions[previousStatus]?.includes(command.status), 'A situação da O.S. mudou. Atualize a lista.');
+      const isExternalReturn = code === 'MAINTENANCE' && order.executionType === 'EXTERNAL' && previousStatus === 'Em Assistência Externa' && command.status === 'Aguardando Conferência';
+      const isMaintenanceFinish = code === 'MAINTENANCE' && ['Aguardando Conferência', 'Concluída', 'Sem Conserto'].includes(command.status);
+      // Equipment is re-validated when a service starts. Return and finish steps of a
+      // maintenance order act on equipment already reserved by this same O.S.
+      if (command.status !== 'Cancelada' && !isMaintenanceFinish) validateOrder(order);
+      if (isExternalReturn) {
+        const ret = command.returnData;
+        requireValue(ret, 'Informe o local de recebimento e o resultado do retorno.');
+        requireValue(ret.status === 'Concluído' || ret.status === 'Sem Conserto', 'Informe a situação do retorno.');
+        const returnLocation = internal(ret.returnLocationId);
+        const items = orderItems(order);
+        for (const id of items) {
+          const component = getComponent(id);
+          place(component, { location: returnLocation }, ret.status === 'Sem Conserto' ? 'Descartado' : 'Disponível', 'Retorno da assistência', order.id);
+        }
+        for (const maintenance of state.maintenances.filter(item => item.status === 'Em Manutenção' && item.orderId === order.id && items.includes(item.componentId))) {
+          save('maintenances', { ...maintenance, status: ret.status, returnDate: ret.returnDate || now.slice(0, 10), returnLocationId: ret.returnLocationId, ...(ret.cost !== undefined ? { cost: ret.cost } : {}), ...(ret.replacedParts !== undefined ? { replacedParts: ret.replacedParts } : {}), ...(ret.servicesPerformed !== undefined ? { servicesPerformed: ret.servicesPerformed } : {}) });
+        }
+      } else if (command.status === 'Concluída' || command.status === 'Sem Conserto') {
         for (const id of orderItems(order)) {
           const component = getComponent(id);
           if (code === 'CALIBRATION') continue;
-          if (code === 'MAINTENANCE') { save('components', { ...component, maintenanceRequired: false, status: component.status === 'Manutenção' ? 'Disponível' : component.status }); continue; }
+          if (code === 'MAINTENANCE') {
+            const linked = state.maintenances.filter(item => item.componentId === id && item.orderId === order.id);
+            if (command.status === 'Sem Conserto') {
+              if (component.status === 'Descartado') save('components', { ...component, maintenanceRequired: false, status: 'Descartado' });
+              else place(component, { location: internal(command.locationId || '') }, 'Descartado', 'Descarte por O.S.', order.id);
+              for (const maintenance of linked.filter(item => item.status !== 'Sem Conserto')) save('maintenances', { ...maintenance, status: 'Sem Conserto' });
+            } else {
+              save('components', { ...component, maintenanceRequired: false, status: component.status === 'Manutenção' ? 'Disponível' : component.status });
+              for (const maintenance of linked.filter(item => item.status === 'Em Manutenção')) save('maintenances', { ...maintenance, status: 'Concluído', returnDate: now.slice(0, 10) });
+            }
+            continue;
+          }
           if (code === 'INSTALLATION') place(component, { machine: state.machines.find(item => item.id === order.machineId)! }, 'Em Uso', 'Instalação por O.S.', order.id);
           else if (code === 'REMOVAL') place(component, { location: internal(order.locationId || '') }, 'Disponível', `${order.action} por O.S.`, order.id);
         }
+      } else if (code === 'MAINTENANCE' && order.executionType === 'EXTERNAL' && command.status === 'Em Assistência Externa') {
+        const destination = partnerLocation(order.providerId || '', 'EXTERNAL_SERVICE');
+        for (const id of orderItems(order)) {
+          const component = getComponent(id);
+          place(component, { location: destination }, 'Manutenção', 'Envio à assistência', order.id);
+          save('maintenances', {
+            id: `${order.id}_${component.id}`,
+            componentId: component.id,
+            componentSerial: component.serialNumber,
+            componentName: component.name,
+            componentBrand: component.brand,
+            componentType: component.type,
+            sentDate: order.sentDate || now.slice(0, 10),
+            providerId: order.providerId,
+            providerName: destination.name,
+            locationId: destination.id,
+            orderId: order.id,
+            osNumber: order.osNumber,
+            issueDescription: order.issueDescription || '',
+            status: 'Em Manutenção'
+          });
+        }
       } else markRepairRequired(order);
-      save('movements', { ...order, serviceActionCode: code, status: command.status, ...(command.status === 'Concluída' ? { completedAt: now } : {}), ...(command.status === 'Cancelada' ? { cancelledAt: now } : {}), history: [...(order.history || []), { timestamp: now, actorName: actor.name, action: command.action, ...(command.detail ? { detail: command.detail } : {}) }] }); break;
+      save('movements', { ...order, serviceActionCode: code, status: command.status, ...(command.status === 'Concluída' ? { completedAt: now } : {}), ...(command.status === 'Cancelada' ? { cancelledAt: now } : {}), ...(command.scheduledDate ? { scheduledDate: command.scheduledDate } : {}), history: [...(order.history || []), { timestamp: now, actorName: actor.name, action: command.action, ...(command.detail ? { detail: command.detail } : {}) }] }); break;
+    }
+    case 'note': {
+      const storedOrder = state.movements.find(item => item.id === command.id);
+      requireValue(storedOrder, 'O.S. não encontrada.');
+      requireValue(storedOrder.status !== 'Cancelada', 'Não é possível adicionar observações a uma O.S. cancelada.');
+      const trimmedNote = command.note.trim();
+      requireValue(trimmedNote, 'Escreva uma observação antes de salvar.');
+      const previous = storedOrder.additionalNotes;
+      const nextAdditionalNotes = previous
+        ? `${previous}\n---\n[${new Date(now).toLocaleString('pt-BR')}] ${trimmedNote}`
+        : `[${new Date(now).toLocaleString('pt-BR')}] ${trimmedNote}`;
+      save('movements', {
+        ...storedOrder,
+        additionalNotes: nextAdditionalNotes,
+        history: [...(storedOrder.history || []), { timestamp: now, actorName: actor.name, action: 'Observação adicionada', detail: trimmedNote }]
+      });
+      break;
     }
     case 'loan': {
       const loan = command.loan; const destination = partnerLocation(loan.thirdPartyId, 'EXTERNAL_LOAN');
@@ -228,21 +343,6 @@ export function planStorageCommand(state: StorageState, command: StorageCommand,
       for (const id of ids) { const component = getComponent(id); available(component, undefined, loan.id); place(component, { location: destination }, 'Disponível', 'Devolução de empréstimo', loan.id); }
       const remaining = loan.items.filter(item => !ids.includes(item.componentId));
       save('loans', { ...loan, items: remaining, returnedItems: [...(loan.returnedItems || []), ...loan.items.filter(item => ids.includes(item.componentId))], status: remaining.length ? 'Ativo' : 'Devolvido', returnLocationId: destination.id, ...(remaining.length ? {} : { actualReturnDate: now.slice(0, 10) }) }); break;
-    }
-    case 'maintenance': {
-      const maintenance = command.maintenance; const component = getComponent(maintenance.componentId); available(component);
-      requireValue(availability(component).canSendToMaintenance, 'Remova o equipamento da máquina por O.S. antes de enviar à assistência.');
-      requireValue(resolve(component).kind === 'internal', 'Confira o armazenamento de origem antes de enviar à assistência.');
-      const destination = partnerLocation(maintenance.providerId || '', 'EXTERNAL_SERVICE');
-      place(component, { location: destination }, 'Manutenção', 'Envio à assistência', maintenance.id);
-      save('maintenances', { ...maintenance, status: 'Em Manutenção', locationId: destination.id, providerName: destination.name }); break;
-    }
-    case 'returnMaintenance': {
-      const maintenance = state.maintenances.find(item => item.id === command.id); requireValue(maintenance?.status === 'Em Manutenção', 'Manutenção já finalizada ou não encontrada.');
-      const component = getComponent(maintenance.componentId); available(component, undefined, undefined, maintenance.id);
-      requireValue(['Concluído', 'Sem Conserto'].includes(command.data.status), 'Informe a situação do retorno.');
-      place({ ...component, maintenanceRequired: false }, { location: internal(command.data.returnLocationId || '') }, command.data.status === 'Sem Conserto' ? 'Descartado' : 'Disponível', 'Retorno da assistência', maintenance.id);
-      save('maintenances', { ...maintenance, ...command.data }); break;
     }
   }
   return { changes, events, settings };

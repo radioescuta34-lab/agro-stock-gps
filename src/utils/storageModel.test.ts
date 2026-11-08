@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { planStorageCommand, auditStorage, auditLocationRegistry, storageCommandKey, type StorageState, type StorageCommand } from './storageModel';
 import type { AutopilotComponent, ComponentLoan, ComponentMaintenance, MovementLog } from '../types';
+import { createEquipmentAvailabilityResolver } from './equipmentAvailability';
 
 const actor = { id: 'admin', name: 'Administrador', role: 'ADMINISTRADOR' };
 const now = '2026-09-02T12:00:00.000Z';
@@ -21,7 +22,16 @@ function apply(s: StorageState, result: ReturnType<typeof run>) {
 }
 const order = (patch: Partial<MovementLog> = {}): MovementLog => ({ id: 'os1', componentId: 'c1', componentIds: ['c1'], componentName: 'Antena', componentSerial: 'c1', action: 'Instalação', machineId: 'm1', machinePrefix: '80719', date: now, technicianId: 'admin', technicianName: 'Admin', notes: '', createdAt: now, status: 'Aberta', ...patch });
 const loan = (): ComponentLoan => ({ id: 'loan1', thirdPartyId: 'p1', thirdPartyName: 'Parceiro', thirdPartyDocument: '', thirdPartyCompany: '', items: ['c1','c2'].map(id => ({ componentId: id, componentName: 'Antena', componentSerial: id, componentBrand: 'Trimble', componentType: 'Antena' })), loanDate: now, status: 'Ativo', contractNumber: 'CO1', createdAt: now, updatedAt: now, updatedBy: 'Admin' });
-const maintenance = (): ComponentMaintenance => ({ id: 'maint1', componentId: 'c1', componentName: 'Antena', componentSerial: 'c1', componentBrand: 'Trimble', componentType: 'Antena', providerId: 'p1', providerName: 'Parceiro', sentDate: now, issueDescription: 'Falha', status: 'Em Manutenção', updatedAt: now, updatedBy: 'Admin' });
+const externalMaintenanceOrder = (patch: Partial<MovementLog> = {}): MovementLog => order({
+  action: 'Manutenção', machineId: '', machinePrefix: 'Almoxarifado', executionType: 'EXTERNAL',
+  providerId: 'p1', providerName: 'Parceiro', sentDate: now.slice(0, 10), issueDescription: 'Falha', ...patch
+});
+
+function startExternalMaintenance(s: StorageState, patch: Partial<MovementLog> = {}) {
+  const opened = apply(s, run(s, { type: 'order', editing: false, order: externalMaintenanceOrder(patch) }));
+  const started = apply(opened, run(opened, { type: 'transition', id: patch.id || 'os1', status: 'Em Atendimento', action: 'Iniciado' }));
+  return run(started, { type: 'transition', id: patch.id || 'os1', status: 'Em Assistência Externa', action: 'Enviado' });
+}
 
 test('cadastro exige local ativo; não presume o padrão', () => {
   assert.throws(() => run(state(), { type: 'component', editing: false, component: component('new', { currentLocationId: '' }) }), /local.*ativo/);
@@ -73,8 +83,43 @@ test('remoção exige destino e libera máquina somente ao concluir', () => {
 test('calibração e manutenção interna não inventam mudança física', () => {
   for (const action of ['Calibração', 'Manutenção'] as const) {
     const s = state(); s.components[0] = component('c1', { currentLocationId: undefined, currentMachineId: 'm1', status: 'Em Uso' }); s.movements = [order({ action, status: 'Em Atendimento' })];
-    const result = run(s, { type: 'transition', id: 'os1', status: 'Concluída', action: 'Concluído' }); assert.equal(result.events.length, 0); assert.equal(result.changes.length, 1);
+    const result = run(s, { type: 'transition', id: 'os1', status: 'Concluída', action: 'Concluído' }); assert.equal(result.events.length, 0);
+    const updated = result.changes.find(item => item.collection === 'components')?.data;
+    if (action === 'Manutenção') assert.equal(updated?.maintenanceRequired, false);
+    else assert.equal(updated, undefined);
   }
+});
+test('O.S. de manutenção bloqueia o equipamento desde a abertura e só a conclusão o libera', () => {
+  let s = state();
+  const maintenanceOrder = order({ action: 'Aguardando Manutenção' as any, machineId: '', machinePrefix: 'Almoxarifado' });
+  const opened = run(s, { type: 'order', editing: false, order: maintenanceOrder });
+  const openingComponent = opened.changes.find(item => item.collection === 'components')!.data;
+  const openingOrder = opened.changes.find(item => item.collection === 'movements')!.data;
+  assert.equal(openingComponent.maintenanceRequired, true);
+  assert.equal(openingOrder.serviceActionCode, 'MAINTENANCE');
+  s = apply(s, opened);
+  const availability = createEquipmentAvailabilityResolver(s)(s.components.find(component => component.id === 'c1')!);
+  assert.equal(availability.label, 'Aguardando manutenção');
+  assert.equal(availability.availableForUse, false);
+  assert.throws(() => run(s, { type: 'loan', loan: loan() }), /O.S. pendente/);
+  s = apply(s, run(s, { type: 'transition', id: 'os1', status: 'Em Atendimento', action: 'Iniciado' }));
+  const completed = run(s, { type: 'transition', id: 'os1', status: 'Concluída', action: 'Reparo concluído' });
+  assert.equal(completed.changes.find(item => item.collection === 'components')!.data.maintenanceRequired, false);
+  s = apply(s, completed);
+  assert.equal(createEquipmentAvailabilityResolver(s)(s.components.find(component => component.id === 'c1')!).availableForUse, true);
+});
+test('cancelar O.S. de manutenção mantém a pendência até o reparo ser concluído', () => {
+  let s = state();
+  s = apply(s, run(s, { type: 'order', editing: false, order: order({ action: 'Manutenção', machineId: '', machinePrefix: 'Almoxarifado' }) }));
+  const cancelled = run(s, { type: 'transition', id: 'os1', status: 'Cancelada', action: 'Cancelado' });
+  assert.equal(cancelled.changes.find(item => item.collection === 'components')!.data.maintenanceRequired, true);
+});
+test('O.S. com tipo não técnico reconhecido falha antes de reservar o equipamento', () => {
+  assert.throws(() => run(state(), { type: 'order', editing: false, order: order({ action: 'Serviço especial' as any }) }), /não reconhecido/);
+});
+test('edição não consegue liberar manualmente pendência de manutenção', () => {
+  const s = state(); s.components[0].maintenanceRequired = true;
+  assert.throws(() => run(s, { type: 'component', editing: true, component: { ...s.components[0], maintenanceRequired: false } }), /só pode ser liberada/);
 });
 test('empréstimo usa parceiro por ID e devolução parcial move somente itens recebidos', () => {
   let s = state(); s = apply(s, run(s, { type: 'loan', loan: loan() }));
@@ -85,21 +130,29 @@ test('empréstimo usa parceiro por ID e devolução parcial move somente itens r
   assert.throws(() => run(s, { type: 'returnLoan', id: 'loan1', componentIds: ['c1'], locationId: 'l2' }));
   s = apply(s, run(s, { type: 'returnLoan', id: 'loan1', locationId: 'l1' })); assert.equal(s.loans[0].status, 'Devolvido'); assert.equal(s.loans[0].returnedItems?.length, 2);
 });
-test('assistência exige parceiro ativo e retorno sem conserto também recebe local', () => {
-  let s = state(); s.partners[0].active = false; assert.throws(() => run(s, { type: 'maintenance', maintenance: maintenance() }), /parceiro ativo/);
-  s = state(); s = apply(s, run(s, { type: 'maintenance', maintenance: maintenance() })); assert.equal(s.components.find(item => item.id === 'c1')?.currentLocationId, 'external_service_p1');
-  const data = { returnDate: now, replacedParts: '', servicesPerformed: 'Sem reparo', cost: 0, status: 'Sem Conserto' as const };
-  assert.throws(() => run(s, { type: 'returnMaintenance', id: 'maint1', data }), /local.*ativo/);
-  s = apply(s, run(s, { type: 'returnMaintenance', id: 'maint1', data: { ...data, returnLocationId: 'l2' } }));
-  const comp = s.components.find(item => item.id === 'c1')!; assert.equal(comp.status, 'Descartado'); assert.equal(comp.currentLocationId, 'l2'); assert.equal(comp.currentMachineId, undefined);
+test('assistência nasce pela O.S., cria projeção vinculada e exige local no retorno', () => {
+  let s = state(); s.partners[0].active = false;
+  s = apply(s, run(s, { type: 'order', editing: false, order: externalMaintenanceOrder() }));
+  s = apply(s, run(s, { type: 'transition', id: 'os1', status: 'Em Atendimento', action: 'Iniciado' }));
+  assert.throws(() => run(s, { type: 'transition', id: 'os1', status: 'Em Assistência Externa', action: 'Enviado' }), /parceiro ativo/);
+  s = state();
+  const sent = startExternalMaintenance(s);
+  const maintenanceRecord = sent.changes.find(change => change.collection === 'maintenances')!.data;
+  assert.equal(maintenanceRecord.orderId, 'os1');
+  assert.equal(maintenanceRecord.id, 'os1_c1');
+  s = apply(s, run(s, { type: 'order', editing: false, order: externalMaintenanceOrder() }));
+  s = apply(s, run(s, { type: 'transition', id: 'os1', status: 'Em Atendimento', action: 'Iniciado' }));
+  s = apply(s, run(s, { type: 'transition', id: 'os1', status: 'Em Assistência Externa', action: 'Enviado' }));
+  assert.throws(() => run(s, { type: 'transition', id: 'os1', status: 'Aguardando Conferência', action: 'Retorno', returnData: { returnLocationId: '', status: 'Sem Conserto' } }), /local.*ativo/);
+  const returned = run(s, { type: 'transition', id: 'os1', status: 'Aguardando Conferência', action: 'Retorno', returnData: { returnLocationId: 'l2', status: 'Sem Conserto' } });
+  const comp = returned.changes.find(change => change.collection === 'components')!.data;
+  assert.equal(comp.status, 'Descartado'); assert.equal(comp.currentLocationId, 'l2');
 });
-test('nomes iguais de parceiros não unem destinos; duplicatas canônicas exigem conferência', () => {
-  const s = state(); s.partners.push({ ...s.partners[0], id: 'p2' });
-  const one = run(s, { type: 'maintenance', maintenance: maintenance() });
-  const two = run(s, { type: 'maintenance', maintenance: { ...maintenance(), providerId: 'p2' } });
-  assert.notEqual(one.events[0].to.locationId, two.events[0].to.locationId);
-  s.locations.push({ id: 'dup1', name: 'A', kind: 'EXTERNAL_SERVICE', isActive: true, partnerId: 'p1', updatedAt: now, updatedBy: 'Admin' }, { id: 'dup2', name: 'B', kind: 'EXTERNAL_SERVICE', isActive: true, partnerId: 'p1', updatedAt: now, updatedBy: 'Admin' });
-  assert.throws(() => run(s, { type: 'maintenance', maintenance: maintenance() }), /duplicados/);
+test('O.S. sem conserto é terminal e não mantém equipamento reservado', () => {
+  const s = state();
+  const failed = externalMaintenanceOrder({ status: 'Sem Conserto' });
+  s.movements = [failed];
+  assert.equal(createEquipmentAvailabilityResolver(s)(s.components[0]).pendingOrders.length, 0);
 });
 test('edição cadastral não altera destino; auditoria não modifica registros legados', () => {
   const s = state(); assert.throws(() => run(s, { type: 'component', editing: true, component: { ...s.components[0], currentMachineId: 'm1' } }), /fluxos/);
@@ -138,6 +191,31 @@ test('auditoria aponta homônimos e destinos externos sem vínculo, sem fundir I
 });
 test('sem origem identificada não é possível instalar ou emprestar por suposição', () => {
   const s = state(); s.components[0].currentLocationId = '';
-  assert.throws(() => run(s, { type: 'order', editing: false, order: order() }), /armazenamento/);
+  assert.throws(() => run(s, { type: 'order', editing: false, order: order() }), /localização/);
   assert.throws(() => run(s, { type: 'loan', loan: loan() }), /armazenamento/);
+});
+test('definir local de início regulariza cadastro sem local e grava histórico', () => {
+  const s = state(); s.components[0] = component('c1', { currentLocationId: '', placementVersion: undefined });
+  const result = run(s, { type: 'assignPlacement', componentId: 'c1', locationId: 'l2', notes: 'Conferido no almoxarifado' });
+  const data = result.changes[0].data;
+  assert.equal(data.currentLocationId, 'l2'); assert.equal(data.currentMachineId, undefined); assert.equal(data.placementVersion, 1);
+  assert.equal(result.events[0].action, 'Local de início definido'); assert.equal(result.events[0].to.locationId, 'l2'); assert.equal(result.events[0].notes, 'Conferido no almoxarifado');
+});
+test('definir local libera registro legado em uso sem máquina', () => {
+  const s = state(); s.components[0] = component('c1', { status: 'Em Uso', currentLocationId: '', currentMachine: 'Antiga', placementVersion: undefined });
+  const result = run(s, { type: 'assignPlacement', componentId: 'c1', locationId: 'l2', notes: 'Estava no depósito' });
+  assert.equal(result.changes[0].data.status, 'Disponível'); assert.equal(result.changes[0].data.currentLocationId, 'l2');
+});
+test('definir local exige justificativa, local ativo e cadastro pendente', () => {
+  const s = state(); s.components[0] = component('c1', { currentLocationId: '', placementVersion: undefined });
+  assert.throws(() => run(s, { type: 'assignPlacement', componentId: 'c1', locationId: 'l2', notes: '' }), /justificativa/);
+  assert.throws(() => run(s, { type: 'assignPlacement', componentId: 'c1', locationId: 'missing', notes: 'x' }), /local de armazenamento/);
+  assert.throws(() => run(state(), { type: 'assignPlacement', componentId: 'c1', locationId: 'l2', notes: 'x' }), /a conferir/);
+});
+test('definir local é bloqueado por operação pendente e permitido ao técnico', () => {
+  const s = state(); s.components[0] = component('c1', { currentLocationId: '', placementVersion: undefined }); s.movements = [order()];
+  assert.throws(() => run(s, { type: 'assignPlacement', componentId: 'c1', locationId: 'l2', notes: 'x' }), /O.S. pendente/);
+  const clean = state(); clean.components[0] = component('c1', { currentLocationId: '', placementVersion: undefined });
+  const result = planStorageCommand(clean, { type: 'assignPlacement', componentId: 'c1', locationId: 'l2', notes: 'Conferido' }, { ...actor, role: 'TECNICO_CAMPO' }, 'op1', now);
+  assert.equal(result.changes[0].data.currentLocationId, 'l2');
 });

@@ -33,6 +33,7 @@ import {
 interface EquipmentDetailModalProps {
   locationEvents?: LocationEvent[];
   onTransfer?: (component: AutopilotComponent) => void;
+  onAssignLocation?: (component: AutopilotComponent) => void;
   component: AutopilotComponent;
   machines?: Machine[];
   locations?: Location[];
@@ -65,6 +66,7 @@ const TAB_META: { id: TabId; label: string; icon: React.ElementType }[] = [
 
 export default function EquipmentDetailModal({
   locationEvents = [], onTransfer,
+  onAssignLocation,
   component,
   machines = [],
   locations = [],
@@ -103,6 +105,7 @@ export default function EquipmentDetailModal({
   const DestinationIcon = { machine: Tractor, internal: Warehouse, service: Wrench, loan: Handshake, unknown: MapPin }[location.kind];
   const operational = createEquipmentAvailabilityResolver({ movements, loans, maintenances, machines, locations })(component);
   const canTransfer = onTransfer && isAdminOrTech && operational.canTransfer;
+  const canAssign = onAssignLocation && isAdminOrTech && operational.label === 'Cadastro a conferir';
   const repairOrders = movements.filter(order => resolveServiceAction(order) === 'MAINTENANCE' && [order.componentId, order.primaryComponentId, ...(order.componentIds || [])].includes(component.id));
 
   const componentMovements = movements
@@ -264,7 +267,7 @@ export default function EquipmentDetailModal({
                     <p className="mt-1 text-sm text-slate-500">{DESTINATION_LABELS[location.kind].category}{storage?.code ? ` · ${storage.code}` : ''}</p>
                   </div>
                 </div>
-                {canTransfer && <div className="flex justify-end border-t border-slate-100 pt-4 sm:shrink-0 sm:border-0 sm:pt-0"><button type="button" onClick={() => onTransfer(component)} aria-label="Transferir equipamento para outro local" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 sm:min-h-9"><ArrowRightLeft className="h-4 w-4" />Transferir</button></div>}
+                {(canTransfer || canAssign) && <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4 sm:shrink-0 sm:border-0 sm:pt-0">{canTransfer && <button type="button" onClick={() => onTransfer(component)} aria-label="Transferir equipamento para outro local" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 sm:min-h-9"><ArrowRightLeft className="h-4 w-4" />Transferir</button>}{canAssign && <button type="button" onClick={() => onAssignLocation(component)} aria-label="Definir local de início do equipamento" className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-emerald-600 px-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 sm:min-h-9"><Warehouse className="h-4 w-4" />Definir local</button>}</div>}
               </div>
               {storage?.address && <div className="border-t border-slate-100 pt-5"><p className="text-xs text-slate-500">Endereço / referência</p><p className="mt-1 break-words text-sm leading-relaxed text-slate-700">{storage.address}</p></div>}
 

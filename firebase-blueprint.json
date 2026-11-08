@@ -2,13 +2,13 @@
   "entities": {
     "User": {
       "title": "User Profile",
-      "description": "User account information including their system role (administrador or tecnico).",
+      "description": "User account information including their system role (super usuario/DEV, administrador or tecnico).",
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
         "email": { "type": "string" },
         "name": { "type": "string" },
-        "role": { "type": "string", "enum": [ "administrador", "tecnico" ] },
+        "role": { "type": "string", "enum": [ "SUPER_USUARIO", "administrador", "tecnico", "ADMINISTRADOR", "TECNICO_CAMPO" ] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": [ "uid", "email", "name", "role", "createdAt" ]
@@ -44,9 +44,27 @@
         "model": { "type": "string" },
         "brand": { "type": "string" },
         "fleet": { "type": "string" },
+        "workFrontId": { "type": "string", "description": "FK -> WorkFront.id; canonical relation used by weekly collection." },
+        "workFrontName": { "type": "string", "description": "Name snapshot for resilient display." },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": [ "id", "prefix", "type", "model", "brand", "updatedAt" ]
+    },
+    "WorkFront": {
+      "title": "Operational Work Front",
+      "description": "A named operational front that can be assigned to machines and enabled for weekly field-data collection.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "operationType": { "type": "string", "enum": [ "Colheita", "Vinhaça", "Plantio", "Tratos culturais", "Outra" ] },
+        "collectsFieldData": { "type": "boolean" },
+        "active": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": [ "id", "name", "operationType", "collectsFieldData", "active", "updatedAt", "updatedBy" ]
     },
     "Movement": {
       "title": "Component Movement Log",
@@ -91,6 +109,8 @@
         "machineType": { "type": "string", "enum": [ "Trator", "Colhedora", "Pulverizador", "Outro" ] },
         "fleet": { "type": "string" },
         "frente": { "type": "string" },
+        "workFrontId": { "type": "string" },
+        "workFrontName": { "type": "string" },
         "weekId": { "type": "string", "description": "ISO week id, e.g. 2026-W32" },
         "status": { "type": "string", "enum": [ "Pendente", "Concluído" ] },
         "collectedAt": { "type": "string", "format": "date-time" },

@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { UserProfile, UserRole } from '../types';
+import { isAdminRole, isSuperRole, roleLabel } from '../utils/roles';
 import { useNotifications } from './NotificationProvider';
 import {
   Users,
   Search,
   Shield,
   Wrench,
+  Crown,
   Calendar,
   Edit2,
   Trash2,
@@ -21,6 +23,7 @@ interface UserManagementSectionProps {
   usersList: UserProfile[];
   role: UserRole;
   companyEmail: string;
+  currentUserId?: string;
   onAddUser?: (newUser: Omit<UserProfile, 'createdAt'>, password?: string) => Promise<void>;
   onEditUser?: (uid: string, updates: Partial<Omit<UserProfile, 'uid' | 'createdAt'>>, password?: string) => Promise<any>;
   onDeleteUser?: (uid: string) => Promise<void>;
@@ -30,6 +33,7 @@ export default function UserManagementSection({
   usersList = [],
   role,
   companyEmail,
+  currentUserId,
   onAddUser,
   onEditUser,
   onDeleteUser
@@ -44,9 +48,12 @@ export default function UserManagementSection({
   const [userError, setUserError] = useState<string | null>(null);
   const [userSuccess, setUserSuccess] = useState<string | null>(null);
 
-  const isAdmin = role === 'administrador' || role === 'ADMINISTRADOR';
+  const isAdmin = isAdminRole(role);
+  const canManageSuper = isSuperRole(role);
 
-  const filteredUsers = usersList.filter(u =>
+  const visibleUsers = canManageSuper ? usersList : usersList.filter(u => !isSuperRole(u.role));
+
+  const filteredUsers = visibleUsers.filter(u =>
     u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     u.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
     u.role.toLowerCase().includes(searchTerm.toLowerCase())
@@ -88,6 +95,16 @@ export default function UserManagementSection({
     if (!isAdmin) return;
     setUserError(null);
     setUserSuccess(null);
+
+    if (isSuperRole(data.role) && !canManageSuper) {
+      setUserError('Somente um Super Usuário pode definir o perfil Super Usuário (DEV).');
+      return;
+    }
+    if (selectedUser && isSuperRole(selectedUser.role) && !canManageSuper) {
+      setUserError('Somente um Super Usuário pode alterar outro Super Usuário.');
+      return;
+    }
+
     setUserLoading(true);
 
     const virtualEmail = `${data.username}@agrostockgps.com`;
@@ -140,10 +157,14 @@ export default function UserManagementSection({
     }
   };
 
-  const handleDeleteUserClick = async (uid: string, uEmail: string) => {
+  const handleDeleteUserClick = async (uid: string, uEmail: string, uRole: UserRole) => {
     if (!isAdmin) return;
-    if (uEmail === companyEmail) {
-      setUserError('Não é permitido excluir o usuário principal da empresa.');
+    if (uid === currentUserId || uEmail === companyEmail) {
+      setUserError('Não é permitido excluir a própria conta ou o usuário principal da empresa.');
+      return;
+    }
+    if (isSuperRole(uRole) && !canManageSuper) {
+      setUserError('Somente um Super Usuário pode excluir outro Super Usuário.');
       return;
     }
 
@@ -195,7 +216,7 @@ export default function UserManagementSection({
       {!isAdmin && (
         <div className="bg-slate-50 border border-slate-200 text-slate-500 text-xs p-4 rounded-xl flex items-start gap-2">
           <Info className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
-          <span>Apenas administradores podem gerenciar usuários.</span>
+          <span>Apenas administradores e Super Usuários (DEV) podem gerenciar usuários.</span>
         </div>
       )}
 
@@ -223,7 +244,7 @@ export default function UserManagementSection({
               <div>
                 <h2 className="text-sm font-extrabold text-slate-900">Colaboradores com acesso</h2>
                 <p className="mt-0.5 text-[11px] text-slate-500">
-                  {usersList.length} {usersList.length === 1 ? 'usuário cadastrado' : 'usuários cadastrados'}
+                  {visibleUsers.length} {visibleUsers.length === 1 ? 'usuário cadastrado' : 'usuários cadastrados'}
                 </p>
               </div>
             </div>
@@ -263,9 +284,11 @@ export default function UserManagementSection({
           ) : (
             <div className="space-y-3">
               {filteredUsers.map((u) => {
-                const isSelf = u.email === companyEmail;
-                const isUserAdmin = u.role === 'administrador' || u.role === 'ADMINISTRADOR';
-                const userRoleLabel = isUserAdmin ? 'Administrador' : 'Técnico de Campo';
+                const isSelf = u.uid === currentUserId || u.email === companyEmail;
+                const isUserSuper = isSuperRole(u.role);
+                const isUserAdmin = !isUserSuper && isAdminRole(u.role);
+                const userRoleLabel = roleLabel(u.role);
+                const canEditThisUser = canManageSuper || !isUserSuper;
                 const displayUsername = u.username || (u.email ? u.email.split('@')[0] : '');
 
                 return (
@@ -275,9 +298,11 @@ export default function UserManagementSection({
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <div className={`h-9 w-9 rounded-full overflow-hidden font-bold text-xs flex items-center justify-center shrink-0 ${
-                        isUserAdmin
-                          ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                          : 'bg-blue-100 text-blue-800 border border-blue-200'
+                        isUserSuper
+                          ? 'bg-violet-100 text-violet-800 border border-violet-200'
+                          : isUserAdmin
+                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                            : 'bg-blue-100 text-blue-800 border border-blue-200'
                       }`}>
                         {u.photoURL ? (
                           <img src={u.photoURL} alt="" className="w-full h-full object-cover" />
@@ -297,11 +322,13 @@ export default function UserManagementSection({
 
                         <div className="flex items-center gap-2 mt-1.5">
                           <span className={`inline-flex items-center gap-1 text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
-                            isUserAdmin
-                              ? 'bg-amber-50 text-amber-700 border-amber-100'
-                              : 'bg-blue-50 text-blue-700 border-blue-100'
+                            isUserSuper
+                              ? 'bg-violet-50 text-violet-700 border-violet-100'
+                              : isUserAdmin
+                                ? 'bg-amber-50 text-amber-700 border-amber-100'
+                                : 'bg-blue-50 text-blue-700 border-blue-100'
                           }`}>
-                            {isUserAdmin ? <Shield className="h-2 w-2" /> : <Wrench className="h-2 w-2" />}
+                            {isUserSuper ? <Crown className="h-2 w-2" /> : isUserAdmin ? <Shield className="h-2 w-2" /> : <Wrench className="h-2 w-2" />}
                             {userRoleLabel}
                           </span>
 
@@ -315,7 +342,7 @@ export default function UserManagementSection({
                       </div>
                     </div>
 
-                    {isAdmin && (
+                    {isAdmin && canEditThisUser && (
                       <div className="flex items-center gap-1.5 shrink-0 ml-4">
                         <button
                           onClick={() => startEditUser(u)}
@@ -327,11 +354,11 @@ export default function UserManagementSection({
                           <Edit2 className="h-3.5 w-3.5" />
                         </button>
                         <button
-                          onClick={() => handleDeleteUserClick(u.uid, u.email)}
+                          onClick={() => handleDeleteUserClick(u.uid, u.email, u.role)}
                           disabled={userLoading || isSelf}
                           aria-label={`Excluir acesso de ${u.name}`}
                           className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 disabled:cursor-not-allowed disabled:opacity-30"
-                          title={isSelf ? 'O usuário principal não pode ser excluído' : 'Excluir acesso'}
+                          title={isSelf ? 'A própria conta não pode ser excluída' : 'Excluir acesso'}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -387,6 +414,7 @@ export default function UserManagementSection({
             <div className="p-5">
               <UserForm
                 mode="admin"
+                canManageSuper={canManageSuper}
                 initialData={selectedUser ? {
                   firstName: selectedUser.firstName || selectedUser.name.split(' ')[0],
                   lastName: selectedUser.lastName || selectedUser.name.split(' ').slice(1).join(' '),

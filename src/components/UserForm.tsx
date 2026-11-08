@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { UserRole } from '../types';
+import { SUPER_ROLE, isAdministratorRole, isSuperRole, isTechnicianRole } from '../utils/roles';
 import {
   User,
   AtSign,
@@ -9,6 +10,7 @@ import {
   Lock,
   Check,
   CheckCircle,
+  Crown,
   X
 } from 'lucide-react';
 
@@ -22,6 +24,7 @@ export interface UserFormData {
 
 interface UserFormProps {
   mode: 'self' | 'admin';
+  canManageSuper?: boolean;
   initialData?: {
     firstName?: string;
     lastName?: string;
@@ -39,6 +42,7 @@ interface UserFormProps {
 
 export default function UserForm({
   mode,
+  canManageSuper = false,
   initialData,
   loading = false,
   error = null,
@@ -78,7 +82,7 @@ export default function UserForm({
     };
 
     if (mode === 'admin') {
-      data.role = role;
+      data.role = isSuperRole(role) && !canManageSuper ? 'TECNICO_CAMPO' : role;
     }
 
     await onSave(data, password || undefined);
@@ -180,20 +184,38 @@ export default function UserForm({
       {mode === 'admin' && (
         <div className="space-y-1.5">
           <label className="text-[10px] uppercase font-black text-slate-400">Função / Perfil no Sistema</label>
-          <div className="mt-1 grid grid-cols-1 gap-2 min-[420px]:grid-cols-2">
+          <div className={`mt-1 grid grid-cols-1 gap-2 ${canManageSuper ? 'min-[420px]:grid-cols-3' : 'min-[420px]:grid-cols-2'}`}>
+            {canManageSuper && (
+              <button
+                type="button"
+                onClick={() => setRole(SUPER_ROLE)}
+                disabled={loading}
+                className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-bold transition-all ${
+                  isSuperRole(role)
+                    ? 'bg-violet-600 text-white border-violet-600 shadow-sm'
+                    : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <Crown className="h-3.5 w-3.5" />
+                Super DEV
+                {isSuperRole(role) && (
+                  <Check className="h-3.5 w-3.5" />
+                )}
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setRole('TECNICO_CAMPO')}
               disabled={loading}
               className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-bold transition-all ${
-                role === 'TECNICO_CAMPO' || role === 'tecnico'
+                isTechnicianRole(role)
                   ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
                   : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
               }`}
             >
               <Wrench className="h-3.5 w-3.5" />
               Técnico Campo
-              {(role === 'TECNICO_CAMPO' || role === 'tecnico') && (
+              {isTechnicianRole(role) && (
                 <Check className="h-3.5 w-3.5" />
               )}
             </button>
@@ -202,14 +224,14 @@ export default function UserForm({
               onClick={() => setRole('ADMINISTRADOR')}
               disabled={loading}
               className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl border px-3 py-2.5 text-xs font-bold transition-all ${
-                role === 'ADMINISTRADOR' || role === 'administrador'
+                isAdministratorRole(role)
                   ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
                   : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
               }`}
             >
               <Shield className="h-3.5 w-3.5" />
               Admin
-              {(role === 'ADMINISTRADOR' || role === 'administrador') && (
+              {isAdministratorRole(role) && (
                 <Check className="h-3.5 w-3.5" />
               )}
             </button>

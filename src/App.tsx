@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   onAuthStateChanged, 
   signOut 
@@ -34,7 +34,6 @@ import {
   CompanyProfile,
   ComponentMaintenance,
   ComponentStatus,
-  MaintenanceProvider,
   Partner,
   PartnerType,
   FieldDataCollection,
@@ -52,6 +51,7 @@ import {
   RegisteredTypeCategory,
   Location
 } from './types';
+import type { WorkFront } from './types';
 import { DEFAULT_REGISTERED_TYPES, DEFAULT_TYPE_NAMES, CORE_SERVICE_ACTIONS } from './constants/typeRegistry';
 import AuthScreen from './components/AuthScreen';
 import { useNotifications } from './components/NotificationProvider';
@@ -67,6 +67,10 @@ import ProfileTab from './components/ProfileTab';
 import SupportTab from './components/SupportTab';
 import SettingsTab from './components/SettingsTab';
 import AppNotificationCenter from './components/AppNotificationCenter';
+import WhatsNewModal from './components/WhatsNewModal';
+import WhatsNewAdmin from './components/WhatsNewAdmin';
+import { DEFAULT_WHATS_NEW, WHATS_NEW_STORAGE_KEY, type WhatsNewCategory } from './constants/whatsNew';
+import { getPublishedWhatsNew } from './utils/whatsNewFirestore';
 import { useLicenseAlertSettings } from './hooks/useLicenseAlertSettings';
 import { useCampoAlertSettings } from './hooks/useCampoAlertSettings';
 import { useLoanAlertSettings } from './hooks/useLoanAlertSettings';
@@ -77,13 +81,16 @@ import { buildFieldDataReport, sendFieldDataAlertEmail } from './utils/fieldData
 import { getOverdueLoans, sendLoansAlertEmail } from './utils/loansAlerts';
 import { getOverdueMaintenances, getCompletedMaintenances, sendMaintenanceAlertEmail } from './utils/maintenanceAlerts';
 import { getIdleComponents, sendIdleComponentsAlertEmail } from './utils/idleComponentsAlerts';
-import { planStorageCommand, storageCommandKey, type StorageCommand, type StorageState } from './utils/storageModel';
+import { planStorageCommand, storageCommandKey, type MaintenanceReturn, type StorageCommand, type StorageState } from './utils/storageModel';
 import { executeStorageCommand } from './utils/storageRepository';
 import type { StorageSettings, LocationEvent } from './types';
 import StorageLocationsTab from './components/StorageLocationsTab';
+import WorkFrontsTab from './components/WorkFrontsTab';
 import { getNextOsNumber } from './utils/osCounter';
 import { isCampoAlertDue, isLoansAlertDue, getTodayStr } from './utils/automationUtils';
 import { getISOWeekId } from './utils/dateUtils';
+import { participatesInWeeklyCollection } from './utils/workFronts';
+import { isAdminRole, isSuperRole, normalizeRole, roleLabel, SUPER_ROLE } from './utils/roles';
 import { 
   Cpu, 
   Tractor,
@@ -102,7 +109,9 @@ import {
   Settings,
   LifeBuoy,
   ChevronDown,
-  Building2
+  Building2,
+  ClipboardList,
+  Sparkles
 } from 'lucide-react';
 
 const LOCAL_STORAGE_KEY_PREFIX = 'agro_stock_gps_';
@@ -132,12 +141,12 @@ export default function App() {
   // Core Data Lists
   const [components, setComponents] = useState<AutopilotComponent[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
+  const [workFronts, setWorkFronts] = useState<WorkFront[]>([]);
   const [movements, setMovements] = useState<MovementLog[]>([]);
   const [licenses, setLicenses] = useState<License[]>([]);
   const [thirdParties, setThirdParties] = useState<ThirdParty[]>([]);
   const [loans, setLoans] = useState<ComponentLoan[]>([]);
   const [maintenances, setMaintenances] = useState<ComponentMaintenance[]>([]);
-  const [providers, setProviders] = useState<MaintenanceProvider[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [storageSettings, setStorageSettings] = useState<StorageSettings>({ defaultLocationId: '', revision: 0 });
@@ -150,6 +159,10 @@ export default function App() {
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile>(DEFAULT_COMPANY_PROFILE);
   const [usersList, setUsersList] = useState<UserProfile[]>([]);
   const [fieldDataCollections, setFieldDataCollections] = useState<FieldDataCollection[]>([]);
+  const eligibleCollectionMachines = useMemo(
+    () => machines.filter(machine => participatesInWeeklyCollection(machine, workFronts)),
+    [machines, workFronts]
+  );
   const [typeRegistry, setTypeRegistry] = useState<RegisteredType[]>([]);
   const [movementsSubTab, setMovementsSubTab] = useState<'os' | 'kanban' | undefined>(undefined);
   const [licensePresetFilter, setLicensePresetFilter] = useState<'active' | 'expired' | null>(null);
@@ -157,9 +170,48 @@ export default function App() {
   const [machinePresetFilter, setMachinePresetFilter] = useState<DashboardNavPreset | null>(null);
   const [kanbanPresetFilter, setKanbanPresetFilter] = useState<DashboardNavPreset | null>(null);
   const [focusTarget, setFocusTarget] = useState<{ tab: string; itemId: string } | null>(null);
+  const [movementPrefill, setMovementPrefill] = useState<{ action: 'Manutenção'; componentId?: string } | null>(null);
 
   const [loadingApp, setLoadingApp] = useState(true);
   const legacyPartnersMigrationStarted = useRef(false);
+
+  // Novidades (What's New) popup
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
+  const [whatsNewContent, setWhatsNewContent] = useState<WhatsNewCategory[]>(DEFAULT_WHATS_NEW);
+  const [whatsNewPublishedId, setWhatsNewPublishedId] = useState<number | null>(null);
+  const whatsNewCheckedRef = useRef(false);
+
+  // Admins load the user list through the API so Super accounts stay invisible.
+  // Super users receive the full list through a Firestore realtime listener instead.
+  const refreshUsersList = async () => {
+    if (!user || isDemoMode || isSuperRole(user.role)) return;
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) return;
+      const response = await fetch('/api/admin/users/list', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        console.error('Error loading users list:', await response.text());
+        return;
+      }
+      const payload = await response.json();
+      const list: UserProfile[] = (Array.isArray(payload.users) ? payload.users : []).map((data: any) => ({
+        uid: data.uid || '',
+        email: data.email || '',
+        name: data.name || '',
+        firstName: data.firstName || '',
+        lastName: data.lastName || '',
+        username: data.username || '',
+        photoURL: data.photoURL || '',
+        role: normalizeRole(data.role),
+        createdAt: data.createdAt || new Date().toISOString()
+      }));
+      setUsersList(list.filter(item => !isSuperRole(item.role)));
+    } catch (error) {
+      console.error('Error loading users list:', error);
+    }
+  };
 
   // License alert settings (global background auto-scan)
   const { alertSettings: licenseAlertSettings, saveAlertSettings } = useLicenseAlertSettings(isDemoMode);
@@ -186,6 +238,55 @@ export default function App() {
       window.history.replaceState({}, '', `${window.location.pathname}${cleanQuery ? `?${cleanQuery}` : ''}${window.location.hash}`);
     }
   }, [user?.uid]);
+
+  useEffect(() => {
+    if (loadingApp) return;
+    if (!user) return;
+    if (whatsNewCheckedRef.current) return;
+    whatsNewCheckedRef.current = true;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    (async () => {
+      try {
+        const published = await getPublishedWhatsNew();
+        if (cancelled) return;
+
+        const content = published?.content && published.content.length > 0 ? published.content : DEFAULT_WHATS_NEW;
+        const publishedId = published?.lastPublishedId ?? null;
+
+        setWhatsNewContent(content);
+        setWhatsNewPublishedId(publishedId);
+
+        if (publishedId === null) return;
+
+        let seenId: number | null = null;
+        try {
+          const raw = localStorage.getItem(WHATS_NEW_STORAGE_KEY);
+          if (raw !== null) {
+            const parsed = Number(raw);
+            seenId = Number.isNaN(parsed) ? null : parsed;
+          }
+        } catch {
+          seenId = null;
+        }
+
+        if (seenId !== publishedId) {
+          timer = setTimeout(() => {
+            if (!cancelled) setShowWhatsNew(true);
+          }, 4000);
+        }
+      } catch (error) {
+        console.warn('Não foi possível verificar as novidades:', error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [loadingApp, user?.uid]);
 
   useEffect(() => {
     if (!isUserMenuOpen) return;
@@ -301,13 +402,10 @@ export default function App() {
           
           if (docSnap.exists()) {
             const data = docSnap.data();
-            const storedRole = data.role as UserRole;
-            const isSpecialEmail = firebaseUser.email === 'endriuse@hotmail.com' || firebaseUser.email === 'endriusernane@gmail.com' || firebaseUser.email === 'admin@agrostockgps.com';
-            const finalRole = isSpecialEmail ? 'administrador' : storedRole;
+            const profileRole = normalizeRole(data.role);
 
-            if (storedRole !== finalRole) {
-              await updateDoc(userDocRef, { role: finalRole });
-              data.role = finalRole;
+            if (data.role !== profileRole) {
+              await updateDoc(userDocRef, { role: profileRole });
             }
 
             setUser({
@@ -317,18 +415,17 @@ export default function App() {
               firstName: data.firstName || undefined,
               lastName: data.lastName || undefined,
               username: data.username || undefined,
-              role: data.role as UserRole,
+              role: profileRole,
               photoURL: data.photoURL || undefined,
               createdAt: data.createdAt || new Date().toISOString()
             });
           } else {
             // Roll back user fallback
-            const isSpecialEmail = firebaseUser.email === 'endriuse@hotmail.com' || firebaseUser.email === 'endriusernane@gmail.com' || firebaseUser.email === 'admin@agrostockgps.com';
             const fallbackProfile: UserProfile = {
               uid: firebaseUser.uid,
               email: firebaseUser.email || '',
               name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Usuário',
-              role: isSpecialEmail ? 'administrador' : 'tecnico',
+              role: 'TECNICO_CAMPO',
               createdAt: new Date().toISOString()
             };
             await setDoc(userDocRef, fallbackProfile);
@@ -337,12 +434,11 @@ export default function App() {
         } catch (err) {
           console.error('Error fetching user profile from Firestore', err);
           // Fallback user if database fails
-          const isSpecialEmail = firebaseUser.email === 'endriuse@hotmail.com' || firebaseUser.email === 'endriusernane@gmail.com' || firebaseUser.email === 'admin@agrostockgps.com';
           setUser({
             uid: firebaseUser.uid,
             email: firebaseUser.email || '',
             name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Usuário',
-            role: isSpecialEmail ? 'administrador' : 'tecnico',
+            role: 'TECNICO_CAMPO',
             createdAt: new Date().toISOString()
           });
         }
@@ -447,13 +543,13 @@ export default function App() {
   // Global background auto-scan for weekly field data pending fronts — DEMO MODE ONLY
   useEffect(() => {
     if (!isDemoMode) return;
-    if (!machines || machines.length === 0 || !campoSettings || !campoSettings.enabled) return;
+    if (!eligibleCollectionMachines.length || !campoSettings || !campoSettings.enabled) return;
     if (!campoSettings.alertEmails || campoSettings.alertEmails.length === 0) return;
 
     const runCampoCheck = async () => {
       if (!isCampoAlertDue(campoSettings)) return;
 
-      const report = buildFieldDataReport(machines, fieldDataCollections, getISOWeekId(new Date()));
+      const report = buildFieldDataReport(eligibleCollectionMachines, fieldDataCollections, getISOWeekId(new Date()));
       if (report.pendingMachinesCount === 0) return;
 
       console.log(`[AutoAlert] Disparando e-mail de pendências de campo para: ${campoSettings.alertEmails.join(', ')}`);
@@ -488,7 +584,7 @@ export default function App() {
     }, 4000);
 
     return () => clearTimeout(timer);
-  }, [machines, fieldDataCollections, campoSettings, isDemoMode, user, saveCampoSettings]);
+  }, [eligibleCollectionMachines, fieldDataCollections, campoSettings, isDemoMode, user, saveCampoSettings]);
 
   // Global background auto-scan for overdue loans (once per day) — DEMO MODE ONLY
   useEffect(() => {
@@ -674,6 +770,7 @@ export default function App() {
             currentMachine: data.currentMachine || '',
             currentLocationId: data.currentLocationId || undefined,
             currentMachineId: data.currentMachineId || undefined,
+            maintenanceRequired: data.maintenanceRequired === true,
             placementVersion: data.placementVersion,
             active: data.active,
             deletedAt: data.deletedAt,
@@ -702,6 +799,8 @@ export default function App() {
             model: data.model || '',
             brand: data.brand || '',
             fleet: data.fleet || '',
+          workFrontId: data.workFrontId || undefined,
+          workFrontName: data.workFrontName || undefined,
             active: data.active,
             updatedAt: data.updatedAt
           });
@@ -711,6 +810,28 @@ export default function App() {
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'machines');
       }
+    );
+
+    // Work fronts are canonical records; the legacy `fleet` string is retained only for compatibility.
+    const unsubWorkFronts = onSnapshot(
+      collection(db, 'work_fronts'),
+      (snapshot) => {
+        const list: WorkFront[] = snapshot.docs.map(d => {
+          const data = d.data();
+          return {
+            id: d.id,
+            name: data.name || '',
+            code: data.code || '',
+            operationType: data.operationType || 'Outra',
+            collectsFieldData: data.collectsFieldData === true,
+            active: data.active !== false,
+            updatedAt: data.updatedAt,
+            updatedBy: data.updatedBy || ''
+          };
+        });
+        setWorkFronts(list);
+      },
+      error => handleFirestoreError(error, OperationType.LIST, 'work_fronts')
     );
 
     // Movements Listener
@@ -742,7 +863,16 @@ export default function App() {
             updatedBy: data.updatedBy,
             locationId: data.locationId || undefined,
             componentIds: data.componentIds || undefined,
-            primaryComponentId: data.primaryComponentId || undefined
+            primaryComponentId: data.primaryComponentId || undefined,
+            serviceActionCode: data.serviceActionCode || undefined,
+            executionType: data.executionType || undefined,
+            providerId: data.providerId || undefined,
+            providerName: data.providerName || undefined,
+            sentDate: data.sentDate || undefined,
+            expectedReturnDate: data.expectedReturnDate || undefined,
+            issueDescription: data.issueDescription || undefined,
+            additionalNotes: data.additionalNotes || undefined,
+            scheduledDate: data.scheduledDate || undefined
           });
         });
         setMovements(list);
@@ -768,6 +898,8 @@ export default function App() {
             machineType: data.machineType || undefined,
             fleet: data.fleet || data.frente || '',
             frente: data.frente || data.fleet || '',
+            workFrontId: data.workFrontId || undefined,
+            workFrontName: data.workFrontName || undefined,
             weekId: data.weekId || '',
             status: data.status || 'Pendente',
             collectedAt: data.collectedAt || undefined,
@@ -898,6 +1030,7 @@ export default function App() {
             returnDate: data.returnDate || '',
             locationId: data.locationId,
             returnLocationId: data.returnLocationId,
+            orderId: data.orderId,
             osNumber: data.osNumber,
             serviceType: data.serviceType,
             providerId: data.providerId || '',
@@ -915,32 +1048,6 @@ export default function App() {
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, 'maintenances');
-      }
-    );
-
-    // Providers Listener
-    const unsubProviders = onSnapshot(
-      collection(db, 'providers'),
-      (snapshot) => {
-        const list: MaintenanceProvider[] = [];
-        snapshot.forEach((d) => {
-          const data = d.data();
-          list.push({
-            id: d.id,
-            name: data.name || '',
-            phone: data.phone || '',
-            email: data.email || '',
-            address: data.address || '',
-            contactPerson: data.contactPerson || '',
-            createdAt: data.createdAt,
-            updatedAt: data.updatedAt,
-            updatedBy: data.updatedBy || ''
-          });
-        });
-        setProviders(list);
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.LIST, 'providers');
       }
     );
 
@@ -1052,46 +1159,50 @@ export default function App() {
       }
     );
 
-    // Users List Listener (only for Admin)
+    // Users List: Super sees everyone in realtime; Admin uses a filtered API.
     let unsubUsers = () => {};
-    if (user.role === 'administrador' || user.role === 'ADMINISTRADOR') {
-      unsubUsers = onSnapshot(
-        collection(db, 'users'),
-        (snapshot) => {
-          const list: UserProfile[] = [];
-          snapshot.forEach((d) => {
-            const data = d.data();
-            list.push({
-              uid: d.id,
-              email: data.email || '',
-              name: data.name || '',
-              firstName: data.firstName || '',
-              lastName: data.lastName || '',
-              username: data.username || '',
-              passwordEncrypted: data.passwordEncrypted || '',
-              role: (data.role === 'administrador' ? 'ADMINISTRADOR' : (data.role === 'tecnico' ? 'TECNICO_CAMPO' : data.role)) as UserRole,
-              photoURL: data.photoURL || '',
-              createdAt: data.createdAt || new Date().toISOString()
+    if (isAdminRole(user.role)) {
+      if (isSuperRole(user.role)) {
+        unsubUsers = onSnapshot(
+          collection(db, 'users'),
+          (snapshot) => {
+            const list: UserProfile[] = [];
+            snapshot.forEach((d) => {
+              const data = d.data();
+              list.push({
+                uid: d.id,
+                email: data.email || '',
+                name: data.name || '',
+                firstName: data.firstName || '',
+                lastName: data.lastName || '',
+                username: data.username || '',
+                passwordEncrypted: data.passwordEncrypted || '',
+                role: normalizeRole(data.role),
+                photoURL: data.photoURL || '',
+                createdAt: data.createdAt || new Date().toISOString()
+              });
             });
-          });
-          setUsersList(list);
-        },
-        (error) => {
-          console.error("Error loading users list:", error);
-        }
-      );
+            setUsersList(list);
+          },
+          (error) => {
+            console.error("Error loading users list:", error);
+          }
+        );
+      } else {
+        void refreshUsersList();
+      }
     }
 
     return () => {
       unsubComponents();
       unsubMachines();
+      unsubWorkFronts();
       unsubMovements();
       unsubFieldData();
       unsubLicenses();
       unsubThirdParties();
       unsubLoans();
       unsubMaintenances();
-      unsubProviders();
       unsubPartners();
       unsubLocations();
       unsubTypeRegistry();
@@ -1109,31 +1220,6 @@ export default function App() {
     return () => { settings(); events(); };
   }, [user, isDemoMode]);
 
-  // Background auto-elevation for endriuse@hotmail.com
-  useEffect(() => {
-    if (!user || isDemoMode || !(user.role === 'administrador' || user.role === 'ADMINISTRADOR')) return;
-
-    const elevateSpecialUser = async () => {
-      try {
-        const q = query(collection(db, 'users'), where('email', '==', 'endriuse@hotmail.com'));
-        const snap = await getDocs(q);
-        
-        for (const d of snap.docs) {
-          const uData = d.data();
-          if (uData.role !== 'administrador') {
-            console.log(`Auto-elevating user endriuse@hotmail.com (${d.id}) to administrator...`);
-            await updateDoc(doc(db, 'users', d.id), { role: 'administrador' });
-            console.log("Elevation completed successfully!");
-          }
-        }
-      } catch (err) {
-        console.error("Error in background user auto-elevation:", err);
-      }
-    };
-
-    elevateSpecialUser();
-  }, [user, isDemoMode]);
-
   // Local storage management for Demo Mode
   useEffect(() => {
     if (!isDemoMode) return;
@@ -1146,13 +1232,13 @@ export default function App() {
     const localThirdParties = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}third_parties`);
     const localLoans = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}loans`);
     const localMaintenances = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}maintenances`);
-    const localProviders = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}providers`);
     const localPartners = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}partners`);
     const localCompany = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}company_profile`);
     const localUsers = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}users`);
     const localFieldData = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}field_data_collections`);
     const localTypeRegistry = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}type_registry`);
     const localLocations = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}locations`);
+    const localWorkFronts = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}work_fronts`);
  
     if (localComponents) setComponents(JSON.parse(localComponents));
     if (localMachines) setMachines(JSON.parse(localMachines));
@@ -1161,7 +1247,6 @@ export default function App() {
     if (localThirdParties) setThirdParties(JSON.parse(localThirdParties));
     if (localLoans) setLoans(JSON.parse(localLoans));
     if (localMaintenances) setMaintenances(JSON.parse(localMaintenances));
-    if (localProviders) setProviders(JSON.parse(localProviders));
     if (localPartners) setPartners(JSON.parse(localPartners));
     if (localLocations) setLocations(JSON.parse(localLocations));
     const storedDestinations = localStorage.getItem(LOCAL_STORAGE_KEY_PREFIX + 'storage_state');
@@ -1171,6 +1256,8 @@ export default function App() {
       setLoans(saved.loans); setMaintenances(saved.maintenances); setStorageSettings(saved.settings); setLocationEvents(saved.events);
     }
     if (localFieldData) setFieldDataCollections(JSON.parse(localFieldData));
+    if (localWorkFronts) setWorkFronts(JSON.parse(localWorkFronts));
+    else setWorkFronts([]);
     if (localTypeRegistry) {
       // Normalize legacy category: equipment_machine → vehicle
       const parsed = JSON.parse(localTypeRegistry);
@@ -1192,6 +1279,16 @@ export default function App() {
       setUsersList(JSON.parse(localUsers));
     } else {
       const initialUsers: UserProfile[] = [
+        { 
+          uid: 'demo_user_dev', 
+          email: 'dev@agrostockgps.com', 
+          name: 'DEV (Super Demo)', 
+          firstName: 'DEV',
+          lastName: '(Super Demo)',
+          username: 'dev',
+          role: SUPER_ROLE, 
+          createdAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString() 
+        },
         { 
           uid: 'demo_user_carlos', 
           email: 'carlos.admin@agrostock.com.br', 
@@ -1229,7 +1326,7 @@ export default function App() {
   }, [isDemoMode]);
 
   // Sync demo mode states to localStorage
-  const saveDemoData = (type: 'components' | 'machines' | 'movements' | 'licenses' | 'third_parties' | 'loans' | 'maintenances' | 'providers' | 'partners' | 'company_profile' | 'users' | 'field_data_collections' | 'type_registry' | 'locations', data: any) => {
+  const saveDemoData = (type: 'components' | 'machines' | 'movements' | 'licenses' | 'third_parties' | 'loans' | 'maintenances' | 'partners' | 'company_profile' | 'users' | 'field_data_collections' | 'type_registry' | 'locations' | 'work_fronts', data: any) => {
     if (!isDemoMode) return;
     localStorage.setItem(`${LOCAL_STORAGE_KEY_PREFIX}${type}`, JSON.stringify(data));
     const stored = localStorage.getItem(LOCAL_STORAGE_KEY_PREFIX + 'storage_state');
@@ -1238,6 +1335,7 @@ export default function App() {
       localStorage.setItem(LOCAL_STORAGE_KEY_PREFIX + 'storage_state', JSON.stringify(state));
     }
   };
+
 
   // Login handler
   const handleAuthSuccess = (profile: UserProfile) => {
@@ -1251,7 +1349,7 @@ export default function App() {
     setUser({
       uid: 'demo_user_' + Math.random().toString(36).substr(2, 9),
       email: customEmail || 'demo@agrostockgps.com.br',
-      name: customName || (role === 'administrador' ? 'Carlos (Admin Demo)' : 'Felipe (Técnico Demo)'),
+      name: customName || (isSuperRole(role) ? 'DEV (Super Demo)' : (isAdminRole(role) ? 'Carlos (Admin Demo)' : 'Felipe (Técnico Demo)')),
       role: role,
       createdAt: new Date().toISOString()
     });
@@ -1466,7 +1564,6 @@ export default function App() {
     if (command.type === 'component' && !command.editing) command = { ...command, component: { ...command.component, id: operationId } };
     if (command.type === 'order' && !command.editing) command = { ...command, order: { ...command.order, id: operationId } };
     if (command.type === 'loan') command = { ...command, loan: { ...command.loan, id: operationId } };
-    if (command.type === 'maintenance') command = { ...command, maintenance: { ...command.maintenance, id: operationId } };
     const actor = { id: user.uid, name: user.name || user.email || 'Usuário', role: user.role };
     try {
       if (isDemoMode) {
@@ -1510,6 +1607,11 @@ export default function App() {
 
     const hasActiveMaintenance = maintenances.some(mnt => mnt.componentId === id && mnt.status === 'Em Manutenção');
     if (hasActiveMaintenance) throw new Error(`O equipamento ${compName} está em manutenção ativa. Finalize antes de excluir.`);
+
+    const hasActiveLoan = loans.some(loan => loan.status === 'Ativo' && loan.items.some(item => item.componentId === id));
+    if (hasActiveLoan) throw new Error(`O equipamento ${compName} está em empréstimo ativo. Registre a devolução antes de excluir.`);
+
+    if (comp?.maintenanceRequired) throw new Error(`O equipamento ${compName} possui manutenção pendente. Conclua o reparo antes de excluir.`);
 
     const timestampStr = new Date().toISOString();
     if (isDemoMode) {
@@ -1888,6 +1990,39 @@ export default function App() {
     }
   };
 
+  const handleAddWorkFront = async (front: Omit<WorkFront, 'id' | 'updatedAt' | 'updatedBy'>) => {
+    const timestamp = new Date().toISOString();
+    if (isDemoMode) {
+      const created: WorkFront = { ...front, id: `demo_front_${crypto.randomUUID()}`, updatedAt: timestamp, updatedBy: user?.name || 'Sistema' };
+      const updated = [...workFronts, created];
+      setWorkFronts(updated);
+      saveDemoData('work_fronts', updated);
+      return;
+    }
+    try {
+      const ref = doc(collection(db, 'work_fronts'));
+      await setDoc(ref, { ...front, id: ref.id, updatedAt: serverTimestamp(), updatedBy: user?.name || user?.email || 'Sistema' });
+    } catch (error) {
+      handleFirestoreError(error as any, OperationType.CREATE, 'work_fronts');
+      throw error;
+    }
+  };
+
+  const handleEditWorkFront = async (id: string, changes: Partial<WorkFront>) => {
+    if (isDemoMode) {
+      const updated = workFronts.map(front => front.id === id ? { ...front, ...changes, updatedAt: new Date().toISOString(), updatedBy: user?.name || 'Sistema' } : front);
+      setWorkFronts(updated);
+      saveDemoData('work_fronts', updated);
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'work_fronts', id), { ...changes, updatedAt: serverTimestamp(), updatedBy: user?.name || user?.email || 'Sistema' });
+    } catch (error) {
+      handleFirestoreError(error as any, OperationType.UPDATE, `work_fronts/${id}`);
+      throw error;
+    }
+  };
+
   // Add Movement & Auto-Update Component State (Seamless integration)
   const handleAddMovement = async (log: Omit<MovementLog, 'id' | 'technicianId' | 'technicianName' | 'createdAt'>) => {
     const osNumber = isDemoMode ? movements.reduce((max, item) => Math.max(max, item.osNumber || 0), 0) + 1
@@ -1897,12 +2032,15 @@ export default function App() {
       technicianId: user?.uid || '', technicianName: user?.name || '', createdAt: now, updatedAt: now, updatedBy: user?.name || '',
       history: [{ timestamp: now, actorName: user?.name || '', action: 'O.S. criada' }] } });
   };
-  const handleTransitionOSStatus = async (movement: MovementLog, nextStatus: MovementStatus, actionLabel: string, detail?: string, locationId?: string) => {
-    await runStorage({ type: 'transition', id: movement.id, status: nextStatus, action: actionLabel, detail, locationId });
+  const handleTransitionOSStatus = async (movement: MovementLog, nextStatus: MovementStatus, actionLabel: string, detail?: string, locationId?: string, returnData?: MaintenanceReturn, scheduledDate?: string) => {
+    await runStorage({ type: 'transition', id: movement.id, status: nextStatus, action: actionLabel, detail, locationId, returnData, scheduledDate });
   };
   const handleUpdateMovement = async (movement: MovementLog, updates: Partial<MovementLog>) => {
     await runStorage({ type: 'order', editing: true, order: { ...movement, ...updates,
       history: [...(movement.history || []), { timestamp: new Date().toISOString(), actorName: user?.name || '', action: 'Dados da O.S. atualizados' }] } });
+  };
+  const handleAddNote = async (id: string, note: string) => {
+    await runStorage({ type: 'note', id, note });
   };
   const handleDeleteMovement = async (movement: MovementLog) => { await runStorage({ type: 'deleteOrder', id: movement.id }); };
 
@@ -1925,8 +2063,10 @@ export default function App() {
       machineBrand: machine.brand,
       machineModel: machine.model,
       machineType: machine.type,
-      fleet: machine.fleet || 'Sem Frente',
-      frente: machine.fleet || 'Sem Frente',
+      fleet: machine.workFrontName || machine.fleet || 'Sem Frente',
+      frente: machine.workFrontName || machine.fleet || 'Sem Frente',
+      workFrontId: machine.workFrontId || '',
+      workFrontName: machine.workFrontName || machine.fleet || 'Sem Frente',
       weekId: targetWeekId,
       status: 'Pendente',
       history: [{ timestamp, actorName, action: 'Semana iniciada' }],
@@ -1962,15 +2102,15 @@ export default function App() {
 
   // Keep the current week materialized even when the user does not open the Kanban tab.
   useEffect(() => {
-    if (!user || machines.length === 0) return;
+    if (!user || eligibleCollectionMachines.length === 0) return;
 
     const ensureCurrentWeek = () => {
       const weekId = getISOWeekId(new Date());
-      const hasMissingRecords = machines.some(machine =>
+      const hasMissingRecords = eligibleCollectionMachines.some(machine =>
         !fieldDataCollections.some(item => item.weekId === weekId && item.machineId === machine.id)
       );
       if (hasMissingRecords) {
-        handleEnsureFieldDataWeek(machines, weekId).catch(error =>
+        handleEnsureFieldDataWeek(eligibleCollectionMachines, weekId).catch(error =>
           console.error('Falha ao preparar histórico semanal:', error)
         );
       }
@@ -1979,7 +2119,7 @@ export default function App() {
     ensureCurrentWeek();
     const interval = window.setInterval(ensureCurrentWeek, 60_000);
     return () => window.clearInterval(interval);
-  }, [user?.uid, isDemoMode, machines, fieldDataCollections]);
+  }, [user?.uid, isDemoMode, eligibleCollectionMachines, fieldDataCollections]);
 
   // Complete one machine collection. Completed records are not toggled back by a second tap.
   const handleCompleteFieldDataCollection = async (targetMachine: Machine, targetWeekId: string) => {
@@ -2000,8 +2140,10 @@ export default function App() {
       machineBrand: existing?.machineBrand || targetMachine.brand,
       machineModel: existing?.machineModel || targetMachine.model,
       machineType: existing?.machineType || targetMachine.type,
-      fleet: existing?.fleet || targetMachine.fleet || 'Sem Frente',
-      frente: existing?.frente || targetMachine.fleet || 'Sem Frente',
+      fleet: existing?.fleet || targetMachine.workFrontName || targetMachine.fleet || 'Sem Frente',
+      frente: existing?.frente || targetMachine.workFrontName || targetMachine.fleet || 'Sem Frente',
+      workFrontId: existing?.workFrontId || targetMachine.workFrontId || '',
+      workFrontName: existing?.workFrontName || targetMachine.workFrontName || targetMachine.fleet || 'Sem Frente',
       weekId: targetWeekId,
       status: 'Concluído',
       collectedAt: timestamp,
@@ -2134,12 +2276,17 @@ export default function App() {
     }
   };
 
-  // Send to maintenance (Firestore or Demo)
-  const handleSendToMaintenance = async (maintenance: Omit<ComponentMaintenance, 'id' | 'updatedAt' | 'updatedBy'>) => {
-    await runStorage({ type: 'maintenance', maintenance: { ...maintenance, id: crypto.randomUUID(), updatedAt: new Date().toISOString(), updatedBy: user?.name || '' } });
+  // Open a prefilled maintenance O.S. from the equipment screen
+  const handleOpenMaintenanceOS = (componentId?: string) => {
+    setMovementPrefill({ action: 'Manutenção', componentId });
+    setMovementsSubTab('os');
+    setCurrentTab('movements');
   };
-  const handleReturnFromMaintenance = async (id: string, data: Pick<ComponentMaintenance, 'returnDate' | 'returnLocationId' | 'replacedParts' | 'servicesPerformed' | 'cost' | 'status'>) => {
-    await runStorage({ type: 'returnMaintenance', id, data });
+
+  const handleOpenMaintenanceOrder = (movementId: string) => {
+    setFocusTarget({ tab: 'movements', itemId: movementId });
+    setMovementsSubTab('os');
+    setCurrentTab('movements');
   };
 
   const handleAddPartner = async (partnerData: Omit<Partner, 'id' | 'createdAt' | 'updatedAt' | 'updatedBy'>) => {
@@ -2226,9 +2373,11 @@ export default function App() {
 
   // Add User Profile (Firestore or Demo)
   const handleAddUser = async (newUser: Omit<UserProfile, 'createdAt'>, password?: string) => {
-    const isAuthorized = user?.role === 'administrador' || user?.role === 'ADMINISTRADOR';
-    if (!isAuthorized) {
+    if (!isAdminRole(user?.role)) {
       throw new Error('Acesso Negado');
+    }
+    if (isSuperRole(newUser.role) && !isSuperRole(user?.role)) {
+      throw new Error('Somente um Super Usuário pode criar outro Super Usuário.');
     }
 
     const timestampStr = new Date().toISOString();
@@ -2301,6 +2450,7 @@ export default function App() {
         };
         await setDoc(userDocRef, profile);
       }
+      void refreshUsersList();
     } catch (err: any) {
       if (err.code === 'auth/operation-not-allowed' || (err.message && err.message.includes('auth/operation-not-allowed'))) {
         throw new Error('O login por E-mail/Senha não está ativado no seu Console do Firebase. Por favor, acesse o Console do Firebase > Authentication > Sign-in method e ative o provedor de "E-mail/Senha" para cadastrar novos usuários.');
@@ -2311,9 +2461,27 @@ export default function App() {
 
   // Edit User Profile (Firestore or Demo)
   const handleEditUser = async (uid: string, updates: Partial<Omit<UserProfile, 'uid' | 'createdAt'>>, rawPassword?: string) => {
-    const isAuthorized = user?.role === 'administrador' || user?.role === 'ADMINISTRADOR';
-    if (!isAuthorized) {
+    if (!isAdminRole(user?.role)) {
       throw new Error('Acesso Negado');
+    }
+
+    const callerIsSuper = isSuperRole(user?.role);
+    const targetUser = usersList.find(u => u.uid === uid);
+
+    if (targetUser && isSuperRole(targetUser.role) && !callerIsSuper) {
+      throw new Error('Somente um Super Usuário pode alterar outro Super Usuário.');
+    }
+    if (isSuperRole(updates.role) && !callerIsSuper) {
+      throw new Error('Somente um Super Usuário pode promover alguém a Super Usuário.');
+    }
+    if (uid === user?.uid && updates.role && updates.role !== user.role) {
+      throw new Error('Não é permitido alterar o próprio nível de acesso.');
+    }
+    if (
+      targetUser && isSuperRole(targetUser.role) && updates.role && !isSuperRole(updates.role)
+      && usersList.filter(u => isSuperRole(u.role)).length <= 1
+    ) {
+      throw new Error('O último Super Usuário não pode ser rebaixado.');
     }
 
     // Hash the password if provided
@@ -2349,10 +2517,12 @@ export default function App() {
 
       if (Object.keys(authUpdates).length > 0) {
         try {
+          const token = await auth.currentUser?.getIdToken();
           const response = await fetch('/api/admin/users/update', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
             },
             body: JSON.stringify({
               uid,
@@ -2383,6 +2553,7 @@ export default function App() {
       }
       await updateDoc(userDocRef, firestoreUpdates);
       
+      void refreshUsersList();
       return { success: true, warning: authWarning };
     } catch (err: any) {
       handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`);
@@ -2444,9 +2615,20 @@ export default function App() {
 
   // Delete User Profile (Firestore or Demo)
   const handleDeleteUser = async (uid: string) => {
-    const isAuthorized = user?.role === 'administrador' || user?.role === 'ADMINISTRADOR';
-    if (!isAuthorized) {
+    if (!isAdminRole(user?.role)) {
       throw new Error('Acesso Negado');
+    }
+    if (uid === user?.uid) {
+      throw new Error('Não é permitido excluir a própria conta.');
+    }
+
+    const callerIsSuper = isSuperRole(user?.role);
+    const targetUser = usersList.find(u => u.uid === uid);
+    if (targetUser && isSuperRole(targetUser.role) && !callerIsSuper) {
+      throw new Error('Somente um Super Usuário pode excluir outro Super Usuário.');
+    }
+    if (targetUser && isSuperRole(targetUser.role) && usersList.filter(u => isSuperRole(u.role)).length <= 1) {
+      throw new Error('O último Super Usuário não pode ser excluído.');
     }
 
     if (isDemoMode) {
@@ -2458,17 +2640,24 @@ export default function App() {
 
     try {
       // 1. Delete from Firebase Auth via backend API
-      await fetch('/api/admin/users/delete', {
+      const token = await auth.currentUser?.getIdToken();
+      const response = await fetch('/api/admin/users/delete', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({ uid }),
-      }).catch(err => console.warn("Failed to delete user in auth, continuing deletion in firestore:", err));
+      });
+      if (!response.ok) {
+        const resData = await response.json().catch(() => ({}));
+        throw new Error(resData.error || 'Erro ao excluir o acesso do usuário no Firebase Auth.');
+      }
 
       // 2. Delete from Firestore
       const userDocRef = doc(db, 'users', uid);
       await deleteDoc(userDocRef);
+      void refreshUsersList();
     } catch (err: any) {
       handleFirestoreError(err, OperationType.DELETE, `users/${uid}`);
     }
@@ -2556,7 +2745,7 @@ export default function App() {
               <div className="relative" data-registrations-menu>
                 <button
                   onClick={() => setIsRegistrationsMenuOpen(open => !open)}
-                  className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-all ${isRegistrationsMenuOpen || ['components', 'partners', 'licenses', 'machines', 'storage'].includes(currentTab) ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
+                  className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-all ${isRegistrationsMenuOpen || ['components', 'partners', 'licenses', 'machines', 'storage', 'work-fronts'].includes(currentTab) ? 'bg-slate-800 text-emerald-400' : 'text-slate-300 hover:bg-slate-800/60 hover:text-white'}`}
                   id="registrations-menu-button"
                   aria-haspopup="menu"
                   aria-expanded={isRegistrationsMenuOpen}
@@ -2578,6 +2767,9 @@ export default function App() {
                     </button>
                     <button onClick={() => navigateToTab('machines')} role="menuitem" className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-colors ${currentTab === 'machines' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-200 hover:bg-slate-700/60 hover:text-white'}`}>
                       <Tractor className="h-4 w-4" /> Frota
+                    </button>
+                    <button onClick={() => navigateToTab('work-fronts')} role="menuitem" className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-colors ${currentTab === 'work-fronts' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-200 hover:bg-slate-700/60 hover:text-white'}`}>
+                      <ClipboardList className="h-4 w-4" /> Frentes de trabalho
                     </button>
                     <button onClick={() => navigateToTab('storage')} className="flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left text-xs font-semibold text-slate-200 hover:bg-slate-700/60">
                       <Database className="h-4 w-4" /> Locais de armazenamento
@@ -2647,7 +2839,7 @@ export default function App() {
                   <div className="hidden min-w-0 text-left md:block">
                     <span className="block max-w-24 truncate text-xs font-bold leading-tight text-white">{user.name.split(' ')[0]}</span>
                     <span className="mt-0.5 block text-[10px] font-medium leading-tight text-slate-400">
-                      {user.role === 'administrador' || user.role === 'ADMINISTRADOR' ? 'Administrador' : 'Técnico de campo'}
+                      {roleLabel(user.role)}
                     </span>
                   </div>
                   <ChevronDown className={`hidden h-3.5 w-3.5 shrink-0 text-slate-500 transition-transform duration-200 group-hover:text-slate-300 md:block ${isUserMenuOpen ? 'rotate-180 text-slate-300' : ''}`} aria-hidden="true" />
@@ -2675,7 +2867,7 @@ export default function App() {
                       <LifeBuoy className="h-4 w-4" />
                       Suporte
                     </button>
-                    {(user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
+                    {isAdminRole(user.role) && (
                       <button
                         onClick={() => navigateToTab('settings')}
                         role="menuitem"
@@ -2683,6 +2875,16 @@ export default function App() {
                       >
                         <Settings className="h-4 w-4" />
                         Configurações
+                      </button>
+                    )}
+                    {isSuperRole(user.role) && (
+                      <button
+                        onClick={() => navigateToTab('whatsnew')}
+                        role="menuitem"
+                        className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-colors ${currentTab === 'whatsnew' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-200 hover:bg-slate-700/60 hover:text-white'}`}
+                      >
+                        <Sparkles className="h-4 w-4" />
+                        Gerenciar Novidades
                       </button>
                     )}
                     <div className="my-1 border-t border-slate-700" />
@@ -2728,10 +2930,10 @@ export default function App() {
               Dashboard
             </button>
 
-            <div data-registrations-menu className={`rounded-xl ${['components', 'partners', 'licenses', 'machines', 'storage'].includes(currentTab) ? 'bg-slate-900/45' : ''}`}>
+            <div data-registrations-menu className={`rounded-xl ${['components', 'partners', 'licenses', 'machines', 'storage', 'work-fronts'].includes(currentTab) ? 'bg-slate-900/45' : ''}`}>
               <button
                 onClick={() => setIsRegistrationsMenuOpen(open => !open)}
-                className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-all ${['components', 'partners', 'licenses', 'machines', 'storage'].includes(currentTab) ? 'text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
+                className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-all ${['components', 'partners', 'licenses', 'machines', 'storage', 'work-fronts'].includes(currentTab) ? 'text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
                 aria-expanded={isRegistrationsMenuOpen}
               >
                 <Database className="h-4 w-4" />
@@ -2751,6 +2953,9 @@ export default function App() {
                   </button>
                   <button onClick={() => navigateToTab('machines')} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs font-semibold ${currentTab === 'machines' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-400 hover:bg-slate-700/50 hover:text-white'}`}>
                     <Tractor className="h-4 w-4" /> Frota
+                  </button>
+                  <button onClick={() => navigateToTab('work-fronts')} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-xs font-semibold ${currentTab === 'work-fronts' ? 'bg-emerald-500/15 text-emerald-300' : 'text-slate-400 hover:bg-slate-700/50 hover:text-white'}`}>
+                    <ClipboardList className="h-4 w-4" /> Frentes de trabalho
                   </button>
                     <button onClick={() => navigateToTab('storage')} className="flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left text-xs font-semibold text-slate-200 hover:bg-slate-700/60">
                       <Database className="h-4 w-4" /> Locais de armazenamento
@@ -2791,13 +2996,22 @@ export default function App() {
                 <LifeBuoy className="h-4 w-4" />
                 Suporte
               </button>
-              {(user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
+              {isAdminRole(user.role) && (
                 <button
                   onClick={() => navigateToTab('settings')}
                   className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-all ${currentTab === 'settings' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
                 >
                   <Settings className="h-4 w-4" />
                   Configurações
+                </button>
+              )}
+              {isSuperRole(user.role) && (
+                <button
+                  onClick={() => navigateToTab('whatsnew')}
+                  className={`flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-all ${currentTab === 'whatsnew' ? 'bg-slate-900 text-emerald-400' : 'text-slate-300 hover:bg-slate-700/50 hover:text-white'}`}
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Gerenciar Novidades
                 </button>
               )}
             </div>
@@ -2829,6 +3043,9 @@ export default function App() {
             fieldDataCollections={fieldDataCollections}
             role={user.role} 
             companyProfile={companyProfile}
+            loans={loans}
+            maintenances={maintenances}
+            locations={locations}
             onNavigate={navigateToTab}
             onSeedData={isDemoMode ? seedDemoInitialData : handleSeedRealDatabase}
           />
@@ -2853,6 +3070,7 @@ export default function App() {
             onEditComponent={handleEditComponent}
             onDeleteComponent={handleDeleteComponent}
             maintenances={maintenances}
+            loans={loans}
             movements={movements}
             locations={locations}
             partners={partners}
@@ -2860,9 +3078,10 @@ export default function App() {
             locationEvents={locationEvents}
             initialLocationFilter={storageFilter}
             onTransfer={(componentIds, locationId, notes) => runStorage({ type: 'transfer', componentIds, locationId, notes })}
+            onAssignLocation={(componentId, locationId, notes) => runStorage({ type: 'assignPlacement', componentId, locationId, notes })}
+            onOpenMaintenanceOrder={handleOpenMaintenanceOrder}
             licenses={licenses}
-            onSendToMaintenance={handleSendToMaintenance}
-            onReturnFromMaintenance={handleReturnFromMaintenance}
+            onOpenMaintenanceOS={handleOpenMaintenanceOS}
           />
         )}
 
@@ -2885,6 +3104,7 @@ export default function App() {
         {currentTab === 'machines' && (
           <MachinesTab
             machines={machines}
+            workFronts={workFronts}
             movements={movements}
             fieldDataCollections={fieldDataCollections}
             role={user.role}
@@ -2896,11 +3116,15 @@ export default function App() {
           />
         )}
 
+        {currentTab === 'work-fronts' && (
+          <WorkFrontsTab workFronts={workFronts} role={user.role} onAdd={handleAddWorkFront} onEdit={handleEditWorkFront} />
+        )}
+
         {currentTab === 'movements' && (
           <MovementsTab
             movements={movements}
             components={components}
-            machines={machines}
+            machines={eligibleCollectionMachines}
             fieldDataCollections={fieldDataCollections}
             role={user.role}
             currentUserId={user.uid}
@@ -2908,14 +3132,22 @@ export default function App() {
             extraServiceActions={getActiveTypes('service').filter(a => !CORE_SERVICE_ACTIONS.includes(a))}
             companyProfile={companyProfile}
             locations={locations} defaultLocationId={storageSettings.defaultLocationId}
+            loans={loans}
+            maintenances={maintenances}
+            partners={partners}
             onAddMovement={handleAddMovement}
             onUpdateMovement={handleUpdateMovement}
+            onAddNote={handleAddNote}
             onDeleteMovement={handleDeleteMovement}
             onCompleteCollection={handleCompleteFieldDataCollection}
             onEnsureWeekRecords={handleEnsureFieldDataWeek}
             onTransitionOSStatus={handleTransitionOSStatus}
             initialSubTab={movementsSubTab}
             initialKanbanStatus={kanbanPresetFilter?.kanbanStatus}
+            initialPrefill={movementPrefill}
+            onPrefillConsumed={() => setMovementPrefill(null)}
+            focusMovementId={focusTarget?.tab === 'movements' ? focusTarget.itemId : null}
+            onMovementFocusConsumed={() => setFocusTarget(null)}
           />
         )}
 
@@ -2942,6 +3174,9 @@ export default function App() {
             focusLoanId={focusTarget?.tab === 'loans' ? focusTarget.itemId : null}
             onFocusConsumed={() => setFocusTarget(null)}
             locations={locations} defaultLocationId={storageSettings.defaultLocationId}
+            movements={movements}
+            machines={machines}
+            maintenances={maintenances}
             onAddLoan={handleAddLoan}
             onReturnLoan={handleReturnLoan}
             onPartialReturnLoan={handlePartialReturnLoan}
@@ -2979,7 +3214,11 @@ export default function App() {
           />
         )}
 
-        {currentTab === 'settings' && (user.role === 'administrador' || user.role === 'ADMINISTRADOR') && (
+        {currentTab === 'whatsnew' && isSuperRole(user.role) && (
+          <WhatsNewAdmin currentUserName={user.name} isDemo={isDemoMode} />
+        )}
+
+        {currentTab === 'settings' && isAdminRole(user.role) && (
           <SettingsTab
             companyProfile={companyProfile}
             role={user.role}
@@ -3015,6 +3254,13 @@ export default function App() {
           NaneTech • Desenvolvimento de Software e Aplicativos
         </p>
       </footer>
+
+      <WhatsNewModal
+        open={showWhatsNew}
+        onClose={() => setShowWhatsNew(false)}
+        content={whatsNewContent}
+        publishedId={whatsNewPublishedId}
+      />
 
     </div>
   );

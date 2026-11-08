@@ -296,6 +296,78 @@ async function resolveSupportRequester(req: any): Promise<SupportRequester> {
   };
 }
 
+interface AdminRequester {
+  uid: string;
+  role: string;
+}
+
+const SUPER_ROLE_VALUES = ["SUPER_USUARIO", "superusuario", "super_usuario"];
+const ADMIN_ROLE_VALUES = ["ADMINISTRADOR", "administrador"];
+
+function isSuperRoleValue(role: unknown): boolean {
+  return typeof role === "string" && SUPER_ROLE_VALUES.includes(role);
+}
+
+function isAdminRoleValue(role: unknown): boolean {
+  return isSuperRoleValue(role) || (typeof role === "string" && ADMIN_ROLE_VALUES.includes(role));
+}
+
+// Resolves the caller for administrative user routes. Requires a valid Firebase ID
+// token and an Admin/Super role stored in Firestore. Never trusts client headers.
+async function resolveAdminRequester(req: any): Promise<{ requester: AdminRequester | null; status?: number; error?: string }> {
+  const header = typeof req.headers?.authorization === "string" ? req.headers.authorization : "";
+  if (!header.startsWith("Bearer ")) {
+    return { requester: null, status: 401, error: "Autenticação necessária." };
+  }
+
+  const token = header.slice(7).trim();
+  if (!token) {
+    return { requester: null, status: 401, error: "Autenticação necessária." };
+  }
+
+  let decoded: any;
+  try {
+    decoded = await getAuth().verifyIdToken(token);
+  } catch (error: any) {
+    console.error("Token inválido em rota administrativa:", error?.message || error);
+    return { requester: null, status: 401, error: "Sessão inválida ou expirada." };
+  }
+
+  if (!decoded?.uid) {
+    return { requester: null, status: 401, error: "Sessão inválida ou expirada." };
+  }
+
+  if (!HAS_FIRESTORE_CREDS) {
+    return { requester: null, status: 503, error: "Credenciais administrativas do Firebase não configuradas neste servidor." };
+  }
+
+  try {
+    const snapshot = await getFirestore().collection("users").doc(decoded.uid).get();
+    const role = snapshot.exists ? snapshot.data()?.role : "";
+    if (!isAdminRoleValue(role)) {
+      return { requester: null, status: 403, error: "Acesso negado." };
+    }
+    return { requester: { uid: decoded.uid, role: String(role) } };
+  } catch (error: any) {
+    console.error("Erro ao validar permissão administrativa:", error?.message || error);
+    return { requester: null, status: 500, error: "Não foi possível validar as permissões do usuário." };
+  }
+}
+
+async function getTargetUserRole(uid: string): Promise<string> {
+  const snapshot = await getFirestore().collection("users").doc(uid).get();
+  return snapshot.exists ? String(snapshot.data()?.role || "") : "";
+}
+
+async function countSuperUsers(): Promise<number> {
+  const snapshot = await getFirestore().collection("users").get();
+  let total = 0;
+  snapshot.forEach((doc) => {
+    if (isSuperRoleValue(doc.data()?.role)) total += 1;
+  });
+  return total;
+}
+
 async function trelloFetch(path: string, init?: RequestInit): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
@@ -1562,12 +1634,67 @@ ${extractedText}`;
     }
   });
 
+  // API Route for listing user profiles. Super users see everyone; admins never
+  // see Super accounts (Firestore rules cannot filter list results).
+  app.get("/api/admin/users/list", async (req, res) => {
+    try {
+      const authResult = await resolveAdminRequester(req);
+      if (!authResult.requester) {
+        return res.status(authResult.status || 403).json({ error: authResult.error || "Acesso negado." });
+      }
+
+      const snapshot = await getFirestore().collection("users").get();
+      const requesterIsSuper = isSuperRoleValue(authResult.requester.role);
+      const users: any[] = [];
+
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        if (!requesterIsSuper && isSuperRoleValue(data.role)) return;
+
+        const createdAt = data.createdAt;
+        let createdAtValue: string | null = null;
+        if (createdAt && typeof createdAt.toDate === "function") {
+          createdAtValue = createdAt.toDate().toISOString();
+        } else if (typeof createdAt === "string") {
+          createdAtValue = createdAt;
+        }
+
+        users.push({
+          uid: doc.id,
+          email: typeof data.email === "string" ? data.email : "",
+          name: typeof data.name === "string" ? data.name : "",
+          firstName: typeof data.firstName === "string" ? data.firstName : "",
+          lastName: typeof data.lastName === "string" ? data.lastName : "",
+          username: typeof data.username === "string" ? data.username : "",
+          photoURL: typeof data.photoURL === "string" ? data.photoURL : "",
+          role: typeof data.role === "string" ? data.role : "",
+          createdAt: createdAtValue
+        });
+      });
+
+      return res.json({ users });
+    } catch (error: any) {
+      console.error("Erro ao listar usuários:", error);
+      return res.status(500).json({ error: error.message || "Erro ao listar usuários." });
+    }
+  });
+
   // API Route for updating a user in Firebase Auth using Admin SDK
   app.post("/api/admin/users/update", async (req, res) => {
     try {
+      const authResult = await resolveAdminRequester(req);
+      if (!authResult.requester) {
+        return res.status(authResult.status || 403).json({ error: authResult.error || "Acesso negado." });
+      }
+
       const { uid, email, password, displayName } = req.body;
       if (!uid) {
         return res.status(400).json({ error: "UID do usuário não informado." });
+      }
+
+      const targetRole = await getTargetUserRole(uid);
+      if (isSuperRoleValue(targetRole) && !isSuperRoleValue(authResult.requester.role)) {
+        return res.status(403).json({ error: "Somente um Super Usuário pode alterar outro Super Usuário." });
       }
 
       const updateParams: any = {};
@@ -1587,9 +1714,27 @@ ${extractedText}`;
   // API Route for deleting a user from Firebase Auth using Admin SDK
   app.post("/api/admin/users/delete", async (req, res) => {
     try {
+      const authResult = await resolveAdminRequester(req);
+      if (!authResult.requester) {
+        return res.status(authResult.status || 403).json({ error: authResult.error || "Acesso negado." });
+      }
+
       const { uid } = req.body;
       if (!uid) {
         return res.status(400).json({ error: "UID do usuário não informado." });
+      }
+
+      if (uid === authResult.requester.uid) {
+        return res.status(400).json({ error: "Não é permitido excluir a própria conta." });
+      }
+
+      const targetRole = await getTargetUserRole(uid);
+      const requesterIsSuper = isSuperRoleValue(authResult.requester.role);
+      if (isSuperRoleValue(targetRole) && !requesterIsSuper) {
+        return res.status(403).json({ error: "Somente um Super Usuário pode excluir outro Super Usuário." });
+      }
+      if (isSuperRoleValue(targetRole) && (await countSuperUsers()) <= 1) {
+        return res.status(400).json({ error: "O último Super Usuário não pode ser excluído." });
       }
 
       await getAuth().deleteUser(uid);

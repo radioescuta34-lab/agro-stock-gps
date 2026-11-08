@@ -15,13 +15,25 @@ service cloud.firestore {
     function getUserData() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
+
+    // Accepts SUPER_USUARIO / SUPER USUARIO / superusuario (case and surrounding spaces tolerant).
+    // Also accepts the legacy 'super' alias used by the client role helpers.
+    function isSuperRoleValue(role) {
+      return role is string && (
+        role.upper().matches('^\\s*SUPER[ _]?USUARIO\\s*$')
+        || role.lower() == 'super'
+      );
+    }
+
+    function isSuper() {
+      return isSignedIn() && isSuperRoleValue(getUserData().role);
+    }
     
     function isAdmin() {
       return isSignedIn() && (
+        isSuper() ||
         getUserData().role == 'administrador' ||
-        getUserData().role == 'ADMINISTRADOR' ||
-        request.auth.token.email == 'endriuse@hotmail.com' ||
-        request.auth.token.email == 'endriusernane@gmail.com'
+        getUserData().role == 'ADMINISTRADOR'
       );
     }
     
@@ -30,6 +42,12 @@ service cloud.firestore {
         getUserData().role == 'tecnico' ||
         getUserData().role == 'TECNICO_CAMPO'
       );
+    }
+
+    // Role of an arbitrary existing user document (used to protect Super accounts).
+    function isSuperUserDoc(userId) {
+      let role = get(/databases/$(database)/documents/users/$(userId)).data.role;
+      return isSuperRoleValue(role);
     }
 
     function isValidId(id) {
@@ -52,23 +70,80 @@ service cloud.firestore {
       return user.uid is string && user.uid.size() <= 128
         && user.email is string && user.email.size() <= 128
         && user.name is string && user.name.size() <= 128
-        && (user.role == 'administrador' || user.role == 'tecnico' || user.role == 'ADMINISTRADOR' || user.role == 'TECNICO_CAMPO');
+        && (
+          user.role == 'SUPER_USUARIO' || user.role == 'superusuario' || user.role == 'super_usuario'
+          || user.role == 'administrador' || user.role == 'tecnico'
+          || user.role == 'ADMINISTRADOR' || user.role == 'TECNICO_CAMPO'
+        );
     }
 
     match /settings/{settingId} {
+      // whatsNew and whatsNewDraft have their own match blocks below and must stay Super-only.
+      allow read: if isSignedIn() && settingId != 'whatsNewDraft';
+      allow write: if isAdmin() && settingId != 'whatsNew' && settingId != 'whatsNewDraft';
+    }
+
+    // Validate What's New publication (settings/whatsNew)
+    function isValidWhatsNew(doc) {
+      // Rules cannot safely enforce the shape of every value inside a dynamic
+      // list. The editor owns that schema; the rule locks the document shape,
+      // bounds the list, and keeps publishing exclusive to Super Users.
+      return doc.keys().hasOnly(['lastPublishedId', 'content', 'publishedAt', 'publishedBy', 'updatedAt'])
+        && doc.lastPublishedId is int && doc.lastPublishedId >= 1
+        && doc.content is list && doc.content.size() > 0 && doc.content.size() <= 20
+        && doc.publishedAt == request.time
+        && doc.updatedAt == request.time
+        && doc.publishedBy is string && doc.publishedBy.size() <= 128;
+    }
+
+    match /settings/whatsNew {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow create: if isSuper() && isValidWhatsNew(request.resource.data);
+      // lastPublishedId may only be incremented by exactly one per publication
+      allow update: if isSuper() && isValidWhatsNew(request.resource.data)
+        && request.resource.data.lastPublishedId == resource.data.lastPublishedId + 1;
+      allow delete: if false;
+    }
+
+    // Validate What's New working draft (settings/whatsNewDraft).
+    // Draft is private, Super-only working data; no strict shape validation here
+    // because items may be incomplete while being edited.
+    match /settings/whatsNewDraft {
+      allow read, write: if isSuper();
     }
 
     match /users/{userId} {
-      allow get: if isSignedIn();
-      allow list: if isAdmin(); // Only admins can list users
-      allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin()) && isValidUser(request.resource.data);
-      allow update: if isSignedIn() && (
-        (request.auth.uid == userId && request.resource.data.role == resource.data.role) || 
-        isAdmin()
-      ) && isValidUser(request.resource.data);
-      allow delete: if isAdmin();
+      // Super accounts are only visible/manageable by a Super user.
+      allow get: if isSignedIn() && (
+        request.auth.uid == userId ||
+        isSuper() ||
+        (isAdmin() && !isSuperUserDoc(userId))
+      );
+      allow list: if isSuper();
+      allow create: if isSignedIn()
+        && isValidUser(request.resource.data)
+        && (
+          (
+            request.auth.uid == userId
+            && (request.resource.data.role == 'TECNICO_CAMPO' || request.resource.data.role == 'tecnico')
+          )
+          || isSuper()
+          || (isAdmin() && !isSuperRoleValue(request.resource.data.role))
+        );
+      allow update: if isSignedIn() && isValidUser(request.resource.data) && (
+        isSuper() ||
+        (
+          isAdmin()
+          && !isSuperUserDoc(userId)
+          && !isSuperRoleValue(request.resource.data.role)
+        ) ||
+        (
+          request.auth.uid == userId
+          && request.resource.data.role == resource.data.role
+          && !isSuperUserDoc(userId)
+        )
+      );
+      allow delete: if isSuper() || (isAdmin() && !isSuperUserDoc(userId));
     }
 
     // Validate Component
@@ -79,6 +154,7 @@ service cloud.firestore {
         && (comp.brand == 'Trimble' || comp.brand == 'Topcon')
         && comp.type is string && comp.type.size() <= 128
         && (comp.status == 'Disponível' || comp.status == 'Em Uso' || comp.status == 'Manutenção' || comp.status == 'Descartado')
+        && (!('maintenanceRequired' in comp) || comp.maintenanceRequired is bool)
         && (!('currentLocationId' in comp) || (comp.currentLocationId is string && comp.currentLocationId.size() <= 128))
         && (!('currentMachineId' in comp) || (comp.currentMachineId is string && comp.currentMachineId.size() <= 128))
         && (!('placementVersion' in comp) || (comp.placementVersion == 1
@@ -101,7 +177,7 @@ service cloud.firestore {
               && request.resource.data.name == resource.data.name
               && request.resource.data.type == resource.data.type
               && isTechnician()
-              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'currentMachine', 'currentLocationId', 'currentMachineId', 'placementVersion', 'updatedAt', 'updatedBy'])
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'maintenanceRequired', 'currentMachine', 'currentLocationId', 'currentMachineId', 'placementVersion', 'updatedAt', 'updatedBy'])
             )
           )
         )
@@ -115,7 +191,9 @@ service cloud.firestore {
         && mac.type is string && mac.type.size() <= 64
         && mac.model is string && mac.model.size() <= 128
         && mac.brand is string && mac.brand.size() <= 128
-        && (!('fleet' in mac) || (mac.fleet is string && mac.fleet.size() <= 128));
+        && (!('fleet' in mac) || (mac.fleet is string && mac.fleet.size() <= 128))
+        && (!('workFrontId' in mac) || (mac.workFrontId is string && mac.workFrontId.size() <= 128))
+        && (!('workFrontName' in mac) || (mac.workFrontName is string && mac.workFrontName.size() <= 128));
     }
 
     match /machines/{machineId} {
@@ -126,6 +204,25 @@ service cloud.firestore {
         || isValidMachine(request.resource.data)
       );
       allow delete: if false; // soft-delete only (active/deletedAt)
+    }
+
+    // Canonical operational-front registry. Records are deactivated instead of deleted
+    // so historical weekly collections and machines preserve their original context.
+    function isValidWorkFront(front) {
+      return front.id is string && front.id.size() <= 128
+        && front.name is string && front.name.size() > 0 && front.name.size() <= 128
+        && (!('code' in front) || (front.code is string && front.code.size() <= 32))
+        && (front.operationType == 'Colheita' || front.operationType == 'Vinhaça' || front.operationType == 'Plantio' || front.operationType == 'Tratos culturais' || front.operationType == 'Outra')
+        && front.collectsFieldData is bool
+        && front.active is bool
+        && front.updatedAt == request.time
+        && front.updatedBy is string && front.updatedBy.size() <= 128;
+    }
+
+    match /work_fronts/{workFrontId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isAdmin() && isValidId(workFrontId) && isValidWorkFront(request.resource.data);
+      allow delete: if false;
     }
 
     // Validate License
@@ -152,10 +249,11 @@ service cloud.firestore {
         && (!('machineId' in move) || (move.machineId is string && move.machineId.size() <= 128))
         && move.machinePrefix is string && move.machinePrefix.size() <= 128
         && move.action is string && move.action.size() <= 64
+        && (!('serviceActionCode' in move) || (move.serviceActionCode == 'INSTALLATION' || move.serviceActionCode == 'REMOVAL' || move.serviceActionCode == 'MAINTENANCE' || move.serviceActionCode == 'CALIBRATION'))
         && move.technicianId is string && move.technicianId.size() <= 128
         && move.technicianName is string && move.technicianName.size() <= 128
         && (!('osNumber' in move) || move.osNumber is number)
-        && (!('status' in move) || (move.status == 'Aberta' || move.status == 'Agendada' || move.status == 'Em Atendimento' || move.status == 'Concluída' || move.status == 'Cancelada'))
+        && (!('status' in move) || (move.status == 'Aberta' || move.status == 'Agendada' || move.status == 'Em Atendimento' || move.status == 'Em Manutenção Interna' || move.status == 'Em Assistência Externa' || move.status == 'Aguardando Conferência' || move.status == 'Concluída' || move.status == 'Sem Conserto' || move.status == 'Cancelada'))
         && (!('history' in move) || move.history is list)
         && (!('completedAt' in move) || move.completedAt is string || move.completedAt is timestamp)
         && (!('cancelledAt' in move) || move.cancelledAt is string || move.cancelledAt is timestamp)
@@ -163,13 +261,24 @@ service cloud.firestore {
         && (!('updatedBy' in move) || (move.updatedBy is string && move.updatedBy.size() <= 128))
         && (!('locationId' in move) || (move.locationId is string && move.locationId.size() <= 128))
         && (!('componentIds' in move) || (move.componentIds is list && move.componentIds.size() <= 50))
-        && (!('primaryComponentId' in move) || (move.primaryComponentId is string && move.primaryComponentId.size() <= 128));
+        && (!('primaryComponentId' in move) || (move.primaryComponentId is string && move.primaryComponentId.size() <= 128))
+        && (!('executionType' in move) || move.executionType == 'INTERNAL' || move.executionType == 'EXTERNAL')
+        && (!('providerId' in move) || move.providerId is string)
+        && (!('providerName' in move) || move.providerName is string)
+        && (!('sentDate' in move) || move.sentDate is string)
+        && (!('expectedReturnDate' in move) || move.expectedReturnDate is string)
+        && (!('issueDescription' in move) || move.issueDescription is string)
+        && (!('additionalNotes' in move) || move.additionalNotes is string)
+        && (!('scheduledDate' in move) || move.scheduledDate is string);
     }
 
     function isValidStatusTransition(previousStatus, nextStatus) {
       return (previousStatus == 'Aberta' && (nextStatus == 'Agendada' || nextStatus == 'Em Atendimento' || nextStatus == 'Cancelada'))
         || (previousStatus == 'Agendada' && (nextStatus == 'Aberta' || nextStatus == 'Em Atendimento' || nextStatus == 'Cancelada'))
-        || (previousStatus == 'Em Atendimento' && (nextStatus == 'Agendada' || nextStatus == 'Concluída' || nextStatus == 'Cancelada'));
+        || (previousStatus == 'Em Atendimento' && (nextStatus == 'Agendada' || nextStatus == 'Em Manutenção Interna' || nextStatus == 'Em Assistência Externa' || nextStatus == 'Concluída' || nextStatus == 'Cancelada'))
+        || (previousStatus == 'Em Manutenção Interna' && (nextStatus == 'Aguardando Conferência' || nextStatus == 'Cancelada'))
+        || (previousStatus == 'Em Assistência Externa' && (nextStatus == 'Aguardando Conferência' || nextStatus == 'Cancelada'))
+        || (previousStatus == 'Aguardando Conferência' && (nextStatus == 'Concluída' || nextStatus == 'Sem Conserto' || nextStatus == 'Cancelada'));
     }
 
     // Allows audited lifecycle transitions and corrections before execution begins.
@@ -177,15 +286,17 @@ service cloud.firestore {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       let validHistoryAppend = request.resource.data.history is list
         && (!('history' in resource.data) || request.resource.data.history.size() == resource.data.history.size() + 1);
-      let lifecycleUpdate = changed.hasOnly(['status', 'history', 'completedAt', 'cancelledAt', 'updatedAt', 'updatedBy', 'locationId'])
+      let lifecycleUpdate = changed.hasOnly(['status', 'history', 'completedAt', 'cancelledAt', 'updatedAt', 'updatedBy', 'locationId', 'serviceActionCode', 'scheduledDate'])
         && (!changed.hasAny(['locationId']) || (resource.data.action == 'Remoção' && request.resource.data.status == 'Concluída'))
         && isValidStatusTransition(('status' in resource.data) ? resource.data.status : 'Aberta', request.resource.data.status);
       let editableUpdate = (!('status' in resource.data) || resource.data.status == 'Aberta' || resource.data.status == 'Agendada')
         && request.resource.data.status == (('status' in resource.data) ? resource.data.status : 'Aberta')
-        && changed.hasOnly(['componentId', 'componentSerial', 'componentName', 'machineId', 'machinePrefix', 'action', 'date', 'notes', 'status', 'history', 'updatedAt', 'updatedBy', 'locationId', 'componentIds', 'primaryComponentId']);
+        && changed.hasOnly(['componentId', 'componentSerial', 'componentName', 'machineId', 'machinePrefix', 'action', 'serviceActionCode', 'date', 'notes', 'status', 'history', 'updatedAt', 'updatedBy', 'locationId', 'componentIds', 'primaryComponentId', 'executionType', 'providerId', 'providerName', 'sentDate', 'expectedReturnDate', 'issueDescription']);
+      let noteAppend = changed.hasOnly(['additionalNotes', 'history', 'updatedAt', 'updatedBy'])
+        && (('status' in resource.data) ? resource.data.status != 'Cancelada' : true);
       return isValidMovement(request.resource.data)
         && validHistoryAppend
-        && (lifecycleUpdate || editableUpdate);
+        && (lifecycleUpdate || editableUpdate || noteAppend);
     }
 
     match /movements/{movementId} {
@@ -209,7 +320,9 @@ service cloud.firestore {
         && (!('collectedAt' in fdc) || fdc.collectedAt is string)
         && (!('collectedBy' in fdc) || (fdc.collectedBy is string && fdc.collectedBy.size() <= 128))
         && (!('history' in fdc) || fdc.history is list)
-        && (!('frente' in fdc) || (fdc.frente is string && fdc.frente.size() <= 128));
+        && (!('frente' in fdc) || (fdc.frente is string && fdc.frente.size() <= 128))
+        && (!('workFrontId' in fdc) || (fdc.workFrontId is string && fdc.workFrontId.size() <= 128))
+        && (!('workFrontName' in fdc) || (fdc.workFrontName is string && fdc.workFrontName.size() <= 128));
     }
 
     match /field_data_collections/{fdcId} {
@@ -252,9 +365,13 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Validate ComponentMaintenance
+    // Maintenance documents are a read model generated by an external maintenance
+    // O.S. Legacy documents without orderId remain readable, but cannot be changed
+    // through this flow.
     function isValidMaintenance(maint) {
       return maint.id is string && maint.id.size() <= 128
+        && maint.orderId is string && maint.orderId.size() <= 128
+        && maint.osNumber is number
         && maint.componentId is string && maint.componentId.size() <= 128
         && maint.componentSerial is string && maint.componentSerial.size() <= 128
         && maint.componentName is string && maint.componentName.size() <= 128
@@ -262,22 +379,33 @@ service cloud.firestore {
         && maint.status is string && (maint.status == 'Em Manutenção' || maint.status == 'Concluído' || maint.status == 'Sem Conserto');
     }
 
+    function isLinkedMaintenance(maint, maintenanceId) {
+      let order = getAfter(/databases/$(database)/documents/movements/$(maint.orderId)).data;
+      return maintenanceId == maint.orderId + '_' + maint.componentId
+        && order.serviceActionCode == 'MAINTENANCE'
+        && order.executionType == 'EXTERNAL'
+        && order.osNumber == maint.osNumber
+        && order.componentIds.hasAll([maint.componentId]);
+    }
+
     match /maintenances/{maintenanceId} {
       allow get, list: if isSignedIn();
-      allow create, update: if (isAdmin() || isTechnician()) && isValidId(maintenanceId) && isValidMaintenance(request.resource.data);
-      allow delete: if isAdmin();
+      allow create: if (isAdmin() || isTechnician()) && isValidId(maintenanceId)
+        && isValidMaintenance(request.resource.data)
+        && isLinkedMaintenance(request.resource.data, maintenanceId);
+      allow update: if (isAdmin() || isTechnician()) && isValidId(maintenanceId)
+        && ('orderId' in resource.data)
+        && request.resource.data.orderId == resource.data.orderId
+        && isValidMaintenance(request.resource.data)
+        && isLinkedMaintenance(request.resource.data, maintenanceId);
+      allow delete: if false;
     }
 
-    // Validate MaintenanceProvider
-    function isValidProvider(prov) {
-      return prov.id is string && prov.id.size() <= 128
-        && prov.name is string && prov.name.size() <= 128;
-    }
-
+    // Legacy provider records were superseded by Partners. They remain readable
+    // only to preserve historical data; new providers are managed as Partners.
     match /providers/{providerId} {
       allow get, list: if isSignedIn();
-      allow create, update: if (isAdmin() || isTechnician()) && isValidId(providerId) && isValidProvider(request.resource.data);
-      allow delete: if isAdmin();
+      allow create, update, delete: if false;
     }
 
     function isValidPartner(partner) {

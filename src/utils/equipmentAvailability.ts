@@ -15,7 +15,7 @@ export function resolveServiceAction(order: Pick<MovementLog, 'action' | 'servic
   if (order.serviceActionCode) return Object.hasOwn(SERVICE_ACTIONS, order.serviceActionCode) ? order.serviceActionCode : undefined;
   return legacyActions[normalize(order.action || '')];
 }
-export const isOpenOrder = (order: MovementLog) => !['Concluída', 'Cancelada'].includes(order.status || 'Aberta');
+export const isOpenOrder = (order: MovementLog) => !['Concluída', 'Cancelada', 'Sem Conserto'].includes(order.status || 'Aberta');
 export const orderItems = (order: MovementLog) => [...new Set([...(order.componentIds || []), order.componentId, order.primaryComponentId].filter((id): id is string => !!id))];
 
 export interface AvailabilityContext {
@@ -37,7 +37,12 @@ export function createEquipmentAvailabilityResolver({ movements = [], loans = []
   return (component: AutopilotComponent, ignoredOrderId?: string) => {
     const pendingOrders = (orders.get(component.id) || []).filter(order => order.id !== ignoredOrderId);
     const activeLoans = loans.filter(loan => loan.status === 'Ativo' && loan.items.some(item => item.componentId === component.id));
-    const activeRepairs = maintenances.filter(repair => repair.status === 'Em Manutenção' && repair.componentId === component.id);
+    // New maintenance records are a read model of their parent O.S. and must not
+    // count as a second simultaneous operation. Legacy records have no orderId
+    // and remain independently blocking until their historical return is regularized.
+    const activeRepairs = maintenances.filter(repair => repair.status === 'Em Manutenção'
+      && repair.componentId === component.id
+      && (!repair.orderId || !movements.some(order => order.id === repair.orderId && isOpenOrder(order))));
     const current = destination(component);
     const linkedLocation = locations.find(item => current.key === `${current.kind}:location:${item.id}`);
     const usableDestination = current.kind !== 'unknown' && linkedLocation?.isActive !== false;
@@ -64,7 +69,8 @@ export function createEquipmentAvailabilityResolver({ movements = [], loans = []
     else if (component.status === 'Descartado') { tone = 'inactive'; reason = 'Equipamento descartado.'; }
     else if (component.maintenanceRequired || component.status === 'Manutenção') { label = 'Manutenção pendente'; filterValue = 'Manutenção'; tone = 'pending'; reason = 'Conclua uma O.S. de manutenção ou registre o retorno da assistência. Cancelar uma O.S. não atesta o reparo.'; }
     else if (!availableForUse && !installed) { label = 'Cadastro a conferir'; filterValue = 'Bloqueado'; tone = 'blocked'; reason = 'Confira o status e a localização antes de movimentar.'; }
-    return { label, filterValue, tone, reason, pendingOrders, availableForUse,
+    const blockReason = reason;
+    return { label, filterValue, tone, reason, blockReason, pendingOrders, availableForUse,
       canTransfer: active && noOperations && internal && !component.maintenanceRequired && !['Em Uso', 'Manutenção'].includes(component.status),
       canSendToMaintenance: active && noOperations && internal && ['Disponível', 'Manutenção'].includes(component.status),
       canCreateOrder: (code: ServiceActionCode) => active && noOperations && (code === 'INSTALLATION' ? availableForUse : code === 'MAINTENANCE' ? (internal || installed) && component.status !== 'Descartado' && (internal ? ['Disponível', 'Manutenção'].includes(component.status) : true) : installed && (code === 'REMOVAL' || healthy)),

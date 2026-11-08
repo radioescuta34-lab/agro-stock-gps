@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { isAdminRole, isTechnicianRole } from '../utils/roles';
 import { useNotifications } from './NotificationProvider';
 import { 
   License, 
@@ -72,7 +73,7 @@ export default function LicensesTab({
   onEditLicense,
   onDeleteLicense
 }: LicensesTabProps) {
-  const isAdminOrTech = role === 'administrador' || role === 'tecnico' || role === 'ADMINISTRADOR' || role === 'TECNICO_CAMPO';
+  const isAdminOrTech = isAdminRole(role) || isTechnicianRole(role);
   const { showToast, confirmDialog } = useNotifications();
 
   const [searchTerm, setSearchTerm] = useState('');

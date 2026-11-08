@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { CompanyProfile, UserRole, UserProfile } from '../types';
+import { isAdminRole, isSuperRole, roleLabel } from '../utils/roles';
 import { useNotifications } from './NotificationProvider';
 import { 
   Building2, 
@@ -87,7 +88,7 @@ export default function CompanyTab({
     setLogoUrl(companyProfile.logoUrl || '');
   }, [companyProfile]);
 
-  const isAdmin = role === 'administrador' || role === 'ADMINISTRADOR';
+  const isAdmin = isAdminRole(role);
 
   // Formatting helpers
   const formatCNPJ = (value: string) => {
@@ -681,8 +682,9 @@ export default function CompanyTab({
                 <div className="space-y-3" id="users-items-list">
                   {filteredUsers.map((u) => {
                     const isSelf = u.email === email;
-                    const isUserAdmin = u.role === 'administrador' || u.role === 'ADMINISTRADOR';
-                    const userRoleLabel = isUserAdmin ? 'Administrador' : 'Técnico de Campo';
+                    const isUserSuper = isSuperRole(u.role);
+                    const isUserAdmin = !isUserSuper && isAdminRole(u.role);
+                    const userRoleLabel = roleLabel(u.role);
                     const displayUsername = u.username || (u.email ? u.email.split('@')[0] : '');
                     
                     return (

@@ -7,6 +7,7 @@ import { doc, setDoc, getDoc, collection, getDocs } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { UserRole, UserProfile } from '../types';
 import { hashPassword } from '../utils/crypto';
+import { normalizeRole } from '../utils/roles';
 import { 
   Tractor,
   Satellite,
@@ -17,6 +18,7 @@ import {
   UserCheck, 
   AlertTriangle, 
   Wrench, 
+  Crown,
   ChevronRight, 
   Globe
 } from 'lucide-react';
@@ -121,7 +123,7 @@ export default function AuthScreen({ onAuthSuccess, onEnterDemo }: AuthScreenPro
         if (docSnap.exists()) {
           const data = docSnap.data();
           const storedRole = data.role as string;
-          userProfile.role = (storedRole === 'administrador' ? 'ADMINISTRADOR' : (storedRole === 'tecnico' ? 'TECNICO_CAMPO' : storedRole)) as UserRole;
+          userProfile.role = normalizeRole(storedRole);
           userProfile.name = data.name || userProfile.name;
           userProfile.firstName = data.firstName;
           userProfile.lastName = data.lastName;
@@ -287,6 +289,15 @@ export default function AuthScreen({ onAuthSuccess, onEnterDemo }: AuthScreenPro
               >
                 <Wrench className="h-3.5 w-3.5 text-blue-400" />
                 Demo Técnico
+                <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+              </button>
+              <button
+                onClick={() => onEnterDemo('SUPER_USUARIO')}
+                className="col-span-2 flex items-center justify-center gap-1.5 py-2 px-3 bg-violet-950/40 hover:bg-violet-950/70 text-violet-200 hover:text-white border border-violet-700/50 rounded-xl text-xs font-semibold group transition-colors"
+                id="enter-demo-super"
+              >
+                <Crown className="h-3.5 w-3.5 text-violet-400" />
+                Demo Super Usuário (DEV)
                 <ChevronRight className="h-3 w-3 opacity-0 group-hover:opacity-100 transition-opacity" />
               </button>
             </div>

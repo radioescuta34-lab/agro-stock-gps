@@ -94,7 +94,7 @@ export default function FieldDataKanban({
   const helpSteps = [
     {
       title: 'Entenda o quadro',
-      description: 'As máquinas são agrupadas por frente e a posição de cada frente reflete o andamento das coletas da semana.',
+      description: 'As máquinas são agrupadas por frente. A configuração em Cadastros › Frentes de trabalho define quais frentes participam deste quadro.',
       icon: Columns3,
       accent: 'bg-slate-900 text-white',
       content: (
@@ -206,14 +206,16 @@ export default function FieldDataKanban({
           brand: record.machineBrand || currentMachine?.brand || 'Não informado',
           model: record.machineModel || currentMachine?.model || 'Não informado',
           fleet: record.fleet || record.frente || currentMachine?.fleet || 'Sem Frente',
+          workFrontId: record.workFrontId || currentMachine?.workFrontId || '',
+          workFrontName: record.workFrontName || record.frente || record.fleet || currentMachine?.workFrontName || currentMachine?.fleet || 'Sem Frente',
           updatedAt: record.updatedAt
         };
       });
 
-  // Group machines by fleet/frente
+  // Group by the canonical work-front snapshot, retaining legacy fleet text only as a fallback.
   const fleeteGroups: { [fleet: string]: Machine[] } = {};
   displayMachines.forEach(m => {
-    const fleetName = m.fleet?.trim() ? m.fleet.trim() : 'Sem Frente Atribuída';
+    const fleetName = m.workFrontName?.trim() || m.fleet?.trim() || 'Sem Frente Atribuída';
     if (!fleeteGroups[fleetName]) {
       fleeteGroups[fleetName] = [];
     }

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { UserProfile } from '../types';
+import { isAdminRole, roleLabel } from '../utils/roles';
 import {
   User,
   Shield,
@@ -68,13 +69,13 @@ export default function ProfileTab({ user, onUpdateProfile, onBack }: ProfileTab
     },
     {
       title: 'Conta e Permissão',
-      description: 'Seu endereço de e-mail virtual e nível de permissão (Administrador ou Técnico de Campo) são exibidos abaixo do avatar. Essas informações são definidas pelo administrador do sistema.',
+      description: 'Seu endereço de e-mail virtual e nível de permissão (Super Usuário DEV, Administrador ou Técnico de Campo) são exibidos abaixo do avatar. Essas informações são definidas pelo administrador do sistema.',
       icon: BadgeCheck,
       accent: 'bg-slate-900 text-white',
     },
   ];
 
-  const isAdmin = user.role === 'administrador' || user.role === 'ADMINISTRADOR';
+  const isAdmin = isAdminRole(user.role);
   const displayPhoto = newPhotoData || photoURL;
   const initials = getInitials(user.name);
 
@@ -229,7 +230,7 @@ export default function ProfileTab({ user, onUpdateProfile, onBack }: ProfileTab
             ) : (
               <Wrench className="h-3 w-3 text-slate-400" />
             )}
-            <span className="font-semibold text-slate-600">{isAdmin ? 'Administrador' : 'Técnico de Campo'}</span>
+            <span className="font-semibold text-slate-600">{roleLabel(user.role)}</span>
           </div>
         </div>
 

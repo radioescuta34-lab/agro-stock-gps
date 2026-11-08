@@ -5,7 +5,11 @@ const STATUS_LABELS: Record<MovementStatus, string> = {
   'Aberta': 'Aberta',
   'Agendada': 'Agendada',
   'Em Atendimento': 'Em Atendimento',
+  'Em Manutenção Interna': 'Em Manutenção Interna',
+  'Em Assistência Externa': 'Em Assistência Externa',
+  'Aguardando Conferência': 'Aguardando Conferência',
   'Concluída': 'Concluída',
+  'Sem Conserto': 'Sem Conserto',
   'Cancelada': 'Cancelada'
 };
 

@@ -23,7 +23,7 @@ Ao criar uma O.S. (Movimentações → Nova O.S.), o campo **"Equipamentos GPS"*
 > A lista só mostra equipamentos **elegíveis** para a operação escolhida:
 > - **Instalação** → apenas equipamentos **Disponíveis**.
 > - **Remoção/Calibração** → equipamentos **Em Uso**.
-> - **Manutenção interna** → equipamentos em máquinas ou armazenamentos, sem conflito operacional.
+> - **Manutenção interna** → equipamentos em máquinas ou armazenamentos, sem conflito operacional. A abertura já os marca como indisponíveis; apenas a conclusão do reparo os libera.
 > Itens **inativados** (excluídos) **não** aparecem na seleção.
 
 ### 1.2 Validação por equipamento
@@ -31,6 +31,7 @@ Ao criar uma O.S. (Movimentações → Nova O.S.), o campo **"Equipamentos GPS"*
 Antes de criar a O.S., o sistema valida **cada equipamento** selecionado:
 - Nenhum dos equipamentos pode já ter outra O.S. **em aberto/agendada/em atendimento**.
 - Se algum já tiver O.S. ativa, a criação é recusada e você vê exatamente qual equipamento conflita.
+- Uma O.S. de manutenção aberta, agendada ou em atendimento aparece no estoque como **Aguardando manutenção** ou **Em manutenção**. Cancelá-la preserva a pendência até que um reparo seja efetivamente concluído.
 
 ### 1.3 Conclusão da O.S. atualiza todos os equipamentos
 
@@ -54,7 +55,7 @@ Todo equipamento GPS vinculado a uma máquina passa a registrar a **referência 
 Efeitos visíveis:
 - Quando uma O.S. de **Instalação** é concluída, o equipamento grava o **id** e o **prefixo** da máquina de destino.
 - Na **Remoção**, escolha um armazenamento ativo: a conclusão remove o vínculo com a máquina e recebe o equipamento nesse espaço.
-- **Calibração e manutenção interna** preservam o local físico. Para enviar à assistência, remova primeiro da máquina e use o fluxo **Manutenção externa**.
+- **Manutenção** é sempre aberta pela O.S.: escolha execução interna ou assistência externa. O equipamento pode estar instalado ou em um armazenamento identificado; a O.S. reserva o item até a conclusão do reparo.
 
 ---
 
@@ -74,7 +75,7 @@ Máquinas e equipamentos GPS **não são apagados do sistema** — são **inativ
 
 **Bloqueios:**
 - Se o equipamento possui uma O.S. **em aberto/em atendimento**, a exclusão é **bloqueada**.
-- Se o equipamento está em **manutenção ativa** (status "Em Manutenção"), a exclusão é **bloqueada**.
+- Se o equipamento está em **manutenção ativa**, empréstimo ativo ou com **manutenção pendente**, a exclusão é **bloqueada**.
 
 **Comportamento:**
 - Sem bloqueio, o equipamento é **inativado** (mantido no cadastro e no histórico).
@@ -264,23 +265,26 @@ Todos os locais aparecem, inclusive vazios. O resumo possui **Dados**, **Equipam
 ### Equipamentos e transferências
 
 - No novo equipamento, selecione o armazenamento inicial. O status começa como Disponível.
+- Em **Estoque de equipamentos**, os indicadores no topo mostram o que está pronto para uso, reservado por O.S., em manutenção e o que exige conferência. Eles funcionam como filtros rápidos; o selo de cada item sempre considera o fluxo real, não apenas o campo de status salvo.
 - Na aba Equipamentos do local, marque os itens e use **Transferir selecionados**. Ou abra o resumo do equipamento → Localização → Transferir.
 - Escolha o recebimento, informe observação opcional e confirme. A transferência mantém o status e registra origem/destino/usuário. Não cria uma O.S.
 - Equipamentos instalados, em empréstimo, em manutenção externa ou com O.S. pendente usam o fluxo próprio; não podem ser transferidos diretamente.
+- Um cadastro sem local aparece como **Cadastro a conferir** e não pode ser transferido. Abra o resumo do equipamento → Localização → **Definir local**, escolha o armazenamento inicial e informe a justificativa. Administradores e técnicos podem usar esse fluxo; registro salvo como "Em Uso" sem máquina é liberado para Disponível.
 - **Ver equipamentos na listagem** abre Equipamentos GPS filtrado por aquele local.
 
 ### Recebimentos
 
 | Operação | Resultado físico |
 | --- | --- |
-| Abrir, agendar ou iniciar O.S. | Não altera o destino |
+| Abrir, agendar ou iniciar O.S. de instalação, remoção ou calibração | Não altera o destino |
+| Abrir, agendar ou iniciar O.S. de manutenção | Não altera o destino, mas bloqueia o equipamento para novas operações até a conclusão do reparo |
 | Concluir instalação | Vincula à máquina e limpa armazenamento anterior |
 | Concluir remoção | Recebe no armazenamento escolhido e libera a máquina |
-| Calibração / manutenção interna | Preserva o destino |
+| Concluir manutenção interna | Preserva o destino e libera a pendência de manutenção |
 | Empréstimo | Vincula ao parceiro recebedor |
 | Devolução parcial ou total | Somente os itens recebidos vão ao armazenamento selecionado |
-| Envio à assistência | Vincula ao parceiro do tipo Assistência técnica |
-| Retorno da assistência | Recebe no armazenamento; sem conserto também precisa de local |
+| Envio à assistência por O.S. | Vincula ao parceiro do tipo Assistência técnica e à própria O.S. |
+| Retorno da assistência pela O.S. | Recebe no armazenamento; sem conserto também precisa de local |
 
 O **status** informa a situação operacional; o **destino** informa onde o item está. Um equipamento descartado pode continuar fisicamente em um depósito. Transferir não torna o item disponível automaticamente.
 
@@ -288,4 +292,18 @@ O **status** informa a situação operacional; o **destino** informa onde o item
 
 A seção de conferência permite exportar pendências e confirmar individualmente o destino após backup e verificação física, com justificativa. Falta de informação aparece como **Local não informado**, nunca como almoxarifado presumido. Nomes iguais não fundem IDs. Os destinos externos sem parceiro ou duplicados exigem revisão administrativa; não há migração automática.
 
-Use **?** em Locais, Equipamentos, Manutenção externa, Serviços de Campo, Empréstimos, Parceiros e Frota para consultar as etapas relacionadas. As permissões do Firebase precisam estar publicadas antes de usar os novos fluxos em produção.
+Use **?** em Locais, Equipamentos, Manutenções, Serviços de Campo, Empréstimos, Parceiros e Frota para consultar as etapas relacionadas. Registros antigos de manutenção permanecem apenas para consulta; os novos envios e retornos são sempre realizados pela O.S. As permissões do Firebase precisam estar publicadas antes de usar os novos fluxos em produção.
+
+---
+
+## Frentes de trabalho e recolhimento semanal
+
+O recolhimento semanal agora pode considerar somente as operações que realmente exigem coleta. A configuração fica em **Cadastros → Frentes de trabalho**.
+
+1. Cadastre cada frente operacional, como “Frente 10 – Colheita” ou “Frente 11 – Vinhaça”.
+2. Marque **Participa da coleta semanal** apenas nas frentes que devem aparecer no quadro de recolhimento.
+3. Em **Cadastros → Frota**, abra cada máquina e vincule a frente correspondente.
+
+Depois da configuração, somente máquinas ativas vinculadas a uma frente ativa e habilitada aparecem no **Serviços de Campo → Recolhimento semanal** e nos alertas de pendência. A configuração preserva os registros anteriores: semanas já criadas continuam consultáveis com o nome da frente registrado naquele momento.
+
+> Compatibilidade: enquanto nenhuma frente estiver cadastrada, o sistema mantém o comportamento anterior e inclui todas as máquinas ativas na coleta. Ao cadastrar a primeira frente, conclua os vínculos das máquinas que devem participar antes de iniciar a próxima semana.

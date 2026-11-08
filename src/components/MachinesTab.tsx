@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FieldDataCollection, Machine, MachineType, MovementLog, MovementStatus, UserRole } from '../types';
+import { FieldDataCollection, Machine, MachineType, MovementLog, MovementStatus, UserRole, WorkFront } from '../types';
 import { useNotifications } from './NotificationProvider';
 import { getISOWeekId, getWeekFormattedLabel } from '../utils/dateUtils';
+import { isAdminRole, isTechnicianRole } from '../utils/roles';
 import { 
   Plus, 
   Search, 
@@ -24,6 +25,7 @@ import HelpGuideModal from './HelpGuideModal';
 
 interface MachinesTabProps {
   machines: Machine[];
+  workFronts?: WorkFront[];
   movements?: MovementLog[];
   fieldDataCollections?: FieldDataCollection[];
   role: UserRole;
@@ -36,6 +38,7 @@ interface MachinesTabProps {
 
 export default function MachinesTab({
   machines,
+  workFronts = [],
   movements = [],
   fieldDataCollections = [],
   role,
@@ -45,7 +48,7 @@ export default function MachinesTab({
   onEditMachine,
   onDeleteMachine
 }: MachinesTabProps) {
-  const isAdminOrTech = role === 'administrador' || role === 'tecnico' || role === 'ADMINISTRADOR' || role === 'TECNICO_CAMPO';
+  const isAdminOrTech = isAdminRole(role) || isTechnicianRole(role);
   const { showToast, confirmDialog } = useNotifications();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -114,6 +117,9 @@ export default function MachinesTab({
   const [model, setModel] = useState('');
   const [brand, setBrand] = useState('');
   const [fleet, setFleet] = useState('');
+  const [workFrontId, setWorkFrontId] = useState('');
+
+  const activeWorkFronts = useMemo(() => workFronts.filter(front => front.active).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')), [workFronts]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -172,6 +178,7 @@ export default function MachinesTab({
     setModel('');
     setBrand('');
     setFleet('');
+    setWorkFrontId('');
     setError(null);
   };
 
@@ -192,12 +199,15 @@ export default function MachinesTab({
 
     setLoading(true);
     try {
+      const selectedWorkFront = activeWorkFronts.find(front => front.id === workFrontId);
       await onAddMachine({
         prefix: prefix.trim().toUpperCase(),
         type,
         model: model.trim(),
         brand: brand.trim(),
-        fleet: fleet.trim()
+        fleet: fleet.trim(),
+        workFrontId: selectedWorkFront?.id || '',
+        workFrontName: selectedWorkFront?.name || ''
       });
       setIsAdding(false);
       resetForm();
@@ -219,11 +229,14 @@ export default function MachinesTab({
 
     setLoading(true);
     try {
+      const selectedWorkFront = activeWorkFronts.find(front => front.id === workFrontId);
       await onEditMachine(editingMachine.id, {
         type,
         model: model.trim(),
         brand: brand.trim(),
-        fleet: fleet.trim()
+        fleet: fleet.trim(),
+        workFrontId: selectedWorkFront?.id || '',
+        workFrontName: selectedWorkFront?.name || ''
       });
       setEditingMachine(null);
       resetForm();
@@ -241,6 +254,7 @@ export default function MachinesTab({
     setModel(mac.model);
     setBrand(mac.brand);
     setFleet(mac.fleet || '');
+    setWorkFrontId(mac.workFrontId || '');
     setIsAdding(false);
   };
 
@@ -354,7 +368,11 @@ export default function MachinesTab({
     'Aberta': 'border-amber-200 bg-amber-50 text-amber-700',
     'Agendada': 'border-sky-200 bg-sky-50 text-sky-700',
     'Em Atendimento': 'border-blue-200 bg-blue-50 text-blue-700',
+    'Em Manutenção Interna': 'border-violet-200 bg-violet-50 text-violet-700',
+    'Em Assistência Externa': 'border-orange-200 bg-orange-50 text-orange-700',
+    'Aguardando Conferência': 'border-indigo-200 bg-indigo-50 text-indigo-700',
     'Concluída': 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    'Sem Conserto': 'border-rose-200 bg-rose-50 text-rose-700',
     'Cancelada': 'border-slate-200 bg-slate-50 text-slate-500'
   };
 
@@ -687,6 +705,15 @@ export default function MachinesTab({
                 placeholder="Ex: Frente 01, Frota Cana"
                 id="input-machine-fleet"
               />
+              <p className="mt-1 text-[10px] leading-4 text-slate-500">Referência legada ou operacional. A participação na coleta é definida abaixo.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Frente de trabalho</label>
+              <select value={workFrontId} onChange={(e) => setWorkFrontId(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-emerald-500 focus:border-emerald-500 text-xs bg-white" id="input-machine-work-front">
+                <option value="">Sem frente vinculada</option>
+                {activeWorkFronts.map(front => <option key={front.id} value={front.id}>{front.name}{front.collectsFieldData ? ' · coleta semanal' : ''}</option>)}
+              </select>
             </div>
 
               </form>
@@ -797,6 +824,15 @@ export default function MachinesTab({
                 placeholder="Ex: Frente 01, Frota Cana"
                 id="edit-machine-fleet"
               />
+              <p className="mt-1 text-[10px] leading-4 text-slate-500">Referência legada ou operacional. A participação na coleta é definida abaixo.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Frente de trabalho</label>
+              <select value={workFrontId} onChange={(e) => setWorkFrontId(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-xl text-slate-900 focus:ring-indigo-500 focus:border-indigo-500 text-xs bg-white" id="edit-machine-work-front">
+                <option value="">Sem frente vinculada</option>
+                {activeWorkFronts.map(front => <option key={front.id} value={front.id}>{front.name}{front.collectsFieldData ? ' · coleta semanal' : ''}</option>)}
+              </select>
             </div>
 
               </form>
@@ -1434,7 +1470,7 @@ export default function MachinesTab({
         document.body
       )}
 
-      {(role === 'tecnico' || role === 'TECNICO_CAMPO') && (
+      {isTechnicianRole(role) && (
         <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex gap-3 text-xs text-emerald-800">
           <Info className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
           <p className="leading-relaxed">
